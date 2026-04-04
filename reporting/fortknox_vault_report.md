@@ -1,19 +1,14 @@
 # fortknox_vault_report.py
 
-Reports FortKnox (RPaaS) vault archival activity per protection group using the
-**Helios-native activity API** — a single POST call returns all FortKnox runs
-across every connected cluster. Per-protection-group retained storage is sourced
-from the cluster-level v1 report API (`/reports/dataTransferToVaults`), the same
-data shown in the Helios single-cluster "Data Transferred to External Targets"
-Protection Group tab. Vault-level aggregate stats (growth, cumulative transfer)
-come from the Helios Reporting API component 1600.
+Reports FortKnox (RPaaS) vault data transfer by protection group using the
+cluster-level **"Data Transferred to External Targets"** report API, routed
+through Helios per-cluster. One row per protection group per vault.
 
-Requires a **Helios API key** — FortKnox is a Helios-managed feature; direct
-cluster auth is not applicable.
+Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
-Each row represents one FortKnox archival run. Default range is the last 7 days.
+Default date range is the last 7 days.
 
-**Version:** 2.4
+**Version:** 3.0
 
 ---
 
@@ -21,26 +16,13 @@ Each row represents one FortKnox archival run. Default range is the last 7 days.
 
 | Purpose | Method | Endpoint |
 |---------|--------|----------|
-| FortKnox activity | `POST` | `https://helios.cohesity.com/v2/mcm/data-protect/protection-group/activity` |
+| Cluster list | `GET` | `https://helios.cohesity.com/mcm/clusters/connectionStatus` |
 | FortKnox vault IDs | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/vaults?includeFortKnoxVault=true` |
-| Per-group retained storage | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults` |
-| Vault aggregate stats | `POST` | `https://helios.cohesity.com/heliosreporting/api/v1/public/components/1600/preview` |
+| Data transfer report | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults` |
 
-Activity POST body:
-```json
-{
-  "activityTypes": ["ArchivalRun"],
-  "archivalRunParams": {"isRpaas": true},
-  "startTimeUsecs": <epoch_usecs>,
-  "endTimeUsecs":   <epoch_usecs>
-}
-```
-
-Per-group retained storage (Helios-routed per-cluster via `accessClusterId` header):
-```
-GET /irisservices/api/v1/public/reports/dataTransferToVaults
-    ?startTimeMsecs=<ms>&endTimeMsecs=<ms>&vaultIds=<id>&vaultIds=<id>
-```
+The transfer report is fetched per cluster using the `accessClusterId` Helios
+routing header. Parameters: `startTimeMsecs`, `endTimeMsecs`, `vaultIds` (one
+per FortKnox vault ID on the cluster).
 
 ---
 
@@ -62,7 +44,7 @@ python3 fortknox_vault_report.py --apikey <key> --cluster <cluster-name>
 # Filter to one vault:
 python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 
-# Debug mode (prints first raw record from dataTransferToVaults and component 1600):
+# Debug (print raw API response):
 python3 fortknox_vault_report.py --apikey <key> --debug
 ```
 
@@ -73,13 +55,13 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 | Option | Description |
 |--------|-------------|
 | `--apikey` | Helios API key (required) |
-| `--cluster` | Filter output to a specific cluster (partial name match) |
-| `--vault` | Filter output to a specific vault (partial name match) |
+| `--cluster` | Filter to a specific cluster (partial name match) |
+| `--vault` | Filter to a specific vault (partial name match) |
 | `--output` | Output CSV filename (default: `fortknox_report.csv`) |
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
-| `--debug` | Print raw API response samples for field name verification |
+| `--debug` | Print raw API response sample for field verification |
 
 ---
 
@@ -87,39 +69,27 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 
 Size columns are plain GB decimals — the `(GB)` label is in the header only so cells stay numeric for Excel sorting and pivot tables.
 
-| Column | Description |
-|--------|-------------|
-| Cluster | Cluster name as registered in Helios |
-| Protection Group | Name of the protection group |
-| Environment | Workload type: `kVMware`, `kPhysical`, `kOracle`, etc. |
-| Policy | Name of the protection policy |
-| Vault Name | FortKnox vault target name |
-| Vault Target Type | Cloud platform hosting the vault: `Azure`, `AWS`, etc. (from component 1600) |
-| Region | RPaaS region where the vault is hosted |
-| Status | Run outcome: `Succeeded`, `Failed`, `Running`, `Canceled` |
-| Start Time | Vault transfer start time (UTC) |
-| End Time | Vault transfer end time (UTC) |
-| Duration Mins | Transfer duration in minutes |
-| Logical Size (GB) | Logical size of the data in this vault snapshot |
-| Logical Transferred (GB) | Logical bytes sent to vault (pre-compression) |
-| Physical Transferred (GB) | Bytes actually sent over the network (post-compression). Compare to Logical Transferred to see the effective compression ratio. |
-| Vault Storage Consumed (GB) | Physical storage retained in this vault for this protection group across all retained snapshots. Sourced from `GET /reports/dataTransferToVaults` — the same data shown in the Helios single-cluster "Data Transferred to External Targets → Protection Group" tab. |
-| Vault Storage Growth (GB) | Change in retained vault storage over the reporting period (`scRetainedBytesGrowth`). Vault-level aggregate from component 1600. |
-| Vault Cumul Transferred (GB) | Cumulative total bytes ever transferred to this vault from this cluster (`cumulativeDataTransferredBytes`). Vault-level aggregate. |
-| Vault Period Transferred (GB) | Bytes transferred to the vault in the last 7 days (`dataTransferredBytes`). Vault-level aggregate. |
-| Vault Daily Growth Pct | Average daily growth rate as a percentage of current vault storage (`scRetainedDailyGrowthPercent`). Vault-level aggregate. |
+| Column | Source field | Description |
+|--------|-------------|-------------|
+| Cluster | `clusterName` | Cluster name as registered in Helios |
+| Vault Name | `vaultName` | FortKnox vault target name |
+| Vault Type | `vaultType` | Cloud platform: `kAzure`, `kAmazon`, etc. |
+| Protection Group | `protectionJobName` | Protection group name |
+| Logical Transferred (GB) | `numLogicalBytesTransferred` | Logical bytes sent to vault (pre-compression) |
+| Physical Transferred (GB) | `numPhysicalBytesTransferred` | Bytes actually sent over the network (post-compression) |
+| Storage Consumed (GB) | `storageConsumed` | Physical storage currently retained in this vault for this protection group across all retained snapshots |
 
 ---
 
 ## Available Fields Not Currently Reported
 
+Fields available in the `dataTransferToVaults` response that are not included by default.
+
 | Field | API location | Notes |
 |-------|-------------|-------|
-| Object count | `archivalRunParams.objectsCount` | Number of objects in the run |
-| SLA violated | `archivalRunParams.isSlaViolated` | Whether the vault run breached SLA |
-| Run type | `archivalRunParams.backupType` | Regular, Full, Log, etc. |
-| Expiry time | `archivalRunParams.expiryTimeUsecs` | When this vault snapshot will be deleted |
-| CAD (Cloud Archive Direct) | `archivalRunParams.isCadArchive` | Whether this was a direct cloud archive |
-| WORM compliant | `archivalRunParams.wormProperties.isArchiveWormCompliant` | DataLock/WORM status |
-| Objects succeeded/failed | `archivalRunParams.successfulObjectsCount` / `failedObjectsCount` | Per-run object-level counts |
-| Per-group logical transferred | `GET /reports/dataTransferToVaults` | Additional transfer fields available in the per-group report response |
+| Vault-level logical total | `dataTransferSummary[].numLogicalBytesTransferred` | Aggregate across all protection groups for this vault |
+| Vault-level physical total | `dataTransferSummary[].numPhysicalBytesTransferred` | Aggregate physical bytes for the vault |
+| Vault-level storage total | `dataTransferSummary[].storageConsumedBytes` | Total retained storage across all groups for this vault |
+| Number of protection jobs | `dataTransferSummary[].numProtectionJobs` | Count of protection groups writing to this vault |
+| Logical transferred time-series | `dataTransferSummary[].logicalDataTransferredBytesDuringTimeRange[]` | Array of per-period logical transfer values |
+| Physical transferred time-series | `dataTransferSummary[].physicalDataTransferredBytesDuringTimeRange[]` | Array of per-period physical transfer values |

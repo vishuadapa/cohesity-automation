@@ -5,6 +5,14 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.0: Rewrite using dataTransferToVaults only
+
+### Changed
+- `reporting/fortknox_vault_report.py` — Full rewrite. Removed Helios activity API and Reporting API component calls (data was inaccurate). Single source of truth is now `GET /irisservices/api/v1/public/reports/dataTransferToVaults` per cluster, the same report shown in the Helios single-cluster "Data Transferred to External Targets" UI. One row per protection group per vault. Columns: Cluster, Vault Name, Vault Type, Protection Group, Logical Transferred (GB), Physical Transferred (GB), Storage Consumed (GB).
+- `reporting/fortknox_vault_report.md` — Updated for v3.0: new endpoint table, simplified field list, available-but-not-reported fields.
+
+---
+
 ## [2026-04-04] — Fix: SSL verification disabled across all calls
 
 ### Fixed
