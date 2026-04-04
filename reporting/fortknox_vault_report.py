@@ -146,9 +146,10 @@ def get_pg_retained_storage(api_key: str, system_id: str, system_name: str,
                 },
             },
         ],
-        "sort":     None,
-        "timezone": tz_name,
-        "limit":    {"size": 10000},
+        "sort":       None,
+        "timezone":   tz_name,
+        "limit":      {"size": 10000},
+        "dimensions": ["protectionGroupName", "externalTargetName"],
     }
     try:
         r = requests.post(url, json=body, headers=make_helios_headers(api_key),
@@ -156,10 +157,12 @@ def get_pg_retained_storage(api_key: str, system_id: str, system_name: str,
         r.raise_for_status()
         data = (r.json().get("component") or {}).get("data") or []
 
-        if debug and data:
+        if debug:
             import json
-            print(f"\n[DEBUG] component 1601 first record for {system_name}:")
-            print(json.dumps(data[0], indent=2))
+            print(f"\n[DEBUG] component 1601 for {system_name}: {len(data)} record(s)")
+            if data:
+                print(f"[DEBUG] first record keys: {list(data[0].keys())}")
+                print(json.dumps(data[0], indent=2))
 
         lookup = {}
         for item in data:
