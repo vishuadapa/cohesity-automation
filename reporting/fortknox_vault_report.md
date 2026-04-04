@@ -2,15 +2,18 @@
 
 Reports FortKnox (RPaaS) vault archival activity per protection group using the
 **Helios-native activity API** — a single POST call returns all FortKnox runs
-across every connected cluster. Vault storage consumed is sourced from the
-Helios Reporting API.
+across every connected cluster. Per-protection-group retained storage is sourced
+from the cluster-level v1 report API (`/reports/dataTransferToVaults`), the same
+data shown in the Helios single-cluster "Data Transferred to External Targets"
+Protection Group tab. Vault-level aggregate stats (growth, cumulative transfer)
+come from the Helios Reporting API component 1600.
 
 Requires a **Helios API key** — FortKnox is a Helios-managed feature; direct
 cluster auth is not applicable.
 
 Each row represents one FortKnox archival run. Default range is the last 7 days.
 
-**Version:** 2.1
+**Version:** 2.4
 
 ---
 
@@ -19,7 +22,9 @@ Each row represents one FortKnox archival run. Default range is the last 7 days.
 | Purpose | Method | Endpoint |
 |---------|--------|----------|
 | FortKnox activity | `POST` | `https://helios.cohesity.com/v2/mcm/data-protect/protection-group/activity` |
-| Vault storage stats | `POST` | `https://helios.cohesity.com/heliosreporting/api/v1/public/components/1600/preview` |
+| FortKnox vault IDs | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/vaults?includeFortKnoxVault=true` |
+| Per-group retained storage | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults` |
+| Vault aggregate stats | `POST` | `https://helios.cohesity.com/heliosreporting/api/v1/public/components/1600/preview` |
 
 Activity POST body:
 ```json
@@ -29,6 +34,12 @@ Activity POST body:
   "startTimeUsecs": <epoch_usecs>,
   "endTimeUsecs":   <epoch_usecs>
 }
+```
+
+Per-group retained storage (Helios-routed per-cluster via `accessClusterId` header):
+```
+GET /irisservices/api/v1/public/reports/dataTransferToVaults
+    ?startTimeMsecs=<ms>&endTimeMsecs=<ms>&vaultIds=<id>&vaultIds=<id>
 ```
 
 ---
@@ -50,6 +61,9 @@ python3 fortknox_vault_report.py --apikey <key> --cluster <cluster-name>
 
 # Filter to one vault:
 python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
+
+# Debug mode (prints first raw record from dataTransferToVaults and component 1600):
+python3 fortknox_vault_report.py --apikey <key> --debug
 ```
 
 ---
@@ -65,6 +79,7 @@ python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
+| `--debug` | Print raw API response samples for field name verification |
 
 ---
 
@@ -79,6 +94,7 @@ Size columns are plain GB decimals — the `(GB)` label is in the header only so
 | Environment | Workload type: `kVMware`, `kPhysical`, `kOracle`, etc. |
 | Policy | Name of the protection policy |
 | Vault Name | FortKnox vault target name |
+| Vault Target Type | Cloud platform hosting the vault: `Azure`, `AWS`, etc. (from component 1600) |
 | Region | RPaaS region where the vault is hosted |
 | Status | Run outcome: `Succeeded`, `Failed`, `Running`, `Canceled` |
 | Start Time | Vault transfer start time (UTC) |
@@ -87,12 +103,11 @@ Size columns are plain GB decimals — the `(GB)` label is in the header only so
 | Logical Size (GB) | Logical size of the data in this vault snapshot |
 | Logical Transferred (GB) | Logical bytes sent to vault (pre-compression) |
 | Physical Transferred (GB) | Bytes actually sent over the network (post-compression). Compare to Logical Transferred to see the effective compression ratio. |
-| Vault Target Type | Cloud platform hosting the vault: `Azure`, `AWS`, etc. |
-| Vault Storage Consumed (GB) | Total physical storage currently retained in this vault for this cluster, across all retained snapshots (`scRetainedBytes`). Vault-level — same value on every run row for the same cluster+vault. |
-| Vault Storage Growth (GB) | Change in retained storage over the reporting period (`scRetainedBytesGrowth`). |
-| Vault Cumul Transferred (GB) | Cumulative total bytes ever transferred to this vault from this cluster (`cumulativeDataTransferredBytes`). |
-| Vault Period Transferred (GB) | Bytes transferred to the vault in the last 7 days (`dataTransferredBytes`). |
-| Vault Daily Growth Pct | Average daily growth rate as a percentage of current vault storage (`scRetainedDailyGrowthPercent`). |
+| Vault Storage Consumed (GB) | Physical storage retained in this vault for this protection group across all retained snapshots. Sourced from `GET /reports/dataTransferToVaults` — the same data shown in the Helios single-cluster "Data Transferred to External Targets → Protection Group" tab. |
+| Vault Storage Growth (GB) | Change in retained vault storage over the reporting period (`scRetainedBytesGrowth`). Vault-level aggregate from component 1600. |
+| Vault Cumul Transferred (GB) | Cumulative total bytes ever transferred to this vault from this cluster (`cumulativeDataTransferredBytes`). Vault-level aggregate. |
+| Vault Period Transferred (GB) | Bytes transferred to the vault in the last 7 days (`dataTransferredBytes`). Vault-level aggregate. |
+| Vault Daily Growth Pct | Average daily growth rate as a percentage of current vault storage (`scRetainedDailyGrowthPercent`). Vault-level aggregate. |
 
 ---
 
@@ -100,10 +115,11 @@ Size columns are plain GB decimals — the `(GB)` label is in the header only so
 
 | Field | API location | Notes |
 |-------|-------------|-------|
-| Object count | `archivalRunParams.objectsCount` | Number of objects in the run (if returned by API) |
+| Object count | `archivalRunParams.objectsCount` | Number of objects in the run |
 | SLA violated | `archivalRunParams.isSlaViolated` | Whether the vault run breached SLA |
 | Run type | `archivalRunParams.backupType` | Regular, Full, Log, etc. |
 | Expiry time | `archivalRunParams.expiryTimeUsecs` | When this vault snapshot will be deleted |
 | CAD (Cloud Archive Direct) | `archivalRunParams.isCadArchive` | Whether this was a direct cloud archive |
 | WORM compliant | `archivalRunParams.wormProperties.isArchiveWormCompliant` | DataLock/WORM status |
 | Objects succeeded/failed | `archivalRunParams.successfulObjectsCount` / `failedObjectsCount` | Per-run object-level counts |
+| Per-group logical transferred | `GET /reports/dataTransferToVaults` | Additional transfer fields available in the per-group report response |

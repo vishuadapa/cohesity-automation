@@ -172,13 +172,12 @@ def get_pg_retained_storage(api_key: str, cluster_id: int, cluster_name: str,
 
         if debug:
             import json
-            print(f"\n[DEBUG] dataTransferToVaults for {cluster_name}:")
-            print(f"[DEBUG] top-level keys: {list(resp.keys()) if isinstance(resp, dict) else type(resp)}")
-            # Show first item from each list-valued key
+            print(f"\n[DEBUG] dataTransferToVaults for {cluster_name} — top-level keys: {list(resp.keys()) if isinstance(resp, dict) else type(resp)}")
             if isinstance(resp, dict):
                 for k, v in resp.items():
                     if isinstance(v, list) and v:
-                        print(f"[DEBUG] resp['{k}'][0] = {json.dumps(v[0], indent=2)[:600]}")
+                        print(f"[DEBUG] resp['{k}'][0] = {json.dumps(v[0], indent=2)[:800]}")
+                        break
 
         lookup = {}
         # The response has a summary list and a per-job/per-group detail list.
