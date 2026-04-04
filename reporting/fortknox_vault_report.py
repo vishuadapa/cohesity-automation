@@ -180,27 +180,19 @@ def get_pg_retained_storage(api_key: str, cluster_id: int, cluster_name: str,
                         break
 
         lookup = {}
-        # The response has a summary list and a per-job/per-group detail list.
-        # Try known key names for the per-group breakdown.
-        detail = (resp.get("dataTransferredToVaultPerJob") or
-                  resp.get("dataTransferredPerJob") or
-                  resp.get("jobDataTransfer") or
-                  resp.get("dataTransferSummary") or
-                  (resp if isinstance(resp, list) else []))
-
-        for item in detail:
-            grp   = (item.get("jobName") or item.get("protectionGroupName")
-                     or item.get("groupName") or "")
-            vault = (item.get("vaultName") or item.get("externalTargetName")
-                     or item.get("targetName") or "")
-            # Try all known field names for retained/consumed storage
-            retained = (item.get("storageConsumed") or
-                        item.get("storageConsumedBytes") or
-                        item.get("physicalDataTransferred") or
-                        item.get("dataTransferred") or
-                        item.get("totalDataTransferred") or 0)
-            if grp:
-                lookup[(cluster_name, grp, vault)] = retained
+        # Response structure:
+        #   dataTransferSummary[]:              vault-level summaries
+        #     .vaultName                        vault name
+        #     .dataTransferPerProtectionJob[]:  per-group breakdown
+        #       .protectionJobName              protection group name
+        #       .storageConsumed                retained bytes for this group+vault
+        for vault_summary in (resp.get("dataTransferSummary") or []):
+            vault_name = vault_summary.get("vaultName", "")
+            for job in (vault_summary.get("dataTransferPerProtectionJob") or []):
+                grp      = job.get("protectionJobName", "")
+                retained = job.get("storageConsumed", 0)
+                if grp:
+                    lookup[(cluster_name, grp, vault_name)] = retained
 
         return lookup
 
