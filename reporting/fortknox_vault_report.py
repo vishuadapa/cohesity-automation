@@ -24,6 +24,11 @@ Version history:
                      group runs filtered to kRpaas targets.
   1.1 (2026-04-04) — Removed invalid kArchiveRuns consumer type that caused
                      400 errors; vault storage showed N/A.
+  2.4 (2026-04-04) — Vault Storage Consumed now from v1 cluster report
+                     GET /irisservices/api/v1/public/reports/dataTransferToVaults
+                     filtered by FortKnox vault IDs and date range. Per-
+                     protection-group breakdown. Source: Helios single-cluster
+                     report → Data Transferred to External Targets → PG tab.
   2.3 (2026-04-04) — Vault Storage Consumed now from component 1601
                      (Data Transferred to External Targets report) via the
                      Helios Reporting API, filtered per cluster by systemId
@@ -50,7 +55,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "2.3"
+__version__ = "2.4"
 
 import argparse
 import csv
@@ -112,69 +117,96 @@ def get_helios_clusters(api_key: str) -> list:
     return result
 
 
-def get_pg_retained_storage(api_key: str, system_id: str, system_name: str,
-                             tz_name: str = "UTC", debug: bool = False) -> dict:
+def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
     """
-    Fetch Storage Consumed for Retained Data per protection group from the
-    'Data Transferred to External Targets' report.
+    Fetch FortKnox vault IDs configured on a cluster.
+    Endpoint: GET /irisservices/api/v1/public/vaults?includeFortKnoxVault=true
+    Returns: [vault_id, ...]
+    """
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/vaults"
+    params = {"includeFortKnoxVault": "true"}
+    try:
+        r = requests.get(url, headers=make_helios_headers(api_key, cluster_id),
+                         params=params, verify=False, timeout=30)
+        r.raise_for_status()
+        vaults = r.json() or []
+        ids = [v["id"] for v in vaults if "id" in v]
+        return ids
+    except Exception as e:
+        print(f"    WARNING: Could not fetch vault IDs for cluster {cluster_id}: {e}")
+        return []
 
-    Endpoint: POST https://helios.cohesity.com/heliosreporting/api/v1/public/components/1601/preview
-    Filters:  systemId (cluster), date range Last7Days
+
+def get_pg_retained_storage(api_key: str, cluster_id: int, cluster_name: str,
+                             vault_ids: list, start_msecs: int, end_msecs: int,
+                             debug: bool = False) -> dict:
+    """
+    Fetch Storage Consumed for Retained Data per protection group.
+
+    Endpoint: GET /irisservices/api/v1/public/reports/dataTransferToVaults
+    Parameters:
+      startTimeMsecs / endTimeMsecs — date range in milliseconds
+      vaultIds                      — FortKnox vault IDs (one param per ID)
+
+    Source: Helios UI single-cluster report → "Data Transferred to External
+    Targets" → Protection Group tab.
 
     Returns: {(cluster_name, group_name, vault_name): retained_bytes}
-    Key includes vault_name so rows with the same group but different vaults
-    are kept separate.
     """
-    url = f"https://{HELIOS_HOST}/heliosreporting/api/v1/public/components/1601/preview"
-    body = {
-        "filters": [
-            {
-                "attribute":   "systemId",
-                "filterType":  "Systems",
-                "systemsFilterParams": {
-                    "systemIds":   [system_id],
-                    "systemNames": [system_name],
-                },
-            },
-            {
-                "attribute":  "date",
-                "filterType": "TimeRange",
-                "timeRangeFilterParams": {
-                    "dateRange":  "Last7Days",
-                    "lowerBound": None,
-                    "upperBound": None,
-                },
-            },
-        ],
-        "sort":       None,
-        "timezone":   tz_name,
-        "limit":      {"size": 10000},
-        "dimensions": ["protectionGroupName", "externalTargetName"],
-    }
+    if not vault_ids:
+        return {}
+
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/reports/dataTransferToVaults"
+    params = [
+        ("startTimeMsecs", start_msecs),
+        ("endTimeMsecs",   end_msecs),
+    ]
+    for vid in vault_ids:
+        params.append(("vaultIds", vid))
+
     try:
-        r = requests.post(url, json=body, headers=make_helios_headers(api_key),
-                          verify=False, timeout=60)
+        r = requests.get(url, headers=make_helios_headers(api_key, cluster_id),
+                         params=params, verify=False, timeout=60)
         r.raise_for_status()
-        data = (r.json().get("component") or {}).get("data") or []
+        resp = r.json()
 
         if debug:
             import json
-            print(f"\n[DEBUG] component 1601 for {system_name}: {len(data)} record(s)")
-            if data:
-                print(f"[DEBUG] first record keys: {list(data[0].keys())}")
-                print(json.dumps(data[0], indent=2))
+            print(f"\n[DEBUG] dataTransferToVaults for {cluster_name}:")
+            print(f"[DEBUG] top-level keys: {list(resp.keys()) if isinstance(resp, dict) else type(resp)}")
+            # Show first item from each list-valued key
+            if isinstance(resp, dict):
+                for k, v in resp.items():
+                    if isinstance(v, list) and v:
+                        print(f"[DEBUG] resp['{k}'][0] = {json.dumps(v[0], indent=2)[:600]}")
 
-        # Component 1601 is time-series at cluster+targetType level (no per-group breakdown).
-        # Use the most recent data point's sumScRetainedBytes as the vault-level total.
-        # Key: (cluster_name, "", "") — matched as a fallback for any group on this cluster.
-        if data:
-            latest = max(data, key=lambda x: x.get("timestampUsecs", 0))
-            retained = latest.get("sumScRetainedBytes", 0)
-            return {(system_name, "", ""): retained}
-        return {}
+        lookup = {}
+        # The response has a summary list and a per-job/per-group detail list.
+        # Try known key names for the per-group breakdown.
+        detail = (resp.get("dataTransferredToVaultPerJob") or
+                  resp.get("dataTransferredPerJob") or
+                  resp.get("jobDataTransfer") or
+                  resp.get("dataTransferSummary") or
+                  (resp if isinstance(resp, list) else []))
+
+        for item in detail:
+            grp   = (item.get("jobName") or item.get("protectionGroupName")
+                     or item.get("groupName") or "")
+            vault = (item.get("vaultName") or item.get("externalTargetName")
+                     or item.get("targetName") or "")
+            # Try all known field names for retained/consumed storage
+            retained = (item.get("storageConsumed") or
+                        item.get("storageConsumedBytes") or
+                        item.get("physicalDataTransferred") or
+                        item.get("dataTransferred") or
+                        item.get("totalDataTransferred") or 0)
+            if grp:
+                lookup[(cluster_name, grp, vault)] = retained
+
+        return lookup
 
     except Exception as e:
-        print(f"    WARNING: Could not fetch retained storage for {system_name}: {e}")
+        print(f"    WARNING: Could not fetch retained storage for {cluster_name}: {e}")
         return {}
 
 
@@ -537,17 +569,25 @@ def main():
     print("\n[*] Fetching FortKnox archival activity...")
     activity = get_fortknox_activity(args.apikey, start_usecs, end_usecs)
 
-    # Per-group retained storage from component 1601 (Data Transferred to External Targets)
-    print("[*] Fetching per-group retained storage (component 1601)...")
+    # Per-group retained storage from /reports/dataTransferToVaults (cluster v1 API)
+    print("[*] Fetching per-group retained storage (dataTransferToVaults)...")
     pg_vault_lookup = {}   # {(cluster_name, group_name, vault_name): retained_bytes}
+    # Convert usecs → msecs for the v1 reports endpoint
+    start_msecs = start_usecs // 1000
+    end_msecs   = end_usecs   // 1000
     seen_clusters = {r.get("clusterName") for r in activity if r.get("clusterName")}
     for cname in sorted(seen_clusters):
         c = cluster_by_name.get(cname)
         if not c:
-            print(f"    WARNING: No cluster info found for '{cname}', skipping retained storage lookup")
+            print(f"    WARNING: No cluster info found for '{cname}', skipping")
             continue
         print(f"    {cname}")
-        pg_stats = get_pg_retained_storage(args.apikey, c["systemId"], cname,
+        vault_ids = get_fortknox_vault_ids(args.apikey, c["clusterId"])
+        if not vault_ids:
+            print(f"      No FortKnox vaults found on {cname}")
+            continue
+        pg_stats = get_pg_retained_storage(args.apikey, c["clusterId"], cname,
+                                           vault_ids, start_msecs, end_msecs,
                                            debug=args.debug)
         pg_vault_lookup.update(pg_stats)
 
