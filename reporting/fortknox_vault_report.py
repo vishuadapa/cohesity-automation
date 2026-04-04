@@ -164,18 +164,14 @@ def get_pg_retained_storage(api_key: str, system_id: str, system_name: str,
                 print(f"[DEBUG] first record keys: {list(data[0].keys())}")
                 print(json.dumps(data[0], indent=2))
 
-        lookup = {}
-        for item in data:
-            grp   = item.get("protectionGroupName") or item.get("groupName") or item.get("jobName", "")
-            vault = item.get("externalTargetName") or item.get("targetName") or item.get("vaultName", "")
-            # field name TBD from first run — try all known candidates
-            retained = (item.get("scRetainedBytes") or
-                        item.get("retainedBytes") or
-                        item.get("storageConsumedBytes") or
-                        item.get("dataRetainedBytes") or 0)
-            if grp:
-                lookup[(system_name, grp, vault)] = retained
-        return lookup
+        # Component 1601 is time-series at cluster+targetType level (no per-group breakdown).
+        # Use the most recent data point's sumScRetainedBytes as the vault-level total.
+        # Key: (cluster_name, "", "") — matched as a fallback for any group on this cluster.
+        if data:
+            latest = max(data, key=lambda x: x.get("timestampUsecs", 0))
+            retained = latest.get("sumScRetainedBytes", 0)
+            return {(system_name, "", ""): retained}
+        return {}
 
     except Exception as e:
         print(f"    WARNING: Could not fetch retained storage for {system_name}: {e}")
@@ -423,10 +419,10 @@ def build_report(activity: list, vault_stats_lookup: dict, pg_vault_lookup: dict
             if start_usecs and end_usecs else "N/A"
         )
 
-        # Per-group retained storage from component 1601
-        # Try (cluster, group, vault) first; fall back to (cluster, group, "")
+        # Retained storage: per-group if available, otherwise vault-level fallback
         pg_vault_bytes = (pg_vault_lookup.get((cluster_name, group_name, vault_name))
-                          or pg_vault_lookup.get((cluster_name, group_name, "")))
+                          or pg_vault_lookup.get((cluster_name, group_name, ""))
+                          or pg_vault_lookup.get((cluster_name, "", "")))
 
         # Vault-level aggregate stats (growth, cumulative transfer, etc.)
         vs = vault_stats_lookup.get((cluster_name, vault_name), {})
@@ -446,7 +442,8 @@ def build_report(activity: list, vault_stats_lookup: dict, pg_vault_lookup: dict
             "Logical Size":             to_gb(arp.get("logicalSizeBytes")),
             "Logical Transferred":      to_gb(arp.get("logicalBytesTransferred")),
             "Physical Transferred":     to_gb(arp.get("physicalBytesTransferred")),
-            # Per-protection-group vault storage (cloudTotalPhysicalUsageBytes)
+            # Vault retained storage — currently vault-level total (component 1601)
+            # Will be updated to per-group once correct component ID is confirmed
             "Vault Storage Consumed":   to_gb(pg_vault_bytes),
             # Vault-level aggregate stats (same value for all rows on this cluster+vault)
             "Vault Storage Growth":     to_gb(vs.get("scRetainedBytesGrowth")),
