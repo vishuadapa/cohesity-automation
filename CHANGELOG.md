@@ -12,6 +12,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v2.3: Use component 1601 for retained storage
+
+### Changed
+- `reporting/fortknox_vault_report.py` — Vault Storage Consumed now sourced from Helios Reporting API component 1601 ("Data Transferred to External Targets"), filtered by `systemId` (clusterId:clusterIncarnationId) per cluster. This is the same data shown in the Helios UI report. Lookup keyed by (cluster, group, vault). `--debug` flag shows first component 1601 record to confirm field names.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v2.2: Per-group vault storage
 
 ### Fixed
