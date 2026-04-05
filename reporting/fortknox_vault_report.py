@@ -18,6 +18,10 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.4 (2026-04-04) — Added --start-msecs / --end-msecs flags to pass exact
+                     millisecond timestamps from Chrome DevTools, eliminating
+                     time boundary mismatches vs the UI. --debug now prints
+                     the exact request URL for direct comparison with Chrome.
   3.3 (2026-04-04) — Output raw bytes — no conversion. Column headers updated
                      to (Bytes). Allows direct comparison to API payload values
                      confirmed via Chrome DevTools.
@@ -46,7 +50,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.3"
+__version__ = "3.4"
 
 import argparse
 import csv
@@ -139,6 +143,9 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          params=params, verify=False, timeout=60)
+        if debug:
+            import json
+            print(f"\n[DEBUG] {cluster_name} — exact request URL:\n        {r.url}")
         r.raise_for_status()
         resp = r.json()
     except Exception as e:
@@ -147,7 +154,7 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 
     if debug:
         import json
-        print(f"\n[DEBUG] {cluster_name} — keys: {list(resp.keys()) if isinstance(resp, dict) else type(resp)}")
+        print(f"[DEBUG] {cluster_name} — response keys: {list(resp.keys()) if isinstance(resp, dict) else type(resp)}")
         for k, v in (resp.items() if isinstance(resp, dict) else []):
             if isinstance(v, list) and v:
                 print(f"[DEBUG] {k}[0] = {json.dumps(v[0], indent=2)[:1000]}")
@@ -205,6 +212,10 @@ def end_of_day_msecs(date_str: str) -> int:
 
 def resolve_date_range(args) -> tuple:
     """Return (start_msecs, end_msecs). Default: last 7 days."""
+    if args.start_msecs or args.end_msecs:
+        start = int(args.start_msecs) if args.start_msecs else now_msecs() - 7 * 86400 * 1000
+        end   = int(args.end_msecs)   if args.end_msecs   else now_msecs()
+        return start, end
     if args.days:
         start = datetime.now(tz=timezone.utc) - timedelta(days=args.days)
         return int(start.timestamp() * 1000), now_msecs()
@@ -276,10 +287,13 @@ Examples:
                         help="Print raw API response samples")
 
     dg = parser.add_argument_group("Date range (default: last 7 days)")
-    dg.add_argument("--days",  type=int, metavar="N", help="Last N days")
-    dg.add_argument("--start", metavar="YYYY-MM-DD", help="Start date (inclusive)")
-    dg.add_argument("--end",   metavar="YYYY-MM-DD",
-                    help="End date (inclusive, defaults to today)")
+    dg.add_argument("--days",        type=int, metavar="N",        help="Last N days")
+    dg.add_argument("--start",       metavar="YYYY-MM-DD",         help="Start date (inclusive)")
+    dg.add_argument("--end",         metavar="YYYY-MM-DD",         help="End date (inclusive, defaults to today)")
+    dg.add_argument("--start-msecs", metavar="MS", dest="start_msecs",
+                    help="Exact start timestamp in milliseconds (paste from Chrome DevTools URL)")
+    dg.add_argument("--end-msecs",   metavar="MS", dest="end_msecs",
+                    help="Exact end timestamp in milliseconds (paste from Chrome DevTools URL)")
     return parser.parse_args()
 
 
