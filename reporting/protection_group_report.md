@@ -1,4 +1,4 @@
-# cohesity_protection_report.py
+# protection_group_report.py
 
 Generates an Excel report of protection group run status across Cohesity clusters. Default mode reports the last run for each group. Historical mode reports every run within a date range (one row per run).
 
@@ -19,29 +19,29 @@ pip install openpyxl keyring
 
 ```bash
 # First run — prompts for Helios API key, saves to keychain:
-python3 cohesity_protection_report.py
+python3 protection_group_report.py
 
 # Subsequent runs — key retrieved automatically:
-python3 cohesity_protection_report.py --days 30
-python3 cohesity_protection_report.py --start 2026-03-01 --end 2026-04-01
+python3 protection_group_report.py --days 30
+python3 protection_group_report.py --start 2026-03-01 --end 2026-04-01
 
 # Target one cluster via Helios:
-python3 cohesity_protection_report.py --cluster <cluster-name> --days 7
+python3 protection_group_report.py --cluster <cluster-name> --days 7
 
 # Direct cluster — password prompted and saved to keychain:
-python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
+python3 protection_group_report.py --cluster <ip> --username admin --domain LOCAL
 
 # One-time Helios key override (not saved):
-python3 cohesity_protection_report.py --apikey <key>
+python3 protection_group_report.py --apikey <key>
 
 # Remove stored Helios API key:
-python3 cohesity_protection_report.py --clear-credentials
+python3 protection_group_report.py --clear-credentials
 
 # Remove stored cluster password:
-python3 cohesity_protection_report.py --clear-credentials --cluster <ip>
+python3 protection_group_report.py --clear-credentials --cluster <ip>
 ```
 
-Output file is created automatically as `cohesity_protection_report_YYYYMMDD_HHMMSS.xlsx` in the directory where the script is run.
+Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS.xlsx` in the directory where the script is run.
 
 ---
 

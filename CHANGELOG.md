@@ -5,6 +5,15 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — Rename: cohesity_protection_report → protection_group_report
+
+### Changed
+- `reporting/cohesity_protection_report.py` renamed to `reporting/protection_group_report.py`
+- `reporting/cohesity_protection_report.md` renamed to `reporting/protection_group_report.md`
+- All internal references, docstrings, usage examples, README index, and CHANGELOG entries updated.
+
+---
+
 ## [2026-04-05] — fortknox_vault_report.py v4.6: Fix axis labels + auto tick density
 
 ### Fixed
@@ -26,14 +35,14 @@ Format: `[YYYY-MM-DD] — description`
 
 ### Changed
 - `reporting/fortknox_vault_report.py` v4.4 — Trend chart improvements: 16 pt bold chart title, legend repositioned to bottom (no overlap with chart area), x-axis labelled "Date" with `yyyy-mm-dd` tick format, y-axis labelled "Storage Consumed (TB)" with 4-decimal number format. Report header row color changed from dark blue to Cohesity green (`#00B388`).
-- `reporting/cohesity_protection_report.py` v3.4 — Report header row color changed to Cohesity green (`#00B388`).
+- `reporting/protection_group_report.py` v3.4 — Report header row color changed to Cohesity green (`#00B388`).
 
 ---
 
-## [2026-04-04] — cohesity_protection_report.py v3.3: Secure credential storage + Excel output
+## [2026-04-04] — protection_group_report.py v3.3: Secure credential storage + Excel output
 
 ### Changed
-- `reporting/cohesity_protection_report.py` — `--apikey` is now optional. Helios API key is stored in the OS keychain (`keyring`) after the first run and retrieved automatically on subsequent runs. Direct cluster passwords are also stored in the keychain (keyed by `cluster:domain:username`). `--clear-credentials` removes the stored Helios key; `--clear-credentials --cluster <ip>` removes a cluster password. Output changed from CSV to Excel (`.xlsx`) with styled headers (bold white on dark blue), frozen header row, and auto-fit columns. Output filename is auto-generated as `<script_name>_YYYYMMDD_HHMMSS.xlsx` in the current working directory. Requires `pip install keyring openpyxl`.
+- `reporting/protection_group_report.py` — `--apikey` is now optional. Helios API key is stored in the OS keychain (`keyring`) after the first run and retrieved automatically on subsequent runs. Direct cluster passwords are also stored in the keychain (keyed by `cluster:domain:username`). `--clear-credentials` removes the stored Helios key; `--clear-credentials --cluster <ip>` removes a cluster password. Output changed from CSV to Excel (`.xlsx`) with styled headers (bold white on dark blue), frozen header row, and auto-fit columns. Output filename is auto-generated as `<script_name>_YYYYMMDD_HHMMSS.xlsx` in the current working directory. Requires `pip install keyring openpyxl`.
 
 ---
 
@@ -140,7 +149,7 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — Fix: SSL verification disabled across all calls
 
 ### Fixed
-- `reporting/cohesity_protection_report.py` — Set `verify=False` on all requests. Previously only the cluster discovery call had SSL disabled; the protection groups and runs calls still used `verify=True`, causing `SSLCertVerificationError` on corporate networks with SSL inspection proxies. Removed `verify_ssl` parameter entirely — it's always `False` in this environment.
+- `reporting/protection_group_report.py` — Set `verify=False` on all requests. Previously only the cluster discovery call had SSL disabled; the protection groups and runs calls still used `verify=True`, causing `SSLCertVerificationError` on corporate networks with SSL inspection proxies. Removed `verify_ssl` parameter entirely — it's always `False` in this environment.
 
 ---
 
@@ -187,7 +196,7 @@ Format: `[YYYY-MM-DD] — description`
 
 ### Changed
 - `reporting/README.md` — Slimmed to an index table linking to per-script docs.
-- `reporting/cohesity_protection_report.md` — New dedicated README for the protection report: usage, CLI options, all 27 report fields, available-but-not-reported fields.
+- `reporting/protection_group_report.md` — New dedicated README for the protection report: usage, CLI options, all 27 report fields, available-but-not-reported fields.
 - `reporting/fortknox_vault_report.md` — New dedicated README for the FortKnox report: usage, CLI options, all 24 report fields, available-but-not-reported fields.
 
 ---
@@ -203,7 +212,7 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — v3.2: Policy Name replaces Policy ID
 
 ### Changed
-- `reporting/cohesity_protection_report.py` — `Policy ID` column replaced with `Policy Name`. Name is resolved via `GET /v2/data-protect/policies/{id}` with in-process caching so each unique policy is only fetched once per script run. Falls back to the raw ID if the lookup fails.
+- `reporting/protection_group_report.py` — `Policy ID` column replaced with `Policy Name`. Name is resolved via `GET /v2/data-protect/policies/{id}` with in-process caching so each unique policy is only fetched once per script run. Falls back to the raw ID if the lookup fails.
 - `reporting/README.md` — Updated field table (Policy Name); moved Policy ID to the unreported fields table.
 
 ---
@@ -211,7 +220,7 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — v3.1: GB-only size columns, updated README
 
 ### Changed
-- `reporting/cohesity_protection_report.py` — Size values (Data Read, Data Written, Logical Size, Storage Consumed) now report as plain GB decimal numbers. The `(GB)` label is in the column header only, keeping cell values numeric for Excel pivot tables and sorting. Replaces the previous auto-scaling TB/GB/MB format.
+- `reporting/protection_group_report.py` — Size values (Data Read, Data Written, Logical Size, Storage Consumed) now report as plain GB decimal numbers. The `(GB)` label is in the column header only, keeping cell values numeric for Excel pivot tables and sorting. Replaces the previous auto-scaling TB/GB/MB format.
 - `reporting/README.md` — Full rewrite: added per-field descriptions table for all 25 columns, and a separate table listing available-but-not-reported API fields with their locations and notes.
 
 ---
@@ -219,7 +228,7 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — v2.0: Historical run data, version numbering
 
 ### Added
-- `reporting/cohesity_protection_report.py` — `__version__ = "2.0"`. Version history block in docstring. Version number shown in `--help`.
+- `reporting/protection_group_report.py` — `__version__ = "2.0"`. Version history block in docstring. Version number shown in `--help`.
 - `--days N` — pull last N days of runs (e.g. `--days 30`). Convenient shortcut.
 - `--start YYYY-MM-DD` / `--end YYYY-MM-DD` — explicit date range. `--end` defaults to today if omitted. Each run in the range becomes its own CSV row.
 - `Run #` column added in historical mode (sequential per protection group).
@@ -235,14 +244,14 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — Fix: Bytes read/written fields empty
 
 ### Fixed
-- `reporting/cohesity_protection_report.py` — Bytes read/written (columns N, O) were always N/A. Stats are nested at `localBackupInfo.localSnapshotStats`, not `localBackupInfo.stats`. Fixed by changing `backup.get("stats", {})` to `backup.get("localSnapshotStats", {})`.
+- `reporting/protection_group_report.py` — Bytes read/written (columns N, O) were always N/A. Stats are nested at `localBackupInfo.localSnapshotStats`, not `localBackupInfo.stats`. Fixed by changing `backup.get("stats", {})` to `backup.get("localSnapshotStats", {})`.
 
 ---
 
 ## [2026-04-04] — Fix: Correct Helios cluster routing header
 
 ### Fixed
-- `reporting/cohesity_protection_report.py` — The Helios cluster routing header was wrong: `clusterIdentifier` does not exist. The correct header confirmed in `cohesity-api.ps1` (Brian Seltzer) is **`accessClusterId`**. This was causing Helios to proxy to no cluster, returning an empty result for every API call — hence "Found 0 active protection jobs".
+- `reporting/protection_group_report.py` — The Helios cluster routing header was wrong: `clusterIdentifier` does not exist. The correct header confirmed in `cohesity-api.ps1` (Brian Seltzer) is **`accessClusterId`**. This was causing Helios to proxy to no cluster, returning an empty result for every API call — hence "Found 0 active protection jobs".
 - Reverted from v1 back to v2 API for both protection groups and runs, matching the `ClusterV2` pattern used in `cohesityInv.ps1`. Added `includeObjectDetails=true` to the runs call to get per-object success/failure/warning counts.
 - Updated `extract_run_stats` to parse v2 response structure (`localBackupInfo`, plain-string status values).
 
@@ -251,7 +260,7 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — Refactor: Switch to v1 API for job listing and run stats
 
 ### Changed
-- `reporting/cohesity_protection_report.py` — Replaced v2 `data-protect/protection-groups` and `protection-groups/{id}/runs` endpoints with v1 `protectionJobs` and `protectionRuns` endpoints (same approach used in Brian Seltzer's reporting scripts).
+- `reporting/protection_group_report.py` — Replaced v2 `data-protect/protection-groups` and `protection-groups/{id}/runs` endpoints with v1 `protectionJobs` and `protectionRuns` endpoints (same approach used in Brian Seltzer's reporting scripts).
   - v2 runs endpoint returned sparse/empty data through Helios; errors were silently swallowed returning "No runs yet" for all jobs
   - v1 `protectionRuns` returns complete stats in a single call: start/end times, bytes read from source, bytes written to Cohesity, and per-task success/failure/warning counts
   - Added explicit error logging on failed API calls (status code + truncated response body) instead of silent `return {}`
@@ -262,21 +271,21 @@ Format: `[YYYY-MM-DD] — description`
 ## [2026-04-04] — Fix: Helios cluster list endpoint
 
 ### Fixed
-- `reporting/cohesity_protection_report.py` — Corrected Helios cluster discovery endpoint from `/mcm/clusters/info` (404) to `/mcm/clusters/connectionStatus`.
+- `reporting/protection_group_report.py` — Corrected Helios cluster discovery endpoint from `/mcm/clusters/info` (404) to `/mcm/clusters/connectionStatus`.
 
 ---
 
 ## [2026-04-04] — Fix: Helios SSL on corporate networks
 
 ### Fixed
-- `reporting/cohesity_protection_report.py` — Changed `verify=True` to `verify=False` for Helios cluster discovery call. Corporate laptops with SSL inspection (proxy CA) caused a `ConnectionError` on the initial Helios connection even when the API key was valid.
+- `reporting/protection_group_report.py` — Changed `verify=True` to `verify=False` for Helios cluster discovery call. Corporate laptops with SSL inspection (proxy CA) caused a `ConnectionError` on the initial Helios connection even when the API key was valid.
 
 ---
 
 ## [2026-04-04]
 
 ### Added
-- `reporting/cohesity_protection_report.py` — Initial script. Generates a CSV report of all protection group last-run status, timing, object counts, and data written/read. Supports Cohesity 7.1 and 7.3.
+- `reporting/protection_group_report.py` — Initial script. Generates a CSV report of all protection group last-run status, timing, object counts, and data written/read. Supports Cohesity 7.1 and 7.3.
 
 ### Added — Auth
 - Direct cluster auth: username/password → Bearer token via `/v2/users/sessions`

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cohesity_protection_report.py
+protection_group_report.py
 ------------------------------
 Generates a CSV report of protection group run status for Cohesity clusters
 running version 7.1 or 7.3.
@@ -43,15 +43,15 @@ Version history:
                      <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd.
 
 Usage — last run only (default):
-  python3 cohesity_protection_report.py
-  python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
+  python3 protection_group_report.py
+  python3 protection_group_report.py --cluster <ip> --username admin --domain LOCAL
 
 Usage — historical (date range):
-  python3 cohesity_protection_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
-  python3 cohesity_protection_report.py --apikey <key> --days 30
+  python3 protection_group_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
+  python3 protection_group_report.py --apikey <key> --days 30
 
 Usage — target one cluster via Helios:
-  python3 cohesity_protection_report.py --apikey <key> --cluster <cluster-name> --days 7
+  python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
 __version__ = "3.4"
@@ -720,23 +720,23 @@ def parse_args():
         epilog="""
 Examples:
   First run — prompts for Helios API key, saves to keychain:
-    python3 cohesity_protection_report.py
+    python3 protection_group_report.py
 
   Subsequent runs — key retrieved automatically:
-    python3 cohesity_protection_report.py --days 30
-    python3 cohesity_protection_report.py --start 2026-03-01 --end 2026-04-01
+    python3 protection_group_report.py --days 30
+    python3 protection_group_report.py --start 2026-03-01 --end 2026-04-01
 
   Direct cluster — password prompted and saved to keychain:
-    python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
+    python3 protection_group_report.py --cluster <ip> --username admin --domain LOCAL
 
   One-time Helios key override (not saved):
-    python3 cohesity_protection_report.py --apikey <key>
+    python3 protection_group_report.py --apikey <key>
 
   Clear stored Helios API key:
-    python3 cohesity_protection_report.py --clear-credentials
+    python3 protection_group_report.py --clear-credentials
 
   Clear stored cluster password:
-    python3 cohesity_protection_report.py --clear-credentials --cluster <ip>
+    python3 protection_group_report.py --clear-credentials --cluster <ip>
         """
     )
     parser.add_argument("--cluster",
