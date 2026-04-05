@@ -73,8 +73,6 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 
 ## Report Fields
 
-Size columns are plain GB decimals — the `(GB)` label is in the header only so cells stay numeric for Excel sorting and pivot tables.
-
 Size columns report raw bytes as returned by the API. Apply your own unit conversion (e.g. ÷ 1,099,511,627,776 for TiB to match the Helios UI).
 
 The script automatically queries the timezone from the first cluster via `GET /irisservices/api/v1/public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates. The detected timezone and resolved timestamps are printed at startup for verification.
