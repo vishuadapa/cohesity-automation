@@ -450,7 +450,8 @@ def _add_trend_chart(wb, group_ranges: dict):
         from openpyxl.chart import LineChart, Reference
         from openpyxl.chart.series import SeriesLabel
         from openpyxl.chart.legend import Legend
-        from openpyxl.chart.text import RichText
+        from openpyxl.chart.title import Title
+        from openpyxl.chart.text import RichText as ChartRichText, TxChoice
         from openpyxl.drawing.text import (
             Paragraph, RegularTextRun, RichTextProperties,
             ParagraphProperties, CharacterProperties,
@@ -468,15 +469,21 @@ def _add_trend_chart(wb, group_ranges: dict):
     chart.width  = 28   # cm
 
     # --- Chart title: 16 pt bold ---
-    chart.title = RichText(
-        bodyPr=RichTextProperties(),
-        p=[Paragraph(
-            pPr=ParagraphProperties(
-                defRPr=CharacterProperties(sz=1600, b=True)
-            ),
-            r=[RegularTextRun(t="FortKnox \u2014 Storage Consumed by Protection Group")]
-        )]
-    )
+    # chart.title must be a Title object; RichText goes inside via TxChoice
+    try:
+        chart.title = Title(
+            tx=TxChoice(rich=ChartRichText(
+                bodyPr=RichTextProperties(),
+                p=[Paragraph(
+                    pPr=ParagraphProperties(defRPr=CharacterProperties(sz=1600, b=True)),
+                    r=[RegularTextRun(t="FortKnox \u2014 Storage Consumed by Protection Group")]
+                )]
+            )),
+            overlay=False,
+        )
+    except Exception:
+        # Fallback: plain string (openpyxl auto-wraps in Title internally)
+        chart.title = "FortKnox \u2014 Storage Consumed by Protection Group"
 
     # --- Axis labels ---
     chart.y_axis.title = "Storage Consumed (TB)"
