@@ -18,6 +18,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.5 (2026-04-05) — One chart sheet per cluster (named after the cluster)
+                     instead of a single combined sheet. Each chart shows all
+                     protection groups for that cluster as separate series.
   4.4 (2026-04-05) — Trend chart: 16 pt bold title, legend moved to bottom
                      (no overlap), x-axis labelled "Date" with yyyy-mm-dd
                      format, y-axis labelled "Storage Consumed (TB)". Header
@@ -97,7 +100,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.4"
+__version__ = "4.5"
 
 import argparse
 import getpass
@@ -431,39 +434,20 @@ def _safe_sheet_name(name: str, existing: list) -> str:
     return safe
 
 
-def _add_trend_chart(wb, group_ranges: dict):
+def _make_chart(title: str, report_ws, series_list: list,
+                LineChart, Reference, SeriesLabel, Legend):
     """
-    Add a single "Trend Charts" sheet with a full-screen line chart.
+    Build a single LineChart with consistent styling.
 
-    References the Report sheet directly — no data is duplicated.
-    Each (cluster, group, vault) with at least one non-zero Storage Consumed
-    value becomes one series. All-zero series are excluded.
-
-    group_ranges: {(cluster, group, vault): {"start": int, "end": int,
-                                              "any_nonzero": bool}}
-      start/end are 1-based Excel row indices in the Report sheet (data rows,
-      not including the header at row 1).
-    Storage Consumed is column 9 in the Report sheet.
-    Period Start   is column 1 in the Report sheet.
+    series_list: [(label, start_row, end_row), ...]
+    Returns the chart, or None if every series is all-zero.
     """
-    try:
-        from openpyxl.chart import LineChart, Reference
-        from openpyxl.chart.series import SeriesLabel
-        from openpyxl.chart.legend import Legend
-    except ImportError:
-        print("WARNING: openpyxl chart module unavailable — chart skipped.")
-        return
-
-    report_ws = wb["Report"]
-    multi_cluster = len({k[0] for k in group_ranges}) > 1
-
     chart = LineChart()
     chart.style  = 10
-    chart.height = 16   # cm — leaves room for legend below without overlap
+    chart.height = 16   # cm — room for legend below without overlap
     chart.width  = 28   # cm
 
-    # --- Chart title: 16 pt bold via Title+TxChoice; plain string fallback ---
-    _TITLE = "FortKnox \u2014 Storage Consumed by Protection Group"
+    # --- Chart title: 16 pt bold; plain string fallback ---
     try:
         from openpyxl.chart.title import Title
         from openpyxl.chart.text import RichText as ChartRichText, TxChoice
@@ -476,13 +460,13 @@ def _add_trend_chart(wb, group_ranges: dict):
                 bodyPr=RichTextProperties(),
                 p=[Paragraph(
                     pPr=ParagraphProperties(defRPr=CharacterProperties(sz=1600, b=True)),
-                    r=[RegularTextRun(t=_TITLE)]
+                    r=[RegularTextRun(t=title)]
                 )]
             )),
             overlay=False,
         )
     except Exception:
-        chart.title = _TITLE
+        chart.title = title
 
     # --- Axis labels ---
     chart.y_axis.title = "Storage Consumed (TB)"
@@ -502,46 +486,78 @@ def _add_trend_chart(wb, group_ranges: dict):
     chart.legend = legend
 
     cats_set = False
-    n_series = 0
-
-    # Sort by group name for a consistent legend order
-    for (cluster, group, vault), info in sorted(group_ranges.items(),
-                                                key=lambda x: (x[0][1], x[0][0], x[0][2])):
-        if not info["any_nonzero"]:
-            continue
-
-        start_row = info["start"]
-        end_row   = info["end"]
-
-        # X-axis categories from Period Start column (col 1) of first series
+    for label, start_row, end_row in series_list:
         if not cats_set:
             cats_ref = Reference(report_ws, min_col=1,
                                  min_row=start_row, max_row=end_row)
             chart.set_categories(cats_ref)
             cats_set = True
 
-        # Series data from Storage Consumed (TB) column
         data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
         chart.add_data(data_ref)
-
-        # Build a readable label and assign to the series just appended
-        vault_count = sum(1 for k in group_ranges
-                          if k[0] == cluster and k[1] == group)
-        label = f"{group} ({cluster})" if multi_cluster else group
-        if vault_count > 1:
-            label += f" [{vault}]"
         chart.series[-1].title = SeriesLabel(v=label)
 
-        n_series += 1
+    return chart
 
-    if n_series == 0:
-        print("    No non-zero Storage Consumed data — trend chart skipped.")
+
+def _add_trend_chart(wb, group_ranges: dict):
+    """
+    Add one chart sheet per cluster, each showing all protection groups
+    for that cluster as separate series.
+
+    References the Report sheet directly — no data is duplicated.
+    All-zero series are excluded. Sheet names are truncated to 31 chars.
+
+    group_ranges: {(cluster, group, vault): {"start": int, "end": int,
+                                              "any_nonzero": bool}}
+    """
+    try:
+        from openpyxl.chart import LineChart, Reference
+        from openpyxl.chart.series import SeriesLabel
+        from openpyxl.chart.legend import Legend
+    except ImportError:
+        print("WARNING: openpyxl chart module unavailable — chart skipped.")
         return
 
-    ws = wb.create_sheet(title="Trend Charts")
-    ws.add_chart(chart, "A1")
-    print(f"    Trend chart added: {n_series} series (all-zero groups excluded)")
+    report_ws = wb["Report"]
+
+    # Group series by cluster
+    clusters_seen = sorted({k[0] for k in group_ranges})
+    sheet_names_used = [s.title for s in wb.worksheets]
+    total_charts = 0
+
+    for cluster in clusters_seen:
+        # Collect non-zero series for this cluster, sorted by group name
+        series_list = []
+        for (c, group, vault), info in sorted(group_ranges.items(),
+                                              key=lambda x: (x[0][1], x[0][2])):
+            if c != cluster or not info["any_nonzero"]:
+                continue
+            vault_count = sum(1 for k in group_ranges
+                              if k[0] == cluster and k[1] == group)
+            label = group if vault_count == 1 else f"{group} [{vault}]"
+            series_list.append((label, info["start"], info["end"]))
+
+        if not series_list:
+            print(f"    [{cluster}] all-zero — chart skipped")
+            continue
+
+        title = f"FortKnox \u2014 {cluster}"
+        chart = _make_chart(title, report_ws, series_list,
+                            LineChart, Reference, SeriesLabel, Legend)
+
+        sheet_name = _safe_sheet_name(cluster, sheet_names_used)
+        sheet_names_used.append(sheet_name)
+        ws = wb.create_sheet(title=sheet_name)
+        ws.add_chart(chart, "A1")
+        total_charts += 1
+        print(f"    Chart sheet '{sheet_name}': {len(series_list)} series")
+
+    if total_charts == 0:
+        print("    No non-zero Storage Consumed data — all charts skipped.")
+    else:
+        print(f"    {total_charts} chart sheet(s) added (one per cluster)")
 
 
 def write_excel(rows: list, output_file: str, mode: str):

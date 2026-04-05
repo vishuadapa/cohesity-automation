@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — fortknox_vault_report.py v4.5: One chart sheet per cluster
+
+### Changed
+- `reporting/fortknox_vault_report.py` — `--mode trend` now creates one chart sheet per cluster (sheet named after the cluster) instead of a single combined sheet. Each chart shows all protection groups for that cluster as separate series, with the same styling (16 pt bold title, bottom legend, labelled axes).
+
+---
+
 ## [2026-04-05] — Cohesity green branding across both reports
 
 ### Changed
