@@ -5,6 +5,14 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.8: Zero-transfer caveat + primary field note
+
+### Added
+- `reporting/fortknox_vault_report.py` — Startup note explaining that `Storage Consumed` is the primary metric, and that zero `Logical/Physical Transferred` values are expected for groups with no archival run in the queried window.
+- `reporting/fortknox_vault_report.md` — Same caveat and primary field note added to the Report Fields section.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.7: Trend mode
 
 ### Added

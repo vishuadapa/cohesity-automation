@@ -18,6 +18,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.8 (2026-04-04) — Added startup note explaining zero transfer values and
+                     that Storage Consumed is the primary metric. Same caveat
+                     added to README.
   3.7 (2026-04-04) — Added --mode trend. In trend mode the date range is split
                      into individual calendar days (cluster timezone); each day
                      gets its own API call and rows so users can plot a daily
@@ -66,7 +69,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.7"
+__version__ = "3.8"
 
 import argparse
 import csv
@@ -397,6 +400,12 @@ def main():
     e = datetime.fromtimestamp(end_msecs   / 1000, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
     print(f"[*] Date range: {s} → {e}")
     print(f"[*] Mode: {args.mode}")
+    print()
+    print("    NOTE: Storage Consumed (Bytes) is the primary metric — it reflects total")
+    print("    retained storage in the vault for each protection group across all snapshots.")
+    print("    Logical/Physical Transferred show 0 for groups that had no archival run")
+    print("    within the queried window. This is expected; all rows are included.")
+    print()
 
     # Filter cluster list once
     target_clusters = [c for c in clusters

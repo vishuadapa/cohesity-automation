@@ -8,7 +8,7 @@ Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
 Default date range is the last 7 days.
 
-**Version:** 3.7
+**Version:** 3.8
 
 ---
 
@@ -78,6 +78,10 @@ Size columns are plain GB decimals — the `(GB)` label is in the header only so
 Size columns report raw bytes as returned by the API. Apply your own unit conversion (e.g. ÷ 1,099,511,627,776 for TiB to match the Helios UI).
 
 The script automatically queries the timezone from the first cluster via `GET /irisservices/api/v1/public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates. The detected timezone and resolved timestamps are printed at startup for verification.
+
+> **Note — Primary field:** `Storage Consumed (Bytes)` is the key metric in this report. It reflects the total physical storage retained in the vault for a protection group across all snapshots, regardless of whether a transfer occurred in the queried period.
+
+> **Caveat — Zero transfer values:** `Logical Transferred` and `Physical Transferred` reflect data moved to the vault **within the queried time window only**. The API always returns every protection group that has retained storage in the vault — even if no archival run occurred during the period. Those groups will show `0` for both transfer fields. This is expected and most visible in `--mode trend` where each day is queried separately: groups that archive every few days (per their policy schedule) will show `0` transfer on days with no run. `Storage Consumed` remains populated for all rows.
 
 | Column | Source field | Description |
 |--------|-------------|-------------|
