@@ -1,17 +1,20 @@
 # protection_group_report.py
 
-Generates an Excel report of protection group run status across Cohesity clusters. Default mode reports the last run for each group. Historical mode reports every run within a date range (one row per run).
+Generates an Excel report of protection group activity across Cohesity clusters. Supports two modes:
 
-All timestamps are shown in the **cluster's configured local timezone** (queried at runtime). Size columns report in **GB** as plain decimal numbers — the column header carries the `(GB)` label so cells stay numeric for Excel sorting and pivot tables.
+- **`--mode summary`** (default): last run per group, or all runs within a date range (one row per run). All timestamps in the cluster's local timezone.
+- **`--mode trend`**: daily storage consumed per protection group via the Cohesity time-series statistics API. One row per group per day + a trend chart sheet per cluster. Mirrors the FortKnox report's trend capability for local cluster storage.
 
-Requires a **Helios API key** (for Helios mode) or cluster credentials (for direct mode). Credentials are stored securely in the OS keychain after the first run — never written to disk in plaintext or visible in the process list.
+Requires a **Helios API key** (for Helios mode) or cluster credentials (for direct mode). Credentials are stored securely in the OS keychain after the first run.
+
+> **Storage Consumed note:** In `--mode trend`, `Storage Consumed (Bytes/TB)` is sourced from `GET /statistics/timeSeriesStats` with a daily rollup — this gives a genuine historical value at the end of each day. In `--mode summary`, the column is labelled **Storage Consumed (Current, GB)** because `GET /stats/consumers` is a point-in-time snapshot with no date parameter — it always reflects the current cluster state.
 
 Required packages:
 ```bash
 pip install openpyxl keyring
 ```
 
-**Version:** 3.3
+**Version:** 4.0
 
 ---
 
@@ -21,12 +24,20 @@ pip install openpyxl keyring
 # First run — prompts for Helios API key, saves to keychain:
 python3 protection_group_report.py
 
-# Subsequent runs — key retrieved automatically:
+# Summary mode (default) — last run per group:
 python3 protection_group_report.py --days 30
 python3 protection_group_report.py --start 2026-03-01 --end 2026-04-01
 
+# Trend mode — daily storage consumed per group + chart per cluster:
+python3 protection_group_report.py --mode trend --days 30
+python3 protection_group_report.py --mode trend --start 2026-03-01 --end 2026-04-01
+python3 protection_group_report.py --mode trend          # defaults to last 30 days
+
+# Debug — print raw timeSeriesStats response to verify metric name:
+python3 protection_group_report.py --mode trend --days 7 --debug
+
 # Target one cluster via Helios:
-python3 protection_group_report.py --cluster <cluster-name> --days 7
+python3 protection_group_report.py --mode trend --cluster <cluster-name> --days 30
 
 # Direct cluster — password prompted and saved to keychain:
 python3 protection_group_report.py --cluster <ip> --username admin --domain LOCAL
@@ -34,10 +45,8 @@ python3 protection_group_report.py --cluster <ip> --username admin --domain LOCA
 # One-time Helios key override (not saved):
 python3 protection_group_report.py --apikey <key>
 
-# Remove stored Helios API key:
+# Remove stored credentials:
 python3 protection_group_report.py --clear-credentials
-
-# Remove stored cluster password:
 python3 protection_group_report.py --clear-credentials --cluster <ip>
 ```
 
@@ -55,13 +64,28 @@ Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS
 | `--username` | Username for direct cluster auth (default: `admin`) |
 | `--domain` | Auth domain — `LOCAL` or AD domain name (default: `LOCAL`) |
 | `--output` | Output Excel filename (default: `<script_name>_YYYYMMDD_HHMMSS.xlsx` in current directory) |
-| `--days N` | Historical mode: last N days of runs |
-| `--start YYYY-MM-DD` | Historical mode: start date (inclusive) |
-| `--end YYYY-MM-DD` | Historical mode: end date (inclusive, defaults to today) |
+| `--mode` | `summary` (default): last run or all runs in date range. `trend`: daily storage consumed per group + chart. |
+| `--debug` | Print raw `timeSeriesStats` API response — use to verify metric name if trend data is empty |
+| `--days N` | Last N days (e.g. `--days 30`). Trend mode defaults to 30 days if no range given. |
+| `--start YYYY-MM-DD` | Start date (inclusive) |
+| `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
 
 ---
 
-## Report Fields
+## Trend Mode Report Fields (`--mode trend`)
+
+| Column | Description |
+|--------|-------------|
+| Date | Calendar date (YYYY-MM-DD) of the data point |
+| Cluster | Cluster name |
+| Protection Group | Name of the protection group |
+| Environment | Workload type: `VMware`, `PhysicalFiles`, `Oracle`, etc. |
+| Storage Consumed (Bytes) | Total physical storage retained on the cluster for this group at end of day, across all retained snapshots (post-dedup/compression). Sourced from `timeSeriesStats` with daily rollup. |
+| Storage Consumed (TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
+
+---
+
+## Summary / Historical Mode Report Fields (`--mode summary`)
 
 | Column | Description |
 |--------|-------------|

@@ -32,6 +32,16 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  4.0 (2026-04-05) — Added --mode trend. Queries daily storage consumed per
+                     protection group via GET /statistics/timeSeriesStats with
+                     86400s rollup. One row per group per day. Trend chart
+                     sheet per cluster (same format as fortknox_vault_report).
+                     --debug prints raw timeSeriesStats response for metric
+                     name verification. Storage Consumed renamed to
+                     "Storage Consumed (Current, GB)" in summary/historical
+                     mode to clarify it is always a point-in-time snapshot.
+                     Trend mode defaults to last 30 days when no date range
+                     is given.
   3.4 (2026-04-05) — Report header row color changed to Cohesity green
                      (#00B388).
   3.3 (2026-04-04) — Credentials stored in OS keychain (keyring). --apikey is
@@ -54,7 +64,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "3.4"
+__version__ = "4.0"
 
 import argparse
 import getpass
@@ -450,6 +460,68 @@ def get_runs(base_url: str, headers: dict, group_id: str,
     return r.json().get("runs") or []
 
 
+def get_storage_timeseries(base_url: str, headers: dict, job_id: int,
+                            group_name: str, start_msecs: int, end_msecs: int,
+                            debug: bool = False) -> list:
+    """
+    Fetch daily storage consumed values for a protection group via the
+    Cohesity time-series statistics API.
+
+    Endpoint: GET /irisservices/api/v1/public/statistics/timeSeriesStats
+    Parameters:
+      entityId          = protection job numeric ID
+      metricName        = storageConsumedBytes
+      rollupIntervalSecs = 86400  (one data point per calendar day)
+      rollupFunction    = Last    (value at end of each day)
+
+    Returns: [(date_str "YYYY-MM-DD", consumed_bytes int), ...]
+
+    NOTE: storageConsumedBytes is the total physical storage the group
+    currently retains on the cluster (all snapshots, post-dedup/compression).
+    Because it is queried historically via this endpoint, each daily data
+    point reflects what the cluster held at the end of that day — giving a
+    genuine storage-consumed trend over time.
+    """
+    url = f"{base_url}/irisservices/api/v1/public/statistics/timeSeriesStats"
+    params = {
+        "entityId":           job_id,
+        "metricName":         "storageConsumedBytes",
+        "startTimeMsecs":     start_msecs,
+        "endTimeMsecs":       end_msecs,
+        "rollupFunction":     "Last",
+        "rollupIntervalSecs": 86400,
+    }
+    try:
+        r = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
+        r.raise_for_status()
+        resp = r.json()
+    except Exception as e:
+        print(f"      WARNING: timeSeriesStats failed for '{group_name}': {e}")
+        return []
+
+    if debug:
+        import json as _json
+        print(f"\n[DEBUG] timeSeriesStats '{group_name}' (entityId={job_id}):")
+        print(_json.dumps(resp, indent=2)[:3000])
+
+    data_points = resp.get("dataPointVec") or []
+    if not data_points and debug:
+        print(f"[DEBUG] No dataPointVec returned — metric name may be wrong. "
+              f"Response keys: {list(resp.keys())}")
+
+    result = []
+    for dp in data_points:
+        ts_msecs = dp.get("timestampMsecs", 0)
+        val      = dp.get("data", {})
+        consumed = val.get("int64Value") or val.get("doubleValue") or 0
+        if ts_msecs:
+            date_str = datetime.fromtimestamp(
+                ts_msecs / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            result.append((date_str, int(consumed)))
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Run stats parser
 # ---------------------------------------------------------------------------
@@ -587,12 +659,30 @@ def extract_run_stats(run: dict, tz_name: str = "UTC") -> dict:
 
 # Columns whose headers should carry a "(GB)" unit label.
 # Cell values are plain decimals so Excel can sort/pivot them numerically.
+# "Storage Consumed" is always a current-state snapshot (not per-run historical)
+# so it is labelled "(Current, GB)" to avoid confusion in summary/historical mode.
 _GB_COL_RENAMES = {
     "Data Read":        "Data Read (GB)",
     "Data Written":     "Data Written (GB)",
     "Logical Size":     "Logical Size (GB)",
-    "Storage Consumed": "Storage Consumed (GB)",
+    "Storage Consumed": "Storage Consumed (Current, GB)",
 }
+
+# ---------------------------------------------------------------------------
+# Trend mode columns  (--mode trend)
+# ---------------------------------------------------------------------------
+
+TREND_COLUMNS = [
+    ("Date",                     "date"),
+    ("Cluster",                  "cluster"),
+    ("Protection Group",         "protection_group"),
+    ("Environment",              "environment"),
+    ("Storage Consumed (Bytes)", "storage_consumed_bytes"),
+    ("Storage Consumed (TB)",    "storage_consumed_tb"),
+]
+
+_TREND_TB_COL_IDX = next(i for i, (_, k) in enumerate(TREND_COLUMNS, start=1)
+                          if k == "storage_consumed_tb")   # = 6
 
 
 def build_report(cluster_label: str, base_url: str, headers: dict, groups: list,
@@ -659,7 +749,191 @@ def build_report(cluster_label: str, base_url: str, headers: dict, groups: list,
     return report_rows
 
 
-def write_excel(rows: list, output_file: str):
+def build_trend_report(cluster_label: str, base_url: str, headers: dict,
+                        groups: list, start_usecs: int, end_usecs: int,
+                        debug: bool = False) -> list:
+    """
+    Trend mode: for each protection group, fetch daily storage consumed
+    values via timeSeriesStats and return one row per group per day.
+
+    Columns: Date, Cluster, Protection Group, Environment,
+             Storage Consumed (Bytes), Storage Consumed (TB)
+    """
+    # timeSeriesStats uses milliseconds; protection group API uses microseconds
+    start_msecs = start_usecs // 1000
+    end_msecs   = end_usecs   // 1000
+
+    print("    Fetching cluster timezone...")
+    tz_name = get_cluster_timezone(base_url, headers)
+    print(f"    Cluster timezone: {tz_name}")
+
+    rows = []
+    for group in groups:
+        group_id    = group.get("id", "")
+        group_name  = group.get("name", "Unknown")
+        environment = group.get("environment", "").lstrip("k")
+        num_id      = numeric_group_id(group_id)
+
+        print(f"      [{group_name}] fetching storage trend (entityId={num_id})...")
+        data_points = get_storage_timeseries(
+            base_url, headers, num_id, group_name,
+            start_msecs, end_msecs, debug=debug)
+
+        if not data_points:
+            print(f"        No data returned — group may have no retained snapshots.")
+            continue
+
+        for date_str, consumed_bytes in data_points:
+            rows.append({
+                "date":                  date_str,
+                "cluster":               cluster_label,
+                "protection_group":      group_name,
+                "environment":           environment,
+                "storage_consumed_bytes": consumed_bytes,
+                "storage_consumed_tb":   round(consumed_bytes / 1_000_000_000_000, 4),
+            })
+        print(f"        {len(data_points)} daily data point(s)")
+
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Trend chart helpers  (one sheet per cluster, mirrors fortknox style)
+# ---------------------------------------------------------------------------
+
+def _safe_pg_sheet_name(name: str, existing: list) -> str:
+    """Sanitise and deduplicate an Excel sheet name (max 31 chars)."""
+    safe = name.translate(str.maketrans("", "", r":\/?*[]"))[:31]
+    if safe in existing:
+        safe = safe[:28] + f"_{len(existing)}"
+    return safe
+
+
+def _make_pg_chart(title: str, report_ws, series_list: list,
+                   LineChart, Reference, SeriesLabel, Legend):
+    """
+    Build a styled LineChart for a single cluster's protection groups.
+
+    series_list: [(label, start_row, end_row), ...]
+    X axis: Date (col 1 in Report sheet)
+    Y axis: Storage Consumed (TB) (col _TREND_TB_COL_IDX in Report sheet)
+    Tick density auto-reduces for long ranges.
+    """
+    chart = LineChart()
+    chart.style  = 10
+    chart.height = 16
+    chart.width  = 28
+
+    # Title — 16 pt bold; plain string fallback
+    try:
+        from openpyxl.chart.title import Title
+        from openpyxl.chart.text import RichText as ChartRichText, TxChoice
+        from openpyxl.drawing.text import (
+            Paragraph, RegularTextRun, RichTextProperties,
+            ParagraphProperties, CharacterProperties,
+        )
+        chart.title = Title(
+            tx=TxChoice(rich=ChartRichText(
+                bodyPr=RichTextProperties(),
+                p=[Paragraph(
+                    pPr=ParagraphProperties(defRPr=CharacterProperties(sz=1600, b=True)),
+                    r=[RegularTextRun(t=title)]
+                )]
+            )),
+            overlay=False,
+        )
+    except Exception:
+        chart.title = title
+
+    # Y axis
+    chart.y_axis.title         = "Storage Consumed (TB)"
+    chart.y_axis.numFmt        = "0.000"
+    chart.y_axis.majorTickMark = "out"
+    chart.y_axis.tickLblPos    = "nextTo"
+    chart.y_axis.delete        = False
+
+    # X axis (string dates — no numFmt)
+    chart.x_axis.title         = "Date"
+    chart.x_axis.majorTickMark = "out"
+    chart.x_axis.tickLblPos    = "low"
+    chart.x_axis.delete        = False
+
+    # Auto-reduce tick density for long ranges
+    n_days = max((end - start + 1) for _, start, end in series_list) if series_list else 1
+    if n_days > 60:
+        chart.x_axis.tickLblSkip = 7
+    elif n_days > 14:
+        chart.x_axis.tickLblSkip = 2
+
+    # Legend at bottom, no overlap
+    legend = Legend()
+    legend.position = "b"
+    legend.overlay  = False
+    chart.legend    = legend
+
+    cats_set = False
+    for label, start_row, end_row in series_list:
+        if not cats_set:
+            chart.set_categories(
+                Reference(report_ws, min_col=1, min_row=start_row, max_row=end_row))
+            cats_set = True
+        chart.add_data(
+            Reference(report_ws, min_col=_TREND_TB_COL_IDX,
+                      min_row=start_row, max_row=end_row))
+        chart.series[-1].title = SeriesLabel(v=label)
+
+    return chart
+
+
+def _add_pg_trend_charts(wb, group_ranges: dict):
+    """
+    Add one chart sheet per cluster to wb.
+
+    group_ranges: {(cluster, group): {"start": int, "end": int, "any_nonzero": bool}}
+    """
+    try:
+        from openpyxl.chart import LineChart, Reference
+        from openpyxl.chart.series import SeriesLabel
+        from openpyxl.chart.legend import Legend
+    except ImportError:
+        print("WARNING: openpyxl chart module unavailable — charts skipped.")
+        return
+
+    report_ws = wb["Report"]
+    clusters  = sorted({k[0] for k in group_ranges})
+    used_names = [s.title for s in wb.worksheets]
+    total = 0
+
+    for cluster in clusters:
+        series_list = []
+        for (c, group), info in sorted(group_ranges.items(), key=lambda x: x[0][1]):
+            if c != cluster or not info["any_nonzero"]:
+                continue
+            series_list.append((group, info["start"], info["end"]))
+
+        if not series_list:
+            print(f"    [{cluster}] all-zero — chart skipped")
+            continue
+
+        chart = _make_pg_chart(
+            f"Local Storage \u2014 {cluster}",
+            report_ws, series_list,
+            LineChart, Reference, SeriesLabel, Legend)
+
+        sheet_name = _safe_pg_sheet_name(cluster, used_names)
+        used_names.append(sheet_name)
+        ws = wb.create_sheet(title=sheet_name)
+        ws.add_chart(chart, "A1")
+        total += 1
+        print(f"    Chart sheet '{sheet_name}': {len(series_list)} series")
+
+    if total == 0:
+        print("    No non-zero Storage Consumed data — all charts skipped.")
+    else:
+        print(f"    {total} chart sheet(s) added (one per cluster)")
+
+
+def write_excel(rows: list, output_file: str, mode: str = "summary"):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -676,20 +950,49 @@ def write_excel(rows: list, output_file: str):
     ws = wb.active
     ws.title = "Report"
 
-    headers = list(rows[0].keys())
-
     # Styled header row — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(fill_type="solid", fgColor="00B388")
-    ws.append(headers)
-    for cell in ws[1]:
-        cell.font      = header_font
-        cell.fill      = header_fill
-        cell.alignment = Alignment(horizontal="center")
 
-    # Data rows
-    for row in rows:
-        ws.append(list(row.values()))
+    if mode == "trend":
+        # --- Trend mode: fixed TREND_COLUMNS, sorted for contiguous chart series ---
+        col_names = [col for col, _ in TREND_COLUMNS]
+        ws.append(col_names)
+        for cell in ws[1]:
+            cell.font      = header_font
+            cell.fill      = header_fill
+            cell.alignment = Alignment(horizontal="center")
+
+        sorted_rows = sorted(rows, key=lambda r: (
+            r["protection_group"], r["cluster"], r["date"]))
+
+        group_ranges: dict = {}
+        for excel_row, r in enumerate(sorted_rows, start=2):
+            key      = (r["cluster"], r["protection_group"])
+            consumed = int(r.get("storage_consumed_bytes") or 0)
+            if key not in group_ranges:
+                group_ranges[key] = {"start": excel_row, "end": excel_row,
+                                     "any_nonzero": consumed > 0}
+            else:
+                group_ranges[key]["end"] = excel_row
+                if consumed > 0:
+                    group_ranges[key]["any_nonzero"] = True
+
+        for r in sorted_rows:
+            ws.append([r[key] for _, key in TREND_COLUMNS])
+
+        headers = col_names
+
+    else:
+        # --- Summary / historical mode: dynamic headers from row keys ---
+        headers = list(rows[0].keys())
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font      = header_font
+            cell.fill      = header_fill
+            cell.alignment = Alignment(horizontal="center")
+        for row in rows:
+            ws.append(list(row.values()))
 
     # Auto-fit column widths
     for col_idx, header in enumerate(headers, start=1):
@@ -703,6 +1006,10 @@ def write_excel(rows: list, output_file: str):
 
     # Freeze header row
     ws.freeze_panes = "A2"
+
+    # Trend charts — one sheet per cluster
+    if mode == "trend":
+        _add_pg_trend_charts(wb, group_ranges)
 
     wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}")
@@ -752,14 +1059,21 @@ Examples:
     parser.add_argument("--output", default=None,
                         help="Output Excel filename (default: <script_name>_YYYYMMDD_HHMMSS.xlsx "
                              "in current directory)")
+    parser.add_argument("--mode", choices=["summary", "trend"], default="summary",
+                        help="summary (default): last run per group or all runs in date range. "
+                             "trend: daily storage consumed per group via timeSeriesStats — "
+                             "one row per group per day + trend chart per cluster. "
+                             "Defaults to last 30 days when no date range is given.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print raw timeSeriesStats API response for metric verification")
 
-    dg = parser.add_argument_group("Historical date range (optional)")
+    dg = parser.add_argument_group("Date range (required for trend mode; optional for summary)")
     dg.add_argument("--start", metavar="YYYY-MM-DD",
-                    help="Start date for historical runs (inclusive)")
+                    help="Start date (inclusive)")
     dg.add_argument("--end",   metavar="YYYY-MM-DD",
-                    help="End date for historical runs (inclusive, defaults to today)")
+                    help="End date (inclusive, defaults to today)")
     dg.add_argument("--days",  type=int, metavar="N",
-                    help="Shortcut: last N days (e.g. --days 30)")
+                    help="Last N days (e.g. --days 30)")
     return parser.parse_args()
 
 
@@ -791,18 +1105,35 @@ def main():
     output_path = args.output or default_output_path()
     start_usecs, end_usecs = resolve_date_range(args)
 
+    # Trend mode requires a date range — default to last 30 days
+    if args.mode == "trend" and start_usecs is None:
+        start_usecs = int((datetime.now(tz=timezone.utc) - timedelta(days=30))
+                          .timestamp() * 1_000_000)
+        end_usecs   = now_usecs()
+        print("[*] Trend mode: no date range given — defaulting to last 30 days")
+
     print(f"\n[*] Protection group report  v{__version__}")
+    print(f"[*] Mode:   {args.mode}")
     print(f"[*] Output: {output_path}")
+
     if start_usecs:
         s = datetime.fromtimestamp(start_usecs / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
         e = datetime.fromtimestamp(end_usecs   / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
-        print(f"[*] Historical mode: {s} → {e} (timestamps in cluster local time)")
+        print(f"[*] Date range: {s} → {e}")
     else:
-        print("[*] Default mode: last run per protection group")
+        print("[*] Date range: last run per protection group (no range given)")
+
+    if args.mode == "trend":
+        print()
+        print("    NOTE: Storage Consumed (Bytes/TB) reflects total physical storage retained")
+        print("    on the cluster for each protection group at the end of each day,")
+        print("    across all retained snapshots (post-dedup/compression).")
+        print("    Queried via GET /statistics/timeSeriesStats with daily rollup.")
+        print()
 
     all_rows = []
 
-    # --- Helios mode (API key present, or no --cluster given, or --cluster is a name not an IP) ---
+    # --- Helios mode ---
     if _is_helios_mode(args):
         api_key = get_api_key(args.apikey)
         print(f"[*] Helios mode — connecting to {HELIOS_HOST}")
@@ -818,10 +1149,16 @@ def main():
 
             print("    Fetching protection groups...")
             groups = get_protection_groups(base_url, h)
-            if groups:
+            if not groups:
+                continue
+
+            if args.mode == "trend":
+                rows = build_trend_report(cluster_name, base_url, h, groups,
+                                          start_usecs, end_usecs, debug=args.debug)
+            else:
                 rows = build_report(cluster_name, base_url, h, groups,
                                     start_usecs, end_usecs)
-                all_rows.extend(rows)
+            all_rows.extend(rows)
 
     # --- Direct cluster mode ---
     elif args.cluster:
@@ -832,16 +1169,21 @@ def main():
         base_url = f"https://{args.cluster}"
 
         print("[*] Fetching protection groups...")
-        groups   = get_protection_groups(base_url, headers)
-        all_rows = build_report(args.cluster, base_url, headers, groups,
-                                start_usecs, end_usecs)
+        groups = get_protection_groups(base_url, headers)
+
+        if args.mode == "trend":
+            all_rows = build_trend_report(args.cluster, base_url, headers, groups,
+                                          start_usecs, end_usecs, debug=args.debug)
+        else:
+            all_rows = build_report(args.cluster, base_url, headers, groups,
+                                    start_usecs, end_usecs)
 
     else:
         print("ERROR: Provide --apikey / keychain (Helios) or --cluster + credentials (direct).")
         print("       Run with --help for usage examples.")
         sys.exit(1)
 
-    write_excel(all_rows, output_path)
+    write_excel(all_rows, output_path, mode=args.mode)
 
 
 def _is_helios_mode(args) -> bool:

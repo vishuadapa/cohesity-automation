@@ -5,6 +5,16 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — protection_group_report.py v4.0: --mode trend + storage consumed history
+
+### Added
+- `reporting/protection_group_report.py` — `--mode trend`: queries daily storage consumed per protection group via `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (metric: `storageConsumedBytes`, `rollupIntervalSecs=86400`, `rollupFunction=Last`). Produces one row per group per day and adds a trend chart sheet per cluster — identical format to `fortknox_vault_report.py` (bottom legend, labelled axes, auto tick density). Default date range in trend mode is last 30 days. `--debug` prints raw `timeSeriesStats` response for metric name verification.
+
+### Changed
+- `Storage Consumed (GB)` renamed to `Storage Consumed (Current, GB)` in summary/historical mode to make explicit that `GET /stats/consumers` is always a point-in-time snapshot with no date parameter. Trend mode uses the historical time-series endpoint instead.
+
+---
+
 ## [2026-04-05] — Rename: cohesity_protection_report → protection_group_report
 
 ### Changed
