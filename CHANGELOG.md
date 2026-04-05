@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.5: Timezone-aware date boundaries
+
+### Added
+- `reporting/fortknox_vault_report.py` — `--timezone TZ` flag (default: `UTC`). When `--start`/`--end`/`--days` are used, start-of-day and end-of-day boundaries are now computed in the given timezone instead of UTC. The Helios UI uses the cluster's local time (e.g. `America/Chicago` for US Central / GMT-6) for its date range — setting `--timezone` to match eliminates the window mismatch. Startup banner now shows the resolved timestamps with timezone label for verification.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.4: Exact timestamp flags + debug URL
 
 ### Added

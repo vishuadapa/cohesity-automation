@@ -18,6 +18,11 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.5 (2026-04-04) — Added --timezone flag. Date boundaries (--start/--end/
+                     --days) are now computed in the specified timezone so the
+                     script matches the Helios UI which uses the cluster's local
+                     time (e.g. America/Chicago for US Central). Startup banner
+                     shows resolved timestamps with timezone label.
   3.4 (2026-04-04) — Added --start-msecs / --end-msecs flags to pass exact
                      millisecond timestamps from Chrome DevTools, eliminating
                      time boundary mismatches vs the UI. --debug now prints
@@ -50,13 +55,14 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.4"
+__version__ = "3.5"
 
 import argparse
 import csv
 import sys
 import urllib3
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
@@ -187,23 +193,34 @@ def fmt_bytes(byte_count) -> str:
     return str(int(byte_count))
 
 
+def resolve_tz(tz_name: str):
+    """Return a tzinfo object for tz_name, falling back to UTC on error."""
+    try:
+        return ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, KeyError):
+        print(f"WARNING: Unknown timezone '{tz_name}', falling back to UTC.")
+        return timezone.utc
+
+
 def now_msecs() -> int:
     return int(datetime.now(tz=timezone.utc).timestamp() * 1000)
 
 
-def date_to_msecs(date_str: str) -> int:
+def date_to_msecs(date_str: str, tz) -> int:
+    """Start of day (00:00:00) in tz."""
     try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz)
     except ValueError:
         print(f"ERROR: Invalid date '{date_str}'. Use YYYY-MM-DD.")
         sys.exit(1)
     return int(dt.timestamp() * 1000)
 
 
-def end_of_day_msecs(date_str: str) -> int:
+def end_of_day_msecs(date_str: str, tz) -> int:
+    """End of day (23:59:59) in tz."""
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d").replace(
-            hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            hour=23, minute=59, second=59, tzinfo=tz)
     except ValueError:
         print(f"ERROR: Invalid date '{date_str}'. Use YYYY-MM-DD.")
         sys.exit(1)
@@ -216,15 +233,16 @@ def resolve_date_range(args) -> tuple:
         start = int(args.start_msecs) if args.start_msecs else now_msecs() - 7 * 86400 * 1000
         end   = int(args.end_msecs)   if args.end_msecs   else now_msecs()
         return start, end
+    tz = resolve_tz(args.timezone)
     if args.days:
-        start = datetime.now(tz=timezone.utc) - timedelta(days=args.days)
+        start = datetime.now(tz=tz) - timedelta(days=args.days)
         return int(start.timestamp() * 1000), now_msecs()
     if args.start:
-        return date_to_msecs(args.start), \
-               (end_of_day_msecs(args.end) if args.end else now_msecs())
+        return date_to_msecs(args.start, tz), \
+               (end_of_day_msecs(args.end, tz) if args.end else now_msecs())
     if args.end:
         print("WARNING: --end given without --start. Ignoring.")
-    start = datetime.now(tz=timezone.utc) - timedelta(days=7)
+    start = datetime.now(tz=tz) - timedelta(days=7)
     return int(start.timestamp() * 1000), now_msecs()
 
 
@@ -290,6 +308,10 @@ Examples:
     dg.add_argument("--days",        type=int, metavar="N",        help="Last N days")
     dg.add_argument("--start",       metavar="YYYY-MM-DD",         help="Start date (inclusive)")
     dg.add_argument("--end",         metavar="YYYY-MM-DD",         help="End date (inclusive, defaults to today)")
+    dg.add_argument("--timezone",    metavar="TZ", default="UTC",
+                    help="Timezone for interpreting --start/--end dates (default: UTC). "
+                         "Set to the cluster's local timezone to match the Helios UI. "
+                         "Example: America/Chicago (US Central), America/New_York, America/Los_Angeles")
     dg.add_argument("--start-msecs", metavar="MS", dest="start_msecs",
                     help="Exact start timestamp in milliseconds (paste from Chrome DevTools URL)")
     dg.add_argument("--end-msecs",   metavar="MS", dest="end_msecs",
@@ -301,10 +323,12 @@ def main():
     args = parse_args()
     start_msecs, end_msecs = resolve_date_range(args)
 
-    s = datetime.fromtimestamp(start_msecs / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-    e = datetime.fromtimestamp(end_msecs   / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    tz = resolve_tz(args.timezone)
+    s = datetime.fromtimestamp(start_msecs / 1000, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
+    e = datetime.fromtimestamp(end_msecs   / 1000, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
     print(f"\n[*] FortKnox data transfer report  v{__version__}")
     print(f"[*] Date range: {s} → {e}")
+    print(f"[*] Timezone:   {args.timezone}")
     if args.cluster:
         print(f"[*] Cluster filter: '{args.cluster}'")
     if args.vault:

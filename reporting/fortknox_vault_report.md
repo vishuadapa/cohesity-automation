@@ -8,7 +8,7 @@ Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
 Default date range is the last 7 days.
 
-**Version:** 3.4
+**Version:** 3.5
 
 ---
 
@@ -61,6 +61,7 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
+| `--timezone TZ` | Timezone for interpreting `--start`/`--end`/`--days` boundaries (default: `UTC`). Set to the cluster's local timezone to match how the Helios UI computes day boundaries. Example: `America/Chicago` (US Central), `America/New_York`, `America/Los_Angeles` |
 | `--start-msecs MS` | Exact start timestamp in milliseconds — paste directly from Chrome DevTools request URL to match UI exactly |
 | `--end-msecs MS` | Exact end timestamp in milliseconds — paste directly from Chrome DevTools request URL |
 | `--debug` | Print exact request URL and raw response sample for comparison with Chrome DevTools |
