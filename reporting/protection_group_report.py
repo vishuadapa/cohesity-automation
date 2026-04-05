@@ -32,6 +32,13 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  4.3 (2026-04-05) — Trend mode now includes all summary mode columns
+                     alongside the storage trend. Run detail columns (type,
+                     status, SLA, objects, sizes, replication, archive) are
+                     aggregated across all runs that started on each day:
+                     counts/sizes summed, last run used for status/targets,
+                     SLA "Yes" if any run violated. Runs On Day shows the
+                     count (0 = no backup ran that day).
   4.2 (2026-04-05) — Added Policy Name, Is Active, Is Paused columns to
                      trend mode output. Updated README trend field table.
   4.1 (2026-04-05) — Replaced timeSeriesStats approach (returned 400 —
@@ -65,7 +72,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.2"
+__version__ = "4.3"
 
 import argparse
 import getpass
@@ -614,6 +621,7 @@ _GB_COL_RENAMES = {
 # ---------------------------------------------------------------------------
 
 TREND_COLUMNS = [
+    # Group identity / context
     ("Date",                     "date"),
     ("Cluster",                  "cluster"),
     ("Protection Group",         "protection_group"),
@@ -621,8 +629,30 @@ TREND_COLUMNS = [
     ("Policy Name",              "policy_name"),
     ("Is Active",                "is_active"),
     ("Is Paused",                "is_paused"),
+    # Storage trend (chart Y axis)
     ("Storage Consumed (Bytes)", "storage_consumed_bytes"),
     ("Storage Consumed (TB)",    "storage_consumed_tb"),
+    # Run detail for the day (aggregated across all runs that started on this date)
+    ("Runs On Day",              "runs_on_day"),
+    ("Run Type",                 "run_type"),
+    ("Sla Violated",             "sla_violated"),
+    ("Run Status",               "run_status"),
+    ("Run Start",                "run_start"),
+    ("Run End",                  "run_end"),
+    ("Duration Mins",            "duration_mins"),
+    ("Snapshot Expiry",          "snapshot_expiry"),
+    ("Objects Succeeded",        "objects_succeeded"),
+    ("Objects Failed",           "objects_failed"),
+    ("Objects Canceled",         "objects_canceled"),
+    ("Data Read (GB)",           "data_read"),
+    ("Data Written (GB)",        "data_written"),
+    ("Logical Size (GB)",        "logical_size"),
+    ("Replication Status",       "replication_status"),
+    ("Replication Targets",      "replication_targets"),
+    ("Replication Expiry",       "replication_expiry"),
+    ("Archive Status",           "archive_status"),
+    ("Archive Targets",          "archive_targets"),
+    ("Archive Expiry",           "archive_expiry"),
 ]
 
 _TREND_TB_COL_IDX = next(i for i, (_, k) in enumerate(TREND_COLUMNS, start=1)
@@ -691,6 +721,98 @@ def build_report(cluster_label: str, base_url: str, headers: dict, groups: list,
             )
 
     return report_rows
+
+
+def _sum_gb(values: list) -> str:
+    """Sum a list of GB decimal strings (some may be 'N/A'). Returns formatted GB string."""
+    total = 0.0
+    has_value = False
+    for v in values:
+        if v != "N/A":
+            try:
+                total += float(v)
+                has_value = True
+            except (ValueError, TypeError):
+                pass
+    return f"{total:.2f}" if has_value else "N/A"
+
+
+def aggregate_day_runs(runs: list, tz_name: str = "UTC") -> dict:
+    """
+    Aggregate run-level stats for all runs that started on a given day.
+
+    0 runs  → all fields "N/A" / "No runs"
+    1 run   → pass-through from extract_run_stats
+    N runs  → object counts and data sizes summed; last run used for
+              status, type, targets, and expiry; SLA = "Yes" if any run
+              violated; Run Start = earliest, Run End = latest.
+    """
+    _empty = {
+        "runs_on_day":         0,
+        "run_type":            "N/A",
+        "sla_violated":        "N/A",
+        "run_status":          "No runs",
+        "run_start":           "N/A",
+        "run_end":             "N/A",
+        "duration_mins":       "N/A",
+        "snapshot_expiry":     "N/A",
+        "objects_succeeded":   "N/A",
+        "objects_failed":      "N/A",
+        "objects_canceled":    "N/A",
+        "data_read":           "N/A",
+        "data_written":        "N/A",
+        "logical_size":        "N/A",
+        "replication_status":  "N/A",
+        "replication_targets": "N/A",
+        "replication_expiry":  "N/A",
+        "archive_status":      "N/A",
+        "archive_targets":     "N/A",
+        "archive_expiry":      "N/A",
+    }
+
+    if not runs:
+        return _empty
+
+    stats = [extract_run_stats(r, tz_name) for r in runs]
+    last  = stats[-1]
+
+    if len(stats) == 1:
+        return {"runs_on_day": 1, **last}
+
+    # Multiple runs on the same day — aggregate
+    def _sum_int(key):
+        total = sum(s[key] for s in stats if isinstance(s.get(key), int))
+        return total if total or any(isinstance(s.get(key), int) for s in stats) else "N/A"
+
+    def _sum_dur(key):
+        vals = [s[key] for s in stats if isinstance(s.get(key), (int, float))]
+        return round(sum(vals), 1) if vals else "N/A"
+
+    starts = [s["run_start"] for s in stats if s.get("run_start") not in ("N/A", None)]
+    ends   = [s["run_end"]   for s in stats if s.get("run_end")   not in ("N/A", None)]
+
+    return {
+        "runs_on_day":         len(runs),
+        "run_type":            last["run_type"],
+        "sla_violated":        "Yes" if any(s["sla_violated"] == "Yes" for s in stats) else "No",
+        "run_status":          last["run_status"],
+        "run_start":           starts[0]  if starts else "N/A",
+        "run_end":             ends[-1]   if ends   else "N/A",
+        "duration_mins":       _sum_dur("duration_mins"),
+        "snapshot_expiry":     last["snapshot_expiry"],
+        "objects_succeeded":   _sum_int("objects_succeeded"),
+        "objects_failed":      _sum_int("objects_failed"),
+        "objects_canceled":    _sum_int("objects_canceled"),
+        "data_read":           _sum_gb([s["data_read"]    for s in stats]),
+        "data_written":        _sum_gb([s["data_written"] for s in stats]),
+        "logical_size":        _sum_gb([s["logical_size"] for s in stats]),
+        "replication_status":  last["replication_status"],
+        "replication_targets": last["replication_targets"],
+        "replication_expiry":  last["replication_expiry"],
+        "archive_status":      last["archive_status"],
+        "archive_targets":     last["archive_targets"],
+        "archive_expiry":      last["archive_expiry"],
+    }
 
 
 def build_trend_report(cluster_label: str, base_url: str, headers: dict,
@@ -767,7 +889,18 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                        if ex else "never")
                 print(f"  start={s_s}  expiry={e_s}  bytes_written={bw:,}")
 
-        # For each day, sum bytes for snapshots active at end of that day
+        # Index runs by the calendar date they started (for run detail columns)
+        from collections import defaultdict
+        runs_by_date: dict = defaultdict(list)
+        for run in all_runs:
+            backup  = run.get("localBackupInfo") or {}
+            start_t = backup.get("startTimeUsecs", 0)
+            if start_t:
+                run_date = datetime.fromtimestamp(
+                    start_t / 1e6, tz=timezone.utc).date()
+                runs_by_date[run_date].append(run)
+
+        # For each day: storage estimate + aggregated run stats
         for d in date_list:
             day_usecs = int(datetime(d.year, d.month, d.day, 23, 59, 59,
                                      tzinfo=timezone.utc).timestamp() * 1_000_000)
@@ -775,6 +908,8 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                 bw for (st, ex, bw) in snapshots
                 if st <= day_usecs and (ex == 0 or ex > day_usecs)
             )
+            run_stats = aggregate_day_runs(runs_by_date.get(d, []), tz_name)
+
             rows.append({
                 "date":                   d.isoformat(),
                 "cluster":                cluster_label,
@@ -785,6 +920,7 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                 "is_paused":              is_paused,
                 "storage_consumed_bytes": consumed,
                 "storage_consumed_tb":    round(consumed / 1_000_000_000_000, 4),
+                **run_stats,
             })
 
         print(f"        {len(date_list)} daily estimates from {len(snapshots)} snapshot(s)")

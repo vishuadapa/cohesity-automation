@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — protection_group_report.py v4.3: full column parity in trend mode
+
+### Added
+- `reporting/protection_group_report.py` — `--mode trend` now includes all summary mode columns alongside the daily storage data. Run detail columns (Run Type, SLA Violated, Run Status, Run Start/End, Duration, Snapshot Expiry, Object counts, Data Read/Written/Logical Size, Replication and Archive status/targets/expiry) are aggregated across all runs that started on each day: counts and sizes are summed; status, type, targets, and expiry reflect the last run; SLA is "Yes" if any run violated. A new `Runs On Day` column shows how many runs occurred (`0` = no backup ran that day, storage consumed is still shown).
+
+---
+
 ## [2026-04-05] — protection_group_report.py v4.2: restore context columns in trend mode
 
 ### Added

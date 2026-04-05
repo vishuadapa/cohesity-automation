@@ -14,7 +14,7 @@ Required packages:
 pip install openpyxl keyring
 ```
 
-**Version:** 4.2
+**Version:** 4.3
 
 ---
 
@@ -83,8 +83,30 @@ Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS
 | Policy Name | Protection policy assigned to the group |
 | Is Active | `True` if the group is active |
 | Is Paused | `True` if the group is currently paused |
-| Storage Consumed (Bytes) | Storage consumed by this protection group at the end of each day, calculated by summing `bytesWritten` across all snapshots retained on that day. |
+| Storage Consumed (Bytes) | Storage consumed at the end of each day, calculated by summing `bytesWritten` across all snapshots retained on that day. |
 | Storage Consumed (TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
+| Runs On Day | Number of protection runs that started on this date (`0` = no run scheduled/completed) |
+| Run Type | Type of the last run on this date: `Regular`, `Full`, `Log`, `System` |
+| Sla Violated | `Yes` if any run on this date breached the policy SLA window |
+| Run Status | Status of the last run: `Succeeded`, `Failed`, `SucceededWithWarning`, `Canceled`, `Running` |
+| Run Start | Earliest run start timestamp on this date (cluster local time) |
+| Run End | Latest run end timestamp on this date (cluster local time) |
+| Duration Mins | Total wall-clock minutes across all runs on this date |
+| Snapshot Expiry | Snapshot expiry of the last run on this date |
+| Objects Succeeded | Sum of successfully backed-up objects across all runs on this date |
+| Objects Failed | Sum of failed objects across all runs on this date |
+| Objects Canceled | Sum of canceled objects across all runs on this date |
+| Data Read (GB) | Total bytes read from source across all runs on this date |
+| Data Written (GB) | Total bytes written to Cohesity storage across all runs on this date |
+| Logical Size (GB) | Total logical size of data protected across all runs on this date |
+| Replication Status | Replication status of the last run (pipe-separated if multiple targets) |
+| Replication Targets | Replication target cluster names of the last run |
+| Replication Expiry | Replication expiry dates of the last run |
+| Archive Status | Archive status of the last run (pipe-separated if multiple targets) |
+| Archive Targets | Archive target names of the last run |
+| Archive Expiry | Archive expiry dates of the last run |
+
+> **Multi-run days:** Object counts and data sizes are summed across all runs. Status, type, targets, and expiry reflect the last run. `Runs On Day = 0` means the group had no backup run on that date — storage consumed is still shown from the retained snapshot estimate.
 
 ---
 
