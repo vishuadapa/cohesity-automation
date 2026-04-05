@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.2: Switch to TB units
+
+### Changed
+- `reporting/fortknox_vault_report.py` — Size columns changed from GB (÷ 1e9) to TB (÷ 1e12). Helios UI shows binary TiB; 1 TiB = 1.09951 TB so script TB values are ~9.95% higher than UI TiB figures — correct decimal equivalent. Column headers updated from `(GB)` to `(TB)`. Precision increased to 4 decimal places.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.1: Correct GB conversion + period timestamp columns
 
 ### Changed

@@ -8,7 +8,7 @@ Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
 Default date range is the last 7 days.
 
-**Version:** 3.1
+**Version:** 3.2
 
 ---
 
@@ -69,7 +69,7 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 
 Size columns are plain GB decimals — the `(GB)` label is in the header only so cells stay numeric for Excel sorting and pivot tables.
 
-Size columns use decimal SI conversion: 1 GB = 1,000,000,000 bytes. The UI displays binary units (GiB/TiB); values here will be ~7% larger than the UI figures as a result.
+Size columns use decimal TB (1 TB = 1,000,000,000,000 bytes). The Helios UI displays binary TiB; since 1 TiB = 1.09951 TB, script values will be ~9.95% higher than UI figures — this is the correct decimal equivalent. Use 4 decimal places to preserve precision at TB scale.
 
 | Column | Source field | Description |
 |--------|-------------|-------------|
@@ -79,9 +79,9 @@ Size columns use decimal SI conversion: 1 GB = 1,000,000,000 bytes. The UI displ
 | Vault Name | `vaultName` | FortKnox vault target name |
 | Vault Type | `vaultType` | Cloud platform: `kAzure`, `kAmazon`, etc. |
 | Protection Group | `protectionJobName` | Protection group name |
-| Logical Transferred (GB) | `numLogicalBytesTransferred` | Logical bytes sent to vault (pre-compression) |
-| Physical Transferred (GB) | `numPhysicalBytesTransferred` | Bytes actually sent over the network (post-compression) |
-| Storage Consumed (GB) | `storageConsumed` | Physical storage currently retained in this vault for this protection group across all retained snapshots |
+| Logical Transferred (TB) | `numLogicalBytesTransferred` | Logical bytes sent to vault (pre-compression) |
+| Physical Transferred (TB) | `numPhysicalBytesTransferred` | Bytes actually sent over the network (post-compression) |
+| Storage Consumed (TB) | `storageConsumed` | Physical storage currently retained in this vault for this protection group across all retained snapshots |
 
 ---
 
