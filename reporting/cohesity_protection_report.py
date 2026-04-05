@@ -32,6 +32,8 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  3.4 (2026-04-05) — Report header row color changed to Cohesity green
+                     (#00B388).
   3.3 (2026-04-04) — Credentials stored in OS keychain (keyring). --apikey is
                      optional (prompted on first run, saved for future). Direct
                      cluster passwords also stored in keychain. --clear-credentials
@@ -52,7 +54,7 @@ Usage — target one cluster via Helios:
   python3 cohesity_protection_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "3.3"
+__version__ = "3.4"
 
 import argparse
 import getpass
@@ -676,9 +678,9 @@ def write_excel(rows: list, output_file: str):
 
     headers = list(rows[0].keys())
 
-    # Styled header row
+    # Styled header row — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="1F4E79")
+    header_fill = PatternFill(fill_type="solid", fgColor="00B388")
     ws.append(headers)
     for cell in ws[1]:
         cell.font      = header_font

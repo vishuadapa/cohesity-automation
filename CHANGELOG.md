@@ -5,6 +5,14 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — Cohesity green branding across both reports
+
+### Changed
+- `reporting/fortknox_vault_report.py` v4.4 — Trend chart improvements: 16 pt bold chart title, legend repositioned to bottom (no overlap with chart area), x-axis labelled "Date" with `yyyy-mm-dd` tick format, y-axis labelled "Storage Consumed (TB)" with 4-decimal number format. Report header row color changed from dark blue to Cohesity green (`#00B388`).
+- `reporting/cohesity_protection_report.py` v3.4 — Report header row color changed to Cohesity green (`#00B388`).
+
+---
+
 ## [2026-04-04] — cohesity_protection_report.py v3.3: Secure credential storage + Excel output
 
 ### Changed

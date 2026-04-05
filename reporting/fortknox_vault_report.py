@@ -18,6 +18,10 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.4 (2026-04-05) — Trend chart: 16 pt bold title, legend moved to bottom
+                     (no overlap), x-axis labelled "Date" with yyyy-mm-dd
+                     format, y-axis labelled "Storage Consumed (TB)". Header
+                     row color changed to Cohesity green (#00B388).
   4.3 (2026-04-04) — Secure credential storage via OS keychain (keyring).
                      --apikey is now optional; key is prompted once, saved to
                      the system keychain, and retrieved automatically on future
@@ -93,7 +97,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.3"
+__version__ = "4.4"
 
 import argparse
 import getpass
@@ -445,6 +449,12 @@ def _add_trend_chart(wb, group_ranges: dict):
     try:
         from openpyxl.chart import LineChart, Reference
         from openpyxl.chart.series import SeriesLabel
+        from openpyxl.chart.legend import Legend
+        from openpyxl.chart.text import RichText
+        from openpyxl.drawing.text import (
+            Paragraph, RegularTextRun, RichTextProperties,
+            ParagraphProperties, CharacterProperties,
+        )
     except ImportError:
         print("WARNING: openpyxl chart module unavailable — chart skipped.")
         return
@@ -453,12 +463,37 @@ def _add_trend_chart(wb, group_ranges: dict):
     multi_cluster = len({k[0] for k in group_ranges}) > 1
 
     chart = LineChart()
-    chart.title  = "FortKnox — Storage Consumed by Protection Group"
     chart.style  = 10
-    chart.height = 18   # cm  ≈ fits a standard laptop screen
+    chart.height = 16   # cm — leaves room for legend below without overlap
     chart.width  = 28   # cm
+
+    # --- Chart title: 16 pt bold ---
+    chart.title = RichText(
+        bodyPr=RichTextProperties(),
+        p=[Paragraph(
+            pPr=ParagraphProperties(
+                defRPr=CharacterProperties(sz=1600, b=True)
+            ),
+            r=[RegularTextRun(t="FortKnox \u2014 Storage Consumed by Protection Group")]
+        )]
+    )
+
+    # --- Axis labels ---
     chart.y_axis.title = "Storage Consumed (TB)"
+    chart.y_axis.numFmt = "0.0000"
+    chart.y_axis.majorTickMark = "out"
+    chart.y_axis.tickLblPos = "nextTo"
+
     chart.x_axis.title = "Date"
+    chart.x_axis.numFmt = "yyyy-mm-dd"
+    chart.x_axis.majorTickMark = "out"
+    chart.x_axis.tickLblPos = "low"
+
+    # --- Legend at bottom, no overlap ---
+    legend = Legend()
+    legend.position = "b"
+    legend.overlay  = False
+    chart.legend = legend
 
     cats_set = False
     n_series = 0
@@ -522,9 +557,9 @@ def write_excel(rows: list, output_file: str, mode: str):
 
     headers = [col for col, _ in COLUMNS]
 
-    # Header row styling
+    # Header row styling — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="1F4E79")
+    header_fill = PatternFill(fill_type="solid", fgColor="00B388")
     ws.append(headers)
     for cell in ws[1]:
         cell.font      = header_font
