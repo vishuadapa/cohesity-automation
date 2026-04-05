@@ -32,9 +32,16 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  3.3 (2026-04-04) — Credentials stored in OS keychain (keyring). --apikey is
+                     optional (prompted on first run, saved for future). Direct
+                     cluster passwords also stored in keychain. --clear-credentials
+                     flag to remove stored credentials. Output changed from CSV to
+                     Excel (.xlsx) with styled headers, frozen row, and auto-fit
+                     columns. Output filename auto-generated as
+                     <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd.
 
 Usage — last run only (default):
-  python3 cohesity_protection_report.py --apikey <key>
+  python3 cohesity_protection_report.py
   python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
 
 Usage — historical (date range):
@@ -45,10 +52,11 @@ Usage — target one cluster via Helios:
   python3 cohesity_protection_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "3.2"
+__version__ = "3.3"
 
 import argparse
-import csv
+import getpass
+import os
 import sys
 import urllib3
 from datetime import datetime, timedelta, timezone
@@ -57,6 +65,108 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+_KR_SVC_HELIOS  = "cohesity_helios"
+_KR_USER_HELIOS = "apikey"
+_KR_SVC_CLUSTER = "cohesity_cluster"
+
+
+# ---------------------------------------------------------------------------
+# Credential store  (OS keychain via keyring)
+# ---------------------------------------------------------------------------
+
+def _keyring_available() -> bool:
+    try:
+        import keyring          # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def get_api_key(cli_key: str = None) -> str:
+    """
+    Return the Helios API key. Priority:
+      1. --apikey CLI argument (one-time use, not stored)
+      2. Key stored in the OS keychain
+      3. Interactive prompt — key is saved to keychain for future runs
+    """
+    if cli_key:
+        return cli_key
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KR_SVC_HELIOS, _KR_USER_HELIOS)
+        if stored:
+            print("[*] Using Helios API key stored in system keychain.")
+            return stored
+        print("[*] No stored Helios API key found.")
+    else:
+        print("    NOTE: 'keyring' not installed — key will not be saved.")
+        print("          Install with:  pip install keyring")
+    key = getpass.getpass("    Enter Helios API key (will be saved to keychain): ").strip()
+    if not key:
+        print("ERROR: API key cannot be empty.")
+        sys.exit(1)
+    if _keyring_available():
+        import keyring
+        keyring.set_password(_KR_SVC_HELIOS, _KR_USER_HELIOS, key)
+        print("[*] Helios API key saved to system keychain.")
+    return key
+
+
+def get_cluster_password(cluster: str, username: str, domain: str) -> str:
+    """
+    Return the password for direct cluster auth. Prompts if not in keychain,
+    then saves it for future runs.
+    """
+    kr_user = f"{cluster}:{domain}:{username}"
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KR_SVC_CLUSTER, kr_user)
+        if stored:
+            print(f"[*] Using stored password for {domain}\\{username}@{cluster}")
+            return stored
+    pwd = getpass.getpass(f"Password for {domain}\\{username}@{cluster}: ").strip()
+    if not pwd:
+        print("ERROR: Password cannot be empty.")
+        sys.exit(1)
+    if _keyring_available():
+        import keyring
+        keyring.set_password(_KR_SVC_CLUSTER, kr_user, pwd)
+        print(f"[*] Password saved to system keychain for {domain}\\{username}@{cluster}")
+    return pwd
+
+
+def clear_stored_credentials(cluster: str = None, username: str = "admin",
+                              domain: str = "LOCAL"):
+    """
+    Remove stored credentials from the OS keychain.
+    Without --cluster: clears the Helios API key.
+    With --cluster:    clears the direct-cluster password.
+    """
+    if not _keyring_available():
+        print("ERROR: 'keyring' package not installed. Nothing to clear.")
+        sys.exit(1)
+    import keyring
+    if cluster:
+        kr_user = f"{cluster}:{domain}:{username}"
+        if keyring.get_password(_KR_SVC_CLUSTER, kr_user):
+            keyring.delete_password(_KR_SVC_CLUSTER, kr_user)
+            print(f"[*] Stored password for {domain}\\{username}@{cluster} removed.")
+        else:
+            print(f"[*] No stored password found for {domain}\\{username}@{cluster}.")
+    else:
+        if keyring.get_password(_KR_SVC_HELIOS, _KR_USER_HELIOS):
+            keyring.delete_password(_KR_SVC_HELIOS, _KR_USER_HELIOS)
+            print("[*] Stored Helios API key removed from system keychain.")
+        else:
+            print("[*] No stored Helios API key found — nothing to clear.")
+
+
+def default_output_path() -> str:
+    """Auto-generate output path: <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd."""
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
+    return os.path.join(os.getcwd(), f"{script_name}_{timestamp}.xlsx")
 
 
 # ---------------------------------------------------------------------------
@@ -547,14 +657,52 @@ def build_report(cluster_label: str, base_url: str, headers: dict, groups: list,
     return report_rows
 
 
-def write_csv(rows: list, output_file: str):
+def write_excel(rows: list, output_file: str):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print("ERROR: openpyxl is required.  Install with:  pip install openpyxl")
+        sys.exit(1)
+
     if not rows:
         print("No data to write.")
         return
-    with open(output_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Report"
+
+    headers = list(rows[0].keys())
+
+    # Styled header row
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(fill_type="solid", fgColor="1F4E79")
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font      = header_font
+        cell.fill      = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Data rows
+    for row in rows:
+        ws.append(list(row.values()))
+
+    # Auto-fit column widths
+    for col_idx, header in enumerate(headers, start=1):
+        col_letter = get_column_letter(col_idx)
+        max_len = max(
+            len(str(header)),
+            max((len(str(ws.cell(r, col_idx).value or ""))
+                 for r in range(2, ws.max_row + 1)), default=0)
+        )
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 45)
+
+    # Freeze header row
+    ws.freeze_panes = "A2"
+
+    wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}")
     print(f"    Total rows: {len(rows)}")
 
@@ -569,33 +717,39 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  Last run (default):
-    python3 cohesity_protection_report.py --apikey <key>
+  First run — prompts for Helios API key, saves to keychain:
+    python3 cohesity_protection_report.py
 
-  Last 30 days:
-    python3 cohesity_protection_report.py --apikey <key> --days 30
+  Subsequent runs — key retrieved automatically:
+    python3 cohesity_protection_report.py --days 30
+    python3 cohesity_protection_report.py --start 2026-03-01 --end 2026-04-01
 
-  Specific date range:
-    python3 cohesity_protection_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
-
-  Direct cluster:
+  Direct cluster — password prompted and saved to keychain:
     python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
 
-Auth modes:
-  Helios (all clusters): --apikey <key>
-  Helios (one cluster):  --apikey <key> --cluster <cluster-name>
-  Direct cluster:        --cluster <ip> --username admin --domain LOCAL
+  One-time Helios key override (not saved):
+    python3 cohesity_protection_report.py --apikey <key>
+
+  Clear stored Helios API key:
+    python3 cohesity_protection_report.py --clear-credentials
+
+  Clear stored cluster password:
+    python3 cohesity_protection_report.py --clear-credentials --cluster <ip>
         """
     )
     parser.add_argument("--cluster",
-                        help="Cluster hostname/IP (direct) or cluster name filter (Helios)")
+                        help="Cluster hostname/IP (direct auth) or name filter (Helios)")
     parser.add_argument("--username", default="admin",
                         help="Username for direct cluster auth (default: admin)")
     parser.add_argument("--domain", default="LOCAL",
                         help="Auth domain: LOCAL or AD domain name (default: LOCAL)")
-    parser.add_argument("--apikey", help="Helios API key")
-    parser.add_argument("--output", default="protection_report.csv",
-                        help="Output CSV filename (default: protection_report.csv)")
+    parser.add_argument("--apikey", default=None,
+                        help="Helios API key (optional — keychain used if omitted)")
+    parser.add_argument("--clear-credentials", action="store_true", dest="clear_creds",
+                        help="Remove stored credentials from keychain and exit")
+    parser.add_argument("--output", default=None,
+                        help="Output Excel filename (default: <script_name>_YYYYMMDD_HHMMSS.xlsx "
+                             "in current directory)")
 
     dg = parser.add_argument_group("Historical date range (optional)")
     dg.add_argument("--start", metavar="YYYY-MM-DD",
@@ -621,59 +775,76 @@ def resolve_date_range(args):
 
 
 def main():
-    import getpass
     args = parse_args()
+
+    # Handle --clear-credentials before anything else
+    if args.clear_creds:
+        clear_stored_credentials(
+            cluster=args.cluster if args.cluster and not _is_helios_mode(args) else None,
+            username=args.username,
+            domain=args.domain,
+        )
+        sys.exit(0)
+
+    output_path = args.output or default_output_path()
     start_usecs, end_usecs = resolve_date_range(args)
 
+    print(f"\n[*] Protection group report  v{__version__}")
+    print(f"[*] Output: {output_path}")
     if start_usecs:
-        # Use UTC formatting just for the startup banner
         s = datetime.fromtimestamp(start_usecs / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
         e = datetime.fromtimestamp(end_usecs   / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
-        print(f"\n[*] Historical mode: {s} → {e} (timestamps in cluster local time)")
+        print(f"[*] Historical mode: {s} → {e} (timestamps in cluster local time)")
     else:
-        print("\n[*] Default mode: last run per protection group")
+        print("[*] Default mode: last run per protection group")
 
     all_rows = []
 
-    # --- Helios mode ---
-    if args.apikey:
+    # --- Helios mode (API key present, or no --cluster given, or --cluster is a name not an IP) ---
+    if _is_helios_mode(args):
+        api_key = get_api_key(args.apikey)
         print(f"[*] Helios mode — connecting to {HELIOS_HOST}")
-        clusters = get_helios_clusters(args.apikey, filter_name=args.cluster)
+        clusters = get_helios_clusters(api_key, filter_name=args.cluster)
 
         for cluster_info in clusters:
             cluster_name = cluster_info.get("name", "Unknown")
             cluster_id   = cluster_info.get("clusterId")
             print(f"\n[*] Processing cluster: {cluster_name} (id={cluster_id})")
 
-            helios_headers = make_helios_headers(args.apikey, cluster_id=cluster_id)
+            h        = make_helios_headers(api_key, cluster_id=cluster_id)
             base_url = f"https://{HELIOS_HOST}"
 
             print("    Fetching protection groups...")
-            groups = get_protection_groups(base_url, helios_headers)
+            groups = get_protection_groups(base_url, h)
             if groups:
-                rows = build_report(cluster_name, base_url, helios_headers, groups,
+                rows = build_report(cluster_name, base_url, h, groups,
                                     start_usecs, end_usecs)
                 all_rows.extend(rows)
 
     # --- Direct cluster mode ---
     elif args.cluster:
         print(f"[*] Direct mode — connecting to: {args.cluster}")
-        password = getpass.getpass(f"Password for {args.domain}\\{args.username}: ")
+        password = get_cluster_password(args.cluster, args.username, args.domain)
         token    = get_auth_token(args.cluster, args.username, password, args.domain)
         headers  = make_headers(token)
         base_url = f"https://{args.cluster}"
 
         print("[*] Fetching protection groups...")
-        groups = get_protection_groups(base_url, headers)
+        groups   = get_protection_groups(base_url, headers)
         all_rows = build_report(args.cluster, base_url, headers, groups,
                                 start_usecs, end_usecs)
 
     else:
-        print("ERROR: Provide --apikey (Helios) or --cluster + credentials (direct).")
+        print("ERROR: Provide --apikey / keychain (Helios) or --cluster + credentials (direct).")
         print("       Run with --help for usage examples.")
         sys.exit(1)
 
-    write_csv(all_rows, args.output)
+    write_excel(all_rows, output_path)
+
+
+def _is_helios_mode(args) -> bool:
+    """True when running against Helios (API key present, or no cluster given)."""
+    return bool(args.apikey) or not args.cluster
 
 
 if __name__ == "__main__":

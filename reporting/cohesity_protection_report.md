@@ -1,31 +1,47 @@
 # cohesity_protection_report.py
 
-Generates a CSV report of protection group run status across Cohesity clusters. Default mode reports the last run for each group. Historical mode reports every run within a date range (one row per run).
+Generates an Excel report of protection group run status across Cohesity clusters. Default mode reports the last run for each group. Historical mode reports every run within a date range (one row per run).
 
 All timestamps are shown in the **cluster's configured local timezone** (queried at runtime). Size columns report in **GB** as plain decimal numbers — the column header carries the `(GB)` label so cells stay numeric for Excel sorting and pivot tables.
 
-**Version:** 3.2
+Requires a **Helios API key** (for Helios mode) or cluster credentials (for direct mode). Credentials are stored securely in the OS keychain after the first run — never written to disk in plaintext or visible in the process list.
+
+Required packages:
+```bash
+pip install openpyxl keyring
+```
+
+**Version:** 3.3
 
 ---
 
 ## Usage
 
 ```bash
-# Last run (default):
-python3 cohesity_protection_report.py --apikey <key>
+# First run — prompts for Helios API key, saves to keychain:
+python3 cohesity_protection_report.py
 
-# Last 30 days:
-python3 cohesity_protection_report.py --apikey <key> --days 30
-
-# Specific date range:
-python3 cohesity_protection_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
+# Subsequent runs — key retrieved automatically:
+python3 cohesity_protection_report.py --days 30
+python3 cohesity_protection_report.py --start 2026-03-01 --end 2026-04-01
 
 # Target one cluster via Helios:
-python3 cohesity_protection_report.py --apikey <key> --cluster <cluster-name> --days 7
+python3 cohesity_protection_report.py --cluster <cluster-name> --days 7
 
-# Direct cluster:
+# Direct cluster — password prompted and saved to keychain:
 python3 cohesity_protection_report.py --cluster <ip> --username admin --domain LOCAL
+
+# One-time Helios key override (not saved):
+python3 cohesity_protection_report.py --apikey <key>
+
+# Remove stored Helios API key:
+python3 cohesity_protection_report.py --clear-credentials
+
+# Remove stored cluster password:
+python3 cohesity_protection_report.py --clear-credentials --cluster <ip>
 ```
+
+Output file is created automatically as `cohesity_protection_report_YYYYMMDD_HHMMSS.xlsx` in the directory where the script is run.
 
 ---
 
@@ -33,11 +49,12 @@ python3 cohesity_protection_report.py --cluster <ip> --username admin --domain L
 
 | Option | Description |
 |--------|-------------|
-| `--apikey` | Helios API key (runs against all connected clusters) |
+| `--apikey` | Helios API key (optional — keychain used if omitted, or you will be prompted) |
+| `--clear-credentials` | Remove stored credentials from the OS keychain and exit. Without `--cluster`: clears Helios API key. With `--cluster`: clears the cluster password. |
 | `--cluster` | Cluster name filter (Helios) or IP/hostname (direct auth) |
 | `--username` | Username for direct cluster auth (default: `admin`) |
 | `--domain` | Auth domain — `LOCAL` or AD domain name (default: `LOCAL`) |
-| `--output` | Output CSV filename (default: `protection_report.csv`) |
+| `--output` | Output Excel filename (default: `<script_name>_YYYYMMDD_HHMMSS.xlsx` in current directory) |
 | `--days N` | Historical mode: last N days of runs |
 | `--start YYYY-MM-DD` | Historical mode: start date (inclusive) |
 | `--end YYYY-MM-DD` | Historical mode: end date (inclusive, defaults to today) |
