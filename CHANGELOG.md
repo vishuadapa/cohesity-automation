@@ -5,6 +5,16 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — fortknox_vault_report.py v4.6: Fix axis labels + auto tick density
+
+### Fixed
+- `reporting/fortknox_vault_report.py` — X-axis date labels were invisible because `numFmt = "yyyy-mm-dd"` was set on a category axis whose values are strings — Excel tried to parse them as date serials and rendered nothing. Removed `numFmt` from the category axis; strings now display as-is. Added `delete = False` on both axes to guarantee labels always render.
+
+### Added
+- X-axis tick label density auto-adjusts to prevent overlapping dates: ≤14 days shows every date, 15–60 days shows every 2nd date, >60 days shows every 7th date (weekly).
+
+---
+
 ## [2026-04-05] — fortknox_vault_report.py v4.5: One chart sheet per cluster
 
 ### Changed

@@ -18,6 +18,10 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.6 (2026-04-05) — Fixed axis labels not rendering: removed numFmt from
+                     category (string) x-axis, added delete=False on both
+                     axes. X-axis tick density auto-reduces: every day for
+                     ≤14 days, every 2 days for 15-60 days, weekly for >60.
   4.5 (2026-04-05) — One chart sheet per cluster (named after the cluster)
                      instead of a single combined sheet. Each chart shows all
                      protection groups for that cluster as separate series.
@@ -100,7 +104,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.5"
+__version__ = "4.6"
 
 import argparse
 import getpass
@@ -440,7 +444,10 @@ def _make_chart(title: str, report_ws, series_list: list,
     Build a single LineChart with consistent styling.
 
     series_list: [(label, start_row, end_row), ...]
-    Returns the chart, or None if every series is all-zero.
+    X-axis tick density is reduced automatically for long date ranges:
+      ≤14 days  → every day
+      15-60 days → every 2 days
+      >60 days   → every 7 days (weekly)
     """
     chart = LineChart()
     chart.style  = 10
@@ -468,16 +475,26 @@ def _make_chart(title: str, report_ws, series_list: list,
     except Exception:
         chart.title = title
 
-    # --- Axis labels ---
-    chart.y_axis.title = "Storage Consumed (TB)"
-    chart.y_axis.numFmt = "0.0000"
+    # --- Y axis (value) ---
+    chart.y_axis.title        = "Storage Consumed (TB)"
+    chart.y_axis.numFmt       = "0.000"
     chart.y_axis.majorTickMark = "out"
-    chart.y_axis.tickLblPos = "nextTo"
+    chart.y_axis.tickLblPos   = "nextTo"
+    chart.y_axis.delete       = False
 
-    chart.x_axis.title = "Date"
-    chart.x_axis.numFmt = "yyyy-mm-dd"
+    # --- X axis (category — string dates, no numFmt) ---
+    chart.x_axis.title        = "Date"
     chart.x_axis.majorTickMark = "out"
-    chart.x_axis.tickLblPos = "low"
+    chart.x_axis.tickLblPos   = "low"
+    chart.x_axis.delete       = False
+
+    # Reduce tick density for long ranges so dates don't overlap
+    n_days = max((end - start + 1) for _, start, end in series_list) if series_list else 1
+    if n_days > 60:
+        chart.x_axis.tickLblSkip = 7    # weekly label
+    elif n_days > 14:
+        chart.x_axis.tickLblSkip = 2    # every-other-day label
+    # else: ≤14 days — show every date, leave tickLblSkip at default
 
     # --- Legend at bottom, no overlap ---
     legend = Legend()
