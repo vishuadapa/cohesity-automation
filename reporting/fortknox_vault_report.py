@@ -18,6 +18,12 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.3 (2026-04-04) — Secure credential storage via OS keychain (keyring).
+                     --apikey is now optional; key is prompted once, saved to
+                     the system keychain, and retrieved automatically on future
+                     runs. --clear-credentials removes the stored key.
+                     Output filename auto-generated as
+                     <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd.
   4.2 (2026-04-04) — Added Storage Consumed (TB) column (÷ 1,000,000,000,000,
                      4 decimal places). Trend chart now plots TB values instead
                      of raw bytes for human-readable Y axis.
@@ -81,16 +87,17 @@ Version history:
   1.0 (2026-04-04) — Initial release.
 
 Usage:
-  python3 fortknox_vault_report.py --apikey <key>
-  python3 fortknox_vault_report.py --apikey <key> --days 30
-  python3 fortknox_vault_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
-  python3 fortknox_vault_report.py --apikey <key> --cluster <cluster-name>
-  python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
+  python3 fortknox_vault_report.py                         # prompts for key on first run
+  python3 fortknox_vault_report.py --days 30               # uses stored key
+  python3 fortknox_vault_report.py --mode trend --days 30  # trend mode
+  python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.2"
+__version__ = "4.3"
 
 import argparse
+import getpass
+import os
 import sys
 import urllib3
 from datetime import datetime, timedelta, timezone
@@ -100,7 +107,79 @@ import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-HELIOS_HOST = "helios.cohesity.com"
+HELIOS_HOST     = "helios.cohesity.com"
+_KEYRING_SVC    = "cohesity_helios"
+_KEYRING_USER   = "apikey"
+
+
+# ---------------------------------------------------------------------------
+# Credential store  (OS keychain via keyring)
+# ---------------------------------------------------------------------------
+
+def _keyring_available() -> bool:
+    try:
+        import keyring          # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def get_api_key(cli_key: str = None) -> str:
+    """
+    Return the Helios API key using this priority order:
+      1. --apikey CLI argument (one-time use, not stored)
+      2. Key stored in the OS keychain from a previous run
+      3. Interactive prompt — key is then saved to the keychain
+
+    The key is never written to disk in plaintext and never visible
+    in the process list.
+    """
+    if cli_key:
+        return cli_key
+
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KEYRING_SVC, _KEYRING_USER)
+        if stored:
+            print("[*] Using API key stored in system keychain.")
+            return stored
+        print("[*] No stored API key found.")
+        key = getpass.getpass("    Enter Helios API key (will be saved to keychain): ").strip()
+        if not key:
+            print("ERROR: API key cannot be empty.")
+            sys.exit(1)
+        keyring.set_password(_KEYRING_SVC, _KEYRING_USER, key)
+        print("[*] API key saved to system keychain.")
+        return key
+    else:
+        print("    NOTE: 'keyring' package not installed — key will not be saved.")
+        print("          Install with:  pip install keyring")
+        key = getpass.getpass("    Enter Helios API key: ").strip()
+        if not key:
+            print("ERROR: API key cannot be empty.")
+            sys.exit(1)
+        return key
+
+
+def clear_stored_credentials():
+    """Remove the stored API key from the OS keychain."""
+    if not _keyring_available():
+        print("ERROR: 'keyring' package not installed. Nothing to clear.")
+        sys.exit(1)
+    import keyring
+    existing = keyring.get_password(_KEYRING_SVC, _KEYRING_USER)
+    if existing:
+        keyring.delete_password(_KEYRING_SVC, _KEYRING_USER)
+        print("[*] Stored API key removed from system keychain.")
+    else:
+        print("[*] No stored API key found — nothing to clear.")
+
+
+def default_output_path() -> str:
+    """Auto-generate output filename: <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd."""
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    script_name = os.path.splitext(os.path.basename(__file__))[0]
+    return os.path.join(os.getcwd(), f"{script_name}_{timestamp}.xlsx")
 
 
 # ---------------------------------------------------------------------------
@@ -509,18 +588,31 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python3 fortknox_vault_report.py --apikey <key>
-  python3 fortknox_vault_report.py --apikey <key> --days 30
-  python3 fortknox_vault_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
-  python3 fortknox_vault_report.py --apikey <key> --cluster <name>
-  python3 fortknox_vault_report.py --apikey <key> --vault <name>
+  First run (prompts for API key, saves to keychain):
+    python3 fortknox_vault_report.py
+
+  Subsequent runs (key retrieved from keychain automatically):
+    python3 fortknox_vault_report.py --days 30
+    python3 fortknox_vault_report.py --start 2026-03-01 --end 2026-04-01 --mode trend
+    python3 fortknox_vault_report.py --cluster <name>
+
+  One-time override (key not saved):
+    python3 fortknox_vault_report.py --apikey <key>
+
+  Clear stored credentials:
+    python3 fortknox_vault_report.py --clear-credentials
         """
     )
-    parser.add_argument("--apikey",  required=True, help="Helios API key")
+    parser.add_argument("--apikey",  default=None,
+                        help="Helios API key (optional — if omitted the key stored in the "
+                             "system keychain is used, or you will be prompted)")
+    parser.add_argument("--clear-credentials", action="store_true", dest="clear_creds",
+                        help="Remove the stored API key from the system keychain and exit")
     parser.add_argument("--cluster", help="Filter to a specific cluster (partial name match)")
     parser.add_argument("--vault",   help="Filter to a specific vault (partial name match)")
-    parser.add_argument("--output",  default="fortknox_report.xlsx",
-                        help="Output Excel filename (default: fortknox_report.xlsx)")
+    parser.add_argument("--output",  default=None,
+                        help="Output Excel filename (default: <script_name>_YYYYMMDD_HHMMSS.xlsx "
+                             "in the current directory)")
     parser.add_argument("--mode",    choices=["summary", "trend"], default="summary",
                         help="summary (default): one row per protection group covering the full "
                              "date range. trend: one row per protection group per day, enabling "
@@ -542,13 +634,22 @@ Examples:
 def main():
     args = parse_args()
 
+    # Handle --clear-credentials before doing anything else
+    if args.clear_creds:
+        clear_stored_credentials()
+        sys.exit(0)
+
+    api_key     = get_api_key(args.apikey)
+    output_path = args.output or default_output_path()
+
     print(f"\n[*] FortKnox data transfer report  v{__version__}")
+    print(f"[*] Output: {output_path}")
     if args.cluster:
         print(f"[*] Cluster filter: '{args.cluster}'")
     if args.vault:
         print(f"[*] Vault filter:   '{args.vault}'")
 
-    clusters = get_helios_clusters(args.apikey)
+    clusters = get_helios_clusters(api_key)
 
     # Pick the reference cluster for timezone detection:
     # use the first cluster matching --cluster filter, or the first overall.
@@ -560,7 +661,7 @@ def main():
 
     ref = ref_clusters[0]
     print(f"[*] Querying timezone from '{ref['name']}'...")
-    tz_name = get_cluster_timezone(args.apikey, ref["clusterId"], ref["name"])
+    tz_name = get_cluster_timezone(api_key, ref["clusterId"], ref["name"])
     tz      = resolve_tz(tz_name)
     print(f"[*] Cluster timezone: {tz_name}")
 
@@ -585,7 +686,7 @@ def main():
     for c in target_clusters:
         cname = c["name"]
         print(f"  [{cname}] fetching vault IDs...")
-        vault_ids = get_fortknox_vault_ids(args.apikey, c["clusterId"])
+        vault_ids = get_fortknox_vault_ids(api_key, c["clusterId"])
         if not vault_ids:
             print(f"  [{cname}] no FortKnox vaults — skipping")
         else:
@@ -600,7 +701,7 @@ def main():
     if args.mode == "summary":
         for cname, (cid, vault_ids) in cluster_vault_ids.items():
             print(f"  [{cname}] fetching summary report...")
-            rows = get_data_transfer_report(args.apikey, cid, cname,
+            rows = get_data_transfer_report(api_key, cid, cname,
                                             vault_ids, start_msecs, end_msecs,
                                             debug=args.debug)
             if args.vault:
@@ -618,7 +719,7 @@ def main():
         for cname, (cid, vault_ids) in cluster_vault_ids.items():
             print(f"  [{cname}]")
             for day_start, day_end, date_str in days:
-                rows = get_data_transfer_report(args.apikey, cid, cname,
+                rows = get_data_transfer_report(api_key, cid, cname,
                                                 vault_ids, day_start, day_end,
                                                 debug=args.debug)
                 if args.vault:
@@ -629,7 +730,7 @@ def main():
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
-    write_excel(all_rows, args.output, args.mode)
+    write_excel(all_rows, output_path, args.mode)
 
 
 if __name__ == "__main__":

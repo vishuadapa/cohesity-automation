@@ -4,16 +4,16 @@ Reports FortKnox (RPaaS) vault data transfer by protection group using the
 cluster-level **"Data Transferred to External Targets"** report API, routed
 through Helios per-cluster. One row per protection group per vault.
 
-Requires a **Helios API key** — FortKnox is a Helios-managed feature.
+Requires a **Helios API key** — FortKnox is a Helios-managed feature. The key is stored securely in the OS keychain after the first run; it is never written to disk in plaintext or visible in the process list.
 
-Requires **openpyxl** for Excel output:
+Required packages:
 ```bash
-pip install openpyxl
+pip install openpyxl keyring
 ```
 
 Default date range is the last 7 days.
 
-**Version:** 4.2
+**Version:** 4.3
 
 ---
 
@@ -34,27 +34,23 @@ per FortKnox vault ID on the cluster).
 ## Usage
 
 ```bash
-# Last 7 days summary (default):
+# First run — prompts for API key and saves it to the OS keychain:
+python3 fortknox_vault_report.py
+
+# All subsequent runs — key retrieved from keychain automatically:
+python3 fortknox_vault_report.py --days 30
+python3 fortknox_vault_report.py --days 30 --mode trend
+python3 fortknox_vault_report.py --start 2026-03-01 --end 2026-04-01 --mode trend
+python3 fortknox_vault_report.py --cluster <cluster-name>
+
+# One-time override with a different key (not saved):
 python3 fortknox_vault_report.py --apikey <key>
 
-# Last 30 days summary:
-python3 fortknox_vault_report.py --apikey <key> --days 30
-
-# Trend mode — one row per protection group per day for the last 30 days:
-python3 fortknox_vault_report.py --apikey <key> --days 30 --mode trend
-
-# Trend mode over a specific date range:
-python3 fortknox_vault_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01 --mode trend
-
-# Filter to one cluster:
-python3 fortknox_vault_report.py --apikey <key> --cluster <cluster-name>
-
-# Filter to one vault:
-python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
-
-# Debug (print raw API response):
-python3 fortknox_vault_report.py --apikey <key> --debug
+# Remove stored credentials:
+python3 fortknox_vault_report.py --clear-credentials
 ```
+
+Output file is created automatically as `fortknox_vault_report_YYYYMMDD_HHMMSS.xlsx` in the directory where the script is run.
 
 ---
 
@@ -62,10 +58,11 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 
 | Option | Description |
 |--------|-------------|
-| `--apikey` | Helios API key (required) |
+| `--apikey` | Helios API key (optional — if omitted, the key stored in the OS keychain is used, or you will be prompted) |
+| `--clear-credentials` | Remove the stored API key from the OS keychain and exit |
 | `--cluster` | Filter to a specific cluster (partial name match) |
 | `--vault` | Filter to a specific vault (partial name match) |
-| `--output` | Output Excel filename (default: `fortknox_report.xlsx`) |
+| `--output` | Output Excel filename (default: `<script_name>_YYYYMMDD_HHMMSS.xlsx` in current directory) |
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
