@@ -18,6 +18,12 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.0 (2026-04-04) — Combined all protection groups onto a single "Trend Charts"
+                     sheet. Pivot table (Date × Group) formatted as an Excel
+                     Table with ▼ dropdown filters on every column header for
+                     group/date navigation (native slicers require pivot tables
+                     not supported by openpyxl). Chart sums storage across
+                     vaults per group per day. One series per protection group.
   3.9 (2026-04-04) — Output changed from CSV to Excel (.xlsx) via openpyxl.
                      In --mode trend, one chart sheet is added per protection
                      group showing Storage Consumed over time. Multiple vaults
@@ -74,7 +80,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.9"
+__version__ = "4.0"
 
 import argparse
 import sys
@@ -327,66 +333,111 @@ def _safe_sheet_name(name: str, existing: list) -> str:
     return safe
 
 
-def _add_trend_charts(wb, all_rows: list):
+def _add_trend_chart(wb, all_rows: list):
     """
-    Add one chart sheet per (cluster, protection_group).
-    Each sheet contains the date/storage-consumed data plus a line chart.
-    If a protection group archives to multiple vaults, each vault becomes
-    a separate series on the same chart.
+    Add a single "Trend Charts" sheet containing:
+      - A pivot table: rows = dates, columns = protection groups,
+        values = Storage Consumed (bytes, summed across vaults per group per day).
+      - The table is formatted as an Excel Table so every column header has a
+        dropdown filter (▼) — click any header to show/hide specific groups or
+        dates. This is the closest equivalent to a slicer without pivot tables.
+      - A line chart below the table with one series per protection group.
+
+    Note: native Excel slicers require a PivotTable, which openpyxl does not
+    support. The column-header dropdowns provide the same filter navigation.
     """
     try:
         from openpyxl.chart import LineChart, Reference
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+        from openpyxl.utils import get_column_letter
+        from openpyxl.styles import Font, Alignment
     except ImportError:
-        print("WARNING: openpyxl chart module unavailable — charts skipped.")
+        print("WARNING: openpyxl modules unavailable — trend chart skipped.")
         return
 
-    # Build: {(cluster, group): {vault: {date: consumed_bytes}}}
-    pg_data: dict = {}
+    # --- build pivot: {date: {(cluster, group): total_consumed}} ---
+    # Multiple vaults for the same group on the same day are summed.
+    multi_cluster = len({r["cluster"] for r in all_rows}) > 1
+    pg_keys  = sorted({(r["cluster"], r["protection_group"]) for r in all_rows},
+                      key=lambda k: (k[1], k[0]))
+    all_dates = sorted({r["period_start"] for r in all_rows})
+
+    pivot: dict = {}
     for r in all_rows:
-        key   = (r["cluster"], r["protection_group"])
-        vault = r["vault_name"]
-        date  = r["period_start"]
-        consumed = int(r.get("storage_consumed_bytes") or 0)
-        pg_data.setdefault(key, {}).setdefault(vault, {})[date] = consumed
+        key = (r["cluster"], r["protection_group"])
+        pivot.setdefault(r["period_start"], {})
+        pivot[r["period_start"]][key] = (
+            pivot[r["period_start"]].get(key, 0) +
+            int(r.get("storage_consumed_bytes") or 0)
+        )
 
-    for (cluster, group), vault_data in sorted(pg_data.items()):
-        all_dates = sorted({d for vd in vault_data.values() for d in vd})
-        vaults    = sorted(vault_data.keys())
-        nrows     = len(all_dates)
+    # Column labels — include cluster only when multiple clusters present
+    col_labels = [f"{g} ({c})" if multi_cluster else g for c, g in pg_keys]
+    ncols = len(pg_keys)
+    nrows = len(all_dates)
 
-        sheet_name = _safe_sheet_name(group, [s.title for s in wb.worksheets])
-        ws = wb.create_sheet(title=sheet_name)
+    ws = wb.create_sheet(title="Trend Charts")
 
-        # --- data table (top of sheet) ---
-        ws.append(["Date"] + vaults)
-        for d in all_dates:
-            ws.append([d] + [vault_data[v].get(d, 0) for v in vaults])
+    # --- instruction row ---
+    instr = ws.cell(1, 1,
+        "Use the ▼ dropdown on any column header to filter by protection group or date. "
+        "The chart updates automatically.")
+    instr.font = Font(italic=True, color="595959")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(ncols + 1, 6))
 
-        # Column widths
-        ws.column_dimensions["A"].width = 14
-        for i in range(len(vaults)):
-            from openpyxl.utils import get_column_letter
-            ws.column_dimensions[get_column_letter(i + 2)].width = 28
+    # --- pivot table (starts at row 3) ---
+    DATA_ROW_OFFSET = 3
+    header_row = DATA_ROW_OFFSET
+    ws.cell(header_row, 1, "Date")
+    for i, label in enumerate(col_labels, start=2):
+        ws.cell(header_row, i, label)
 
-        # --- line chart ---
-        chart = LineChart()
-        chart.title  = f"{cluster}  |  {group}"
-        chart.style  = 10
-        chart.height = 15
-        chart.width  = 32
-        chart.y_axis.title = "Storage Consumed (Bytes)"
-        chart.x_axis.title = "Date"
+    for row_i, date in enumerate(all_dates, start=DATA_ROW_OFFSET + 1):
+        ws.cell(row_i, 1, date)
+        for col_i, key in enumerate(pg_keys, start=2):
+            ws.cell(row_i, col_i, pivot.get(date, {}).get(key, 0))
 
-        data_ref = Reference(ws, min_col=2, min_row=1,
-                             max_col=len(vaults) + 1, max_row=nrows + 1)
-        chart.add_data(data_ref, titles_from_data=True)
+    # --- Excel Table with column-filter dropdowns ---
+    last_col_letter = get_column_letter(ncols + 1)
+    table_ref = (f"A{header_row}:{last_col_letter}{header_row + nrows}")
+    tab = Table(displayName="TrendData", ref=table_ref)
+    tab.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False, showLastColumn=False,
+        showRowStripes=True,  showColumnStripes=False,
+    )
+    ws.add_table(tab)
 
-        cats_ref = Reference(ws, min_col=1, min_row=2, max_row=nrows + 1)
-        chart.set_categories(cats_ref)
+    # Column widths
+    ws.column_dimensions["A"].width = 14
+    for i in range(ncols):
+        width = max(len(col_labels[i]) + 2, 18)
+        ws.column_dimensions[get_column_letter(i + 2)].width = min(width, 40)
 
-        ws.add_chart(chart, f"A{nrows + 4}")
+    # Freeze the header row
+    ws.freeze_panes = f"A{header_row + 1}"
 
-    print(f"    Trend charts added: {len(pg_data)} protection group(s)")
+    # --- line chart ---
+    chart = LineChart()
+    chart.title  = "FortKnox — Storage Consumed by Protection Group"
+    chart.style  = 10
+    chart.height = 20
+    chart.width  = max(ncols * 1.5, 30)
+    chart.y_axis.title = "Storage Consumed (Bytes)"
+    chart.x_axis.title = "Date"
+
+    data_ref = Reference(ws, min_col=2, min_row=header_row,
+                         max_col=ncols + 1, max_row=header_row + nrows)
+    chart.add_data(data_ref, titles_from_data=True)
+
+    cats_ref = Reference(ws, min_col=1, min_row=header_row + 1,
+                         max_row=header_row + nrows)
+    chart.set_categories(cats_ref)
+
+    chart_anchor = f"A{header_row + nrows + 3}"
+    ws.add_chart(chart, chart_anchor)
+
+    print(f"    Trend chart added: {ncols} protection group(s) × {nrows} day(s)")
 
 
 def write_excel(rows: list, output_file: str, mode: str):
@@ -437,9 +488,9 @@ def write_excel(rows: list, output_file: str, mode: str):
     # Freeze header row
     ws.freeze_panes = "A2"
 
-    # Trend charts (trend mode only)
+    # Trend chart (trend mode only)
     if mode == "trend":
-        _add_trend_charts(wb, rows)
+        _add_trend_chart(wb, rows)
 
     wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")

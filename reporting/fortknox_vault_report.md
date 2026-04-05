@@ -13,7 +13,7 @@ pip install openpyxl
 
 Default date range is the last 7 days.
 
-**Version:** 3.9
+**Version:** 4.0
 
 ---
 
@@ -71,7 +71,7 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
 | `--start-msecs MS` | Exact start timestamp in milliseconds — paste directly from Chrome DevTools request URL to match UI exactly |
 | `--end-msecs MS` | Exact end timestamp in milliseconds — paste directly from Chrome DevTools request URL |
-| `--mode` | `summary` (default): one row per protection group for the full date range. `trend`: one row per protection group **per day** + one Excel chart sheet per protection group showing Storage Consumed over time (multiple vaults = multiple series on the same chart). |
+| `--mode` | `summary` (default): one row per protection group for the full date range. `trend`: one row per protection group **per day** + a single **"Trend Charts"** sheet with all protection groups on one chart and column-filter dropdowns (▼) for navigation. |
 | `--debug` | Print exact request URL and raw response sample for comparison with Chrome DevTools |
 
 ---
@@ -81,6 +81,8 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 Size columns report raw bytes as returned by the API. Apply your own unit conversion (e.g. ÷ 1,099,511,627,776 for TiB to match the Helios UI).
 
 The script automatically queries the timezone from the first cluster via `GET /irisservices/api/v1/public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates. The detected timezone and resolved timestamps are printed at startup for verification.
+
+> **Trend Charts sheet (--mode trend):** Contains a pivot table (rows = dates, columns = protection groups, values = Storage Consumed summed across vaults) formatted as an Excel Table. Click any column header **▼** to filter by specific protection group(s) or date(s) — the chart updates automatically. Native Excel slicers require a PivotTable, which the script does not generate; the column-filter dropdowns provide equivalent navigation.
 
 > **Note — Primary field:** `Storage Consumed (Bytes)` is the key metric in this report. It reflects the total physical storage retained in the vault for a protection group across all snapshots, regardless of whether a transfer occurred in the queried period.
 
