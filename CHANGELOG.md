@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.1: Correct GB conversion + period timestamp columns
+
+### Changed
+- `reporting/fortknox_vault_report.py` — GB conversion corrected from binary (÷ 1024³) to decimal SI (÷ 1,000,000,000). Added `Period Start` and `Period End` columns (YYYY-MM-DD) to every row so stacked CSV runs from periodic executions can be used to build a storage utilization trend in Excel or similar tools.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.0: Rewrite using dataTransferToVaults only
 
 ### Changed

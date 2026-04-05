@@ -18,6 +18,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.1 (2026-04-04) — GB conversion corrected to decimal SI (÷ 1,000,000,000).
+                     Added Period Start / Period End columns so stacked CSV
+                     runs can be used to build a storage utilization trend.
   3.0 (2026-04-04) — Full rewrite. Single source of truth: dataTransferToVaults
                      report API only. Removed Helios activity API and Reporting
                      API component calls — data was inaccurate. One row per
@@ -35,7 +38,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.0"
+__version__ = "3.1"
 
 import argparse
 import csv
@@ -164,9 +167,10 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 # ---------------------------------------------------------------------------
 
 def to_gb(byte_count) -> str:
+    """Convert bytes to GB (decimal SI: 1 GB = 1,000,000,000 bytes)."""
     if not byte_count:
         return "0.00"
-    return f"{byte_count / 1024 ** 3:.2f}"
+    return f"{byte_count / 1_000_000_000:.2f}"
 
 
 def now_msecs() -> int:
@@ -211,6 +215,8 @@ def resolve_date_range(args) -> tuple:
 # ---------------------------------------------------------------------------
 
 COLUMNS = [
+    ("Period Start",               "period_start"),
+    ("Period End",                 "period_end"),
     ("Cluster",                    "cluster"),
     ("Vault Name",                 "vault_name"),
     ("Vault Type",                 "vault_type"),
@@ -304,6 +310,10 @@ def main():
 
         if args.vault:
             rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+
+        for r in rows:
+            r["period_start"] = s
+            r["period_end"]   = e
 
         print(f"  [{cname}] {len(rows)} protection group row(s)")
         all_rows.extend(rows)

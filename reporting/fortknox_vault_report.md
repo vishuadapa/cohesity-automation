@@ -8,7 +8,7 @@ Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
 Default date range is the last 7 days.
 
-**Version:** 3.0
+**Version:** 3.1
 
 ---
 
@@ -69,8 +69,12 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 
 Size columns are plain GB decimals — the `(GB)` label is in the header only so cells stay numeric for Excel sorting and pivot tables.
 
+Size columns use decimal SI conversion: 1 GB = 1,000,000,000 bytes. The UI displays binary units (GiB/TiB); values here will be ~7% larger than the UI figures as a result.
+
 | Column | Source field | Description |
 |--------|-------------|-------------|
+| Period Start | _(script)_ | Start date of the report window (YYYY-MM-DD). Use with Period End to identify which run produced a row when stacking CSVs for trend analysis. |
+| Period End | _(script)_ | End date of the report window (YYYY-MM-DD). |
 | Cluster | `clusterName` | Cluster name as registered in Helios |
 | Vault Name | `vaultName` | FortKnox vault target name |
 | Vault Type | `vaultType` | Cloud platform: `kAzure`, `kAmazon`, etc. |
