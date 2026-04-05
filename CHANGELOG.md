@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — protection_group_report.py v4.2: restore context columns in trend mode
+
+### Added
+- `reporting/protection_group_report.py` — `--mode trend` output now includes **Policy Name**, **Is Active**, and **Is Paused** alongside the daily storage data. These are group-level attributes (same across all date rows for a group) that provide the context needed to filter and interpret the trend chart.
+
+---
+
 ## [2026-04-05] — protection_group_report.py v4.1: runs-based storage trend estimate
 
 ### Changed

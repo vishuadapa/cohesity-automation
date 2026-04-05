@@ -32,6 +32,8 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  4.2 (2026-04-05) — Added Policy Name, Is Active, Is Paused columns to
+                     trend mode output. Updated README trend field table.
   4.1 (2026-04-05) — Replaced timeSeriesStats approach (returned 400 —
                      schemaName required, metric unsupported via Helios) with
                      a runs-based storage estimate. For each protection group,
@@ -63,7 +65,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.1"
+__version__ = "4.2"
 
 import argparse
 import getpass
@@ -616,12 +618,15 @@ TREND_COLUMNS = [
     ("Cluster",                  "cluster"),
     ("Protection Group",         "protection_group"),
     ("Environment",              "environment"),
+    ("Policy Name",              "policy_name"),
+    ("Is Active",                "is_active"),
+    ("Is Paused",                "is_paused"),
     ("Storage Consumed (Bytes)", "storage_consumed_bytes"),
     ("Storage Consumed (TB)",    "storage_consumed_tb"),
 ]
 
 _TREND_TB_COL_IDX = next(i for i, (_, k) in enumerate(TREND_COLUMNS, start=1)
-                          if k == "storage_consumed_tb")   # = 6
+                          if k == "storage_consumed_tb")   # = 9
 
 
 def build_report(cluster_label: str, base_url: str, headers: dict, groups: list,
@@ -725,6 +730,10 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
         group_id    = group.get("id", "")
         group_name  = group.get("name", "Unknown")
         environment = group.get("environment", "").lstrip("k")
+        policy_id   = group.get("policyId", "N/A")
+        is_active   = group.get("isActive", True)
+        is_paused   = group.get("isPaused", False)
+        policy_name = get_policy_name(base_url, headers, policy_id)
 
         print(f"      [{group_name}] querying runs (1 yr lookback)...")
         all_runs = get_runs(base_url, headers, group_id, query_start, end_usecs)
@@ -771,6 +780,9 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                 "cluster":                cluster_label,
                 "protection_group":       group_name,
                 "environment":            environment,
+                "policy_name":            policy_name,
+                "is_active":              is_active,
+                "is_paused":              is_paused,
                 "storage_consumed_bytes": consumed,
                 "storage_consumed_tb":    round(consumed / 1_000_000_000_000, 4),
             })

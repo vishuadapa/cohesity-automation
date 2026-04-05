@@ -14,7 +14,7 @@ Required packages:
 pip install openpyxl keyring
 ```
 
-**Version:** 4.1
+**Version:** 4.2
 
 ---
 
@@ -80,6 +80,9 @@ Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS
 | Cluster | Cluster name |
 | Protection Group | Name of the protection group |
 | Environment | Workload type: `VMware`, `PhysicalFiles`, `Oracle`, etc. |
+| Policy Name | Protection policy assigned to the group |
+| Is Active | `True` if the group is active |
+| Is Paused | `True` if the group is currently paused |
 | Storage Consumed (Bytes) | Storage consumed by this protection group at the end of each day, calculated by summing `bytesWritten` across all snapshots retained on that day. |
 | Storage Consumed (TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
 
