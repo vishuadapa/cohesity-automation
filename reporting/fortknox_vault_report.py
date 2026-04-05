@@ -450,12 +450,6 @@ def _add_trend_chart(wb, group_ranges: dict):
         from openpyxl.chart import LineChart, Reference
         from openpyxl.chart.series import SeriesLabel
         from openpyxl.chart.legend import Legend
-        from openpyxl.chart.title import Title
-        from openpyxl.chart.text import RichText as ChartRichText, TxChoice
-        from openpyxl.drawing.text import (
-            Paragraph, RegularTextRun, RichTextProperties,
-            ParagraphProperties, CharacterProperties,
-        )
     except ImportError:
         print("WARNING: openpyxl chart module unavailable — chart skipped.")
         return
@@ -468,22 +462,27 @@ def _add_trend_chart(wb, group_ranges: dict):
     chart.height = 16   # cm — leaves room for legend below without overlap
     chart.width  = 28   # cm
 
-    # --- Chart title: 16 pt bold ---
-    # chart.title must be a Title object; RichText goes inside via TxChoice
+    # --- Chart title: 16 pt bold via Title+TxChoice; plain string fallback ---
+    _TITLE = "FortKnox \u2014 Storage Consumed by Protection Group"
     try:
+        from openpyxl.chart.title import Title
+        from openpyxl.chart.text import RichText as ChartRichText, TxChoice
+        from openpyxl.drawing.text import (
+            Paragraph, RegularTextRun, RichTextProperties,
+            ParagraphProperties, CharacterProperties,
+        )
         chart.title = Title(
             tx=TxChoice(rich=ChartRichText(
                 bodyPr=RichTextProperties(),
                 p=[Paragraph(
                     pPr=ParagraphProperties(defRPr=CharacterProperties(sz=1600, b=True)),
-                    r=[RegularTextRun(t="FortKnox \u2014 Storage Consumed by Protection Group")]
+                    r=[RegularTextRun(t=_TITLE)]
                 )]
             )),
             overlay=False,
         )
     except Exception:
-        # Fallback: plain string (openpyxl auto-wraps in Title internally)
-        chart.title = "FortKnox \u2014 Storage Consumed by Protection Group"
+        chart.title = _TITLE
 
     # --- Axis labels ---
     chart.y_axis.title = "Storage Consumed (TB)"
