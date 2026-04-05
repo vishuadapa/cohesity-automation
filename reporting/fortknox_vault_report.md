@@ -13,7 +13,7 @@ pip install openpyxl
 
 Default date range is the last 7 days.
 
-**Version:** 4.0
+**Version:** 4.1
 
 ---
 
@@ -82,7 +82,7 @@ Size columns report raw bytes as returned by the API. Apply your own unit conver
 
 The script automatically queries the timezone from the first cluster via `GET /irisservices/api/v1/public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates. The detected timezone and resolved timestamps are printed at startup for verification.
 
-> **Trend Charts sheet (--mode trend):** Contains a pivot table (rows = dates, columns = protection groups, values = Storage Consumed summed across vaults) formatted as an Excel Table. Click any column header **▼** to filter by specific protection group(s) or date(s) — the chart updates automatically. Native Excel slicers require a PivotTable, which the script does not generate; the column-filter dropdowns provide equivalent navigation.
+> **Trend Charts sheet (--mode trend):** Contains a single full-screen line chart (one series per protection group). The chart references the **Report** sheet data directly — no data is duplicated on the chart sheet. Report rows are sorted by (Protection Group, Cluster, Vault, Date) so each series maps to a contiguous row range. Protection groups where all Storage Consumed values are zero are excluded from the chart automatically.
 
 > **Note — Primary field:** `Storage Consumed (Bytes)` is the key metric in this report. It reflects the total physical storage retained in the vault for a protection group across all snapshots, regardless of whether a transfer occurred in the queried period.
 

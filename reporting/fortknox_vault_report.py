@@ -18,6 +18,11 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.1 (2026-04-04) — Chart references Report sheet directly — no data duplication
+                     on the chart sheet. Report rows sorted by (group, cluster,
+                     vault, date) so each series is a contiguous range. All-zero
+                     Storage Consumed series excluded from chart. Fixed chart
+                     size (18 × 28 cm) to fit a single screen.
   4.0 (2026-04-04) — Combined all protection groups onto a single "Trend Charts"
                      sheet. Pivot table (Date × Group) formatted as an Excel
                      Table with ▼ dropdown filters on every column header for
@@ -80,7 +85,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "4.0"
+__version__ = "4.1"
 
 import argparse
 import sys
@@ -333,111 +338,81 @@ def _safe_sheet_name(name: str, existing: list) -> str:
     return safe
 
 
-def _add_trend_chart(wb, all_rows: list):
+def _add_trend_chart(wb, group_ranges: dict):
     """
-    Add a single "Trend Charts" sheet containing:
-      - A pivot table: rows = dates, columns = protection groups,
-        values = Storage Consumed (bytes, summed across vaults per group per day).
-      - The table is formatted as an Excel Table so every column header has a
-        dropdown filter (▼) — click any header to show/hide specific groups or
-        dates. This is the closest equivalent to a slicer without pivot tables.
-      - A line chart below the table with one series per protection group.
+    Add a single "Trend Charts" sheet with a full-screen line chart.
 
-    Note: native Excel slicers require a PivotTable, which openpyxl does not
-    support. The column-header dropdowns provide the same filter navigation.
+    References the Report sheet directly — no data is duplicated.
+    Each (cluster, group, vault) with at least one non-zero Storage Consumed
+    value becomes one series. All-zero series are excluded.
+
+    group_ranges: {(cluster, group, vault): {"start": int, "end": int,
+                                              "any_nonzero": bool}}
+      start/end are 1-based Excel row indices in the Report sheet (data rows,
+      not including the header at row 1).
+    Storage Consumed is column 9 in the Report sheet.
+    Period Start   is column 1 in the Report sheet.
     """
     try:
         from openpyxl.chart import LineChart, Reference
-        from openpyxl.worksheet.table import Table, TableStyleInfo
-        from openpyxl.utils import get_column_letter
-        from openpyxl.styles import Font, Alignment
+        from openpyxl.chart.series import Series, SeriesLabel
     except ImportError:
-        print("WARNING: openpyxl modules unavailable — trend chart skipped.")
+        print("WARNING: openpyxl chart module unavailable — chart skipped.")
         return
 
-    # --- build pivot: {date: {(cluster, group): total_consumed}} ---
-    # Multiple vaults for the same group on the same day are summed.
-    multi_cluster = len({r["cluster"] for r in all_rows}) > 1
-    pg_keys  = sorted({(r["cluster"], r["protection_group"]) for r in all_rows},
-                      key=lambda k: (k[1], k[0]))
-    all_dates = sorted({r["period_start"] for r in all_rows})
+    report_ws = wb["Report"]
+    multi_cluster = len({k[0] for k in group_ranges}) > 1
 
-    pivot: dict = {}
-    for r in all_rows:
-        key = (r["cluster"], r["protection_group"])
-        pivot.setdefault(r["period_start"], {})
-        pivot[r["period_start"]][key] = (
-            pivot[r["period_start"]].get(key, 0) +
-            int(r.get("storage_consumed_bytes") or 0)
-        )
-
-    # Column labels — include cluster only when multiple clusters present
-    col_labels = [f"{g} ({c})" if multi_cluster else g for c, g in pg_keys]
-    ncols = len(pg_keys)
-    nrows = len(all_dates)
-
-    ws = wb.create_sheet(title="Trend Charts")
-
-    # --- instruction row ---
-    instr = ws.cell(1, 1,
-        "Use the ▼ dropdown on any column header to filter by protection group or date. "
-        "The chart updates automatically.")
-    instr.font = Font(italic=True, color="595959")
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(ncols + 1, 6))
-
-    # --- pivot table (starts at row 3) ---
-    DATA_ROW_OFFSET = 3
-    header_row = DATA_ROW_OFFSET
-    ws.cell(header_row, 1, "Date")
-    for i, label in enumerate(col_labels, start=2):
-        ws.cell(header_row, i, label)
-
-    for row_i, date in enumerate(all_dates, start=DATA_ROW_OFFSET + 1):
-        ws.cell(row_i, 1, date)
-        for col_i, key in enumerate(pg_keys, start=2):
-            ws.cell(row_i, col_i, pivot.get(date, {}).get(key, 0))
-
-    # --- Excel Table with column-filter dropdowns ---
-    last_col_letter = get_column_letter(ncols + 1)
-    table_ref = (f"A{header_row}:{last_col_letter}{header_row + nrows}")
-    tab = Table(displayName="TrendData", ref=table_ref)
-    tab.tableStyleInfo = TableStyleInfo(
-        name="TableStyleMedium2",
-        showFirstColumn=False, showLastColumn=False,
-        showRowStripes=True,  showColumnStripes=False,
-    )
-    ws.add_table(tab)
-
-    # Column widths
-    ws.column_dimensions["A"].width = 14
-    for i in range(ncols):
-        width = max(len(col_labels[i]) + 2, 18)
-        ws.column_dimensions[get_column_letter(i + 2)].width = min(width, 40)
-
-    # Freeze the header row
-    ws.freeze_panes = f"A{header_row + 1}"
-
-    # --- line chart ---
     chart = LineChart()
     chart.title  = "FortKnox — Storage Consumed by Protection Group"
     chart.style  = 10
-    chart.height = 20
-    chart.width  = max(ncols * 1.5, 30)
+    chart.height = 18   # cm  ≈ fits a standard laptop screen
+    chart.width  = 28   # cm
     chart.y_axis.title = "Storage Consumed (Bytes)"
     chart.x_axis.title = "Date"
 
-    data_ref = Reference(ws, min_col=2, min_row=header_row,
-                         max_col=ncols + 1, max_row=header_row + nrows)
-    chart.add_data(data_ref, titles_from_data=True)
+    cats_set = False
+    n_series = 0
 
-    cats_ref = Reference(ws, min_col=1, min_row=header_row + 1,
-                         max_row=header_row + nrows)
-    chart.set_categories(cats_ref)
+    # Sort by group name for a consistent legend order
+    for (cluster, group, vault), info in sorted(group_ranges.items(),
+                                                key=lambda x: (x[0][1], x[0][0], x[0][2])):
+        if not info["any_nonzero"]:
+            continue
 
-    chart_anchor = f"A{header_row + nrows + 3}"
-    ws.add_chart(chart, chart_anchor)
+        start_row = info["start"]
+        end_row   = info["end"]
 
-    print(f"    Trend chart added: {ncols} protection group(s) × {nrows} day(s)")
+        # X-axis categories from Period Start column (col 1) of first series
+        if not cats_set:
+            cats_ref = Reference(report_ws, min_col=1,
+                                 min_row=start_row, max_row=end_row)
+            chart.set_categories(cats_ref)
+            cats_set = True
+
+        # Series data from Storage Consumed column (col 9)
+        data_ref = Reference(report_ws, min_col=9,
+                             min_row=start_row, max_row=end_row)
+        s = Series(data_ref)
+
+        # Build a readable label
+        vault_count = sum(1 for k in group_ranges
+                          if k[0] == cluster and k[1] == group)
+        label = f"{group} ({cluster})" if multi_cluster else group
+        if vault_count > 1:
+            label += f" [{vault}]"
+        s.title = SeriesLabel(v=label)
+
+        chart.series.append(s)
+        n_series += 1
+
+    if n_series == 0:
+        print("    No non-zero Storage Consumed data — trend chart skipped.")
+        return
+
+    ws = wb.create_sheet(title="Trend Charts")
+    ws.add_chart(chart, "A1")
+    print(f"    Trend chart added: {n_series} series (all-zero groups excluded)")
 
 
 def write_excel(rows: list, output_file: str, mode: str):
@@ -468,8 +443,27 @@ def write_excel(rows: list, output_file: str, mode: str):
         cell.fill      = header_fill
         cell.alignment = Alignment(horizontal="center")
 
+    # Sort by (group, cluster, vault, date) so each series occupies contiguous rows
+    # — required for the chart to reference Report sheet ranges directly.
+    sorted_rows = sorted(rows, key=lambda r: (
+        r["protection_group"], r["cluster"], r["vault_name"], r["period_start"]
+    ))
+
+    # Track Excel row range per (cluster, group, vault): header is row 1, data from row 2
+    group_ranges: dict = {}
+    for excel_row, r in enumerate(sorted_rows, start=2):
+        key = (r["cluster"], r["protection_group"], r["vault_name"])
+        consumed = int(r.get("storage_consumed_bytes") or 0)
+        if key not in group_ranges:
+            group_ranges[key] = {"start": excel_row, "end": excel_row,
+                                 "any_nonzero": consumed > 0}
+        else:
+            group_ranges[key]["end"] = excel_row
+            if consumed > 0:
+                group_ranges[key]["any_nonzero"] = True
+
     # Data rows — byte columns written as integers so Excel can sort/chart them
-    for row in rows:
+    for row in sorted_rows:
         ws.append([
             int(row[key]) if key.endswith("_bytes") else row[key]
             for _, key in COLUMNS
@@ -488,9 +482,9 @@ def write_excel(rows: list, output_file: str, mode: str):
     # Freeze header row
     ws.freeze_panes = "A2"
 
-    # Trend chart (trend mode only)
+    # Trend chart (trend mode only) — references Report sheet, no data duplication
     if mode == "trend":
-        _add_trend_chart(wb, rows)
+        _add_trend_chart(wb, group_ranges)
 
     wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")
