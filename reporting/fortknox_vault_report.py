@@ -18,6 +18,11 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.9 (2026-04-04) — Output changed from CSV to Excel (.xlsx) via openpyxl.
+                     In --mode trend, one chart sheet is added per protection
+                     group showing Storage Consumed over time. Multiple vaults
+                     for the same group appear as separate series. Header row
+                     styled and columns auto-fitted. Requires: pip install openpyxl.
   3.8 (2026-04-04) — Added startup note explaining zero transfer values and
                      that Storage Consumed is the primary metric. Same caveat
                      added to README.
@@ -69,10 +74,9 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.8"
+__version__ = "3.9"
 
 import argparse
-import csv
 import sys
 import urllib3
 from datetime import datetime, timedelta, timezone
@@ -298,35 +302,146 @@ def iter_days(start_msecs: int, end_msecs: int, tz):
 
 
 # ---------------------------------------------------------------------------
-# CSV output
+# Excel output
 # ---------------------------------------------------------------------------
 
 COLUMNS = [
-    ("Period Start",               "period_start"),
-    ("Period End",                 "period_end"),
-    ("Cluster",                    "cluster"),
-    ("Vault Name",                 "vault_name"),
-    ("Vault Type",                 "vault_type"),
-    ("Protection Group",           "protection_group"),
-    ("Logical Transferred (Bytes)",   "logical_bytes"),
-    ("Physical Transferred (Bytes)",  "physical_bytes"),
-    ("Storage Consumed (Bytes)",      "storage_consumed_bytes"),
+    ("Period Start",                 "period_start"),
+    ("Period End",                   "period_end"),
+    ("Cluster",                      "cluster"),
+    ("Vault Name",                   "vault_name"),
+    ("Vault Type",                   "vault_type"),
+    ("Protection Group",             "protection_group"),
+    ("Logical Transferred (Bytes)",  "logical_bytes"),
+    ("Physical Transferred (Bytes)", "physical_bytes"),
+    ("Storage Consumed (Bytes)",     "storage_consumed_bytes"),
 ]
 
 
-def write_csv(rows: list, output_file: str):
+def _safe_sheet_name(name: str, existing: list) -> str:
+    """Sanitise and deduplicate an Excel sheet name (max 31 chars)."""
+    safe = name.translate(str.maketrans("", "", r":\/?*[]"))
+    safe = safe[:31]
+    if safe in existing:
+        safe = safe[:28] + f"_{len(existing)}"
+    return safe
+
+
+def _add_trend_charts(wb, all_rows: list):
+    """
+    Add one chart sheet per (cluster, protection_group).
+    Each sheet contains the date/storage-consumed data plus a line chart.
+    If a protection group archives to multiple vaults, each vault becomes
+    a separate series on the same chart.
+    """
+    try:
+        from openpyxl.chart import LineChart, Reference
+    except ImportError:
+        print("WARNING: openpyxl chart module unavailable — charts skipped.")
+        return
+
+    # Build: {(cluster, group): {vault: {date: consumed_bytes}}}
+    pg_data: dict = {}
+    for r in all_rows:
+        key   = (r["cluster"], r["protection_group"])
+        vault = r["vault_name"]
+        date  = r["period_start"]
+        consumed = int(r.get("storage_consumed_bytes") or 0)
+        pg_data.setdefault(key, {}).setdefault(vault, {})[date] = consumed
+
+    for (cluster, group), vault_data in sorted(pg_data.items()):
+        all_dates = sorted({d for vd in vault_data.values() for d in vd})
+        vaults    = sorted(vault_data.keys())
+        nrows     = len(all_dates)
+
+        sheet_name = _safe_sheet_name(group, [s.title for s in wb.worksheets])
+        ws = wb.create_sheet(title=sheet_name)
+
+        # --- data table (top of sheet) ---
+        ws.append(["Date"] + vaults)
+        for d in all_dates:
+            ws.append([d] + [vault_data[v].get(d, 0) for v in vaults])
+
+        # Column widths
+        ws.column_dimensions["A"].width = 14
+        for i in range(len(vaults)):
+            from openpyxl.utils import get_column_letter
+            ws.column_dimensions[get_column_letter(i + 2)].width = 28
+
+        # --- line chart ---
+        chart = LineChart()
+        chart.title  = f"{cluster}  |  {group}"
+        chart.style  = 10
+        chart.height = 15
+        chart.width  = 32
+        chart.y_axis.title = "Storage Consumed (Bytes)"
+        chart.x_axis.title = "Date"
+
+        data_ref = Reference(ws, min_col=2, min_row=1,
+                             max_col=len(vaults) + 1, max_row=nrows + 1)
+        chart.add_data(data_ref, titles_from_data=True)
+
+        cats_ref = Reference(ws, min_col=1, min_row=2, max_row=nrows + 1)
+        chart.set_categories(cats_ref)
+
+        ws.add_chart(chart, f"A{nrows + 4}")
+
+    print(f"    Trend charts added: {len(pg_data)} protection group(s)")
+
+
+def write_excel(rows: list, output_file: str, mode: str):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print("ERROR: openpyxl is required.  Install with:  pip install openpyxl")
+        sys.exit(1)
+
     if not rows:
         print("No FortKnox data found for the requested scope.")
         return
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Report"
+
     headers = [col for col, _ in COLUMNS]
-    with open(output_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({
-                col: (fmt_bytes(row[key]) if key.endswith("_bytes") else row[key])
-                for col, key in COLUMNS
-            })
+
+    # Header row styling
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(fill_type="solid", fgColor="1F4E79")
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font      = header_font
+        cell.fill      = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    # Data rows — byte columns written as integers so Excel can sort/chart them
+    for row in rows:
+        ws.append([
+            int(row[key]) if key.endswith("_bytes") else row[key]
+            for _, key in COLUMNS
+        ])
+
+    # Auto-fit column widths
+    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
+        col_letter = get_column_letter(col_idx)
+        max_len = max(
+            len(col_name),
+            max((len(str(ws.cell(r, col_idx).value or "")) for r in range(2, ws.max_row + 1)),
+                default=0)
+        )
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 45)
+
+    # Freeze header row
+    ws.freeze_panes = "A2"
+
+    # Trend charts (trend mode only)
+    if mode == "trend":
+        _add_trend_charts(wb, rows)
+
+    wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")
 
 
@@ -350,8 +465,8 @@ Examples:
     parser.add_argument("--apikey",  required=True, help="Helios API key")
     parser.add_argument("--cluster", help="Filter to a specific cluster (partial name match)")
     parser.add_argument("--vault",   help="Filter to a specific vault (partial name match)")
-    parser.add_argument("--output",  default="fortknox_report.csv",
-                        help="Output CSV filename (default: fortknox_report.csv)")
+    parser.add_argument("--output",  default="fortknox_report.xlsx",
+                        help="Output Excel filename (default: fortknox_report.xlsx)")
     parser.add_argument("--mode",    choices=["summary", "trend"], default="summary",
                         help="summary (default): one row per protection group covering the full "
                              "date range. trend: one row per protection group per day, enabling "
@@ -460,7 +575,7 @@ def main():
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
-    write_csv(all_rows, args.output)
+    write_excel(all_rows, args.output, args.mode)
 
 
 if __name__ == "__main__":

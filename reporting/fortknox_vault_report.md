@@ -6,9 +6,14 @@ through Helios per-cluster. One row per protection group per vault.
 
 Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
+Requires **openpyxl** for Excel output:
+```bash
+pip install openpyxl
+```
+
 Default date range is the last 7 days.
 
-**Version:** 3.8
+**Version:** 3.9
 
 ---
 
@@ -60,13 +65,13 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 | `--apikey` | Helios API key (required) |
 | `--cluster` | Filter to a specific cluster (partial name match) |
 | `--vault` | Filter to a specific vault (partial name match) |
-| `--output` | Output CSV filename (default: `fortknox_report.csv`) |
+| `--output` | Output Excel filename (default: `fortknox_report.xlsx`) |
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
 | `--start-msecs MS` | Exact start timestamp in milliseconds — paste directly from Chrome DevTools request URL to match UI exactly |
 | `--end-msecs MS` | Exact end timestamp in milliseconds — paste directly from Chrome DevTools request URL |
-| `--mode` | `summary` (default): one row per protection group for the full date range. `trend`: one row per protection group **per day**, enabling daily storage utilization trend lines. |
+| `--mode` | `summary` (default): one row per protection group for the full date range. `trend`: one row per protection group **per day** + one Excel chart sheet per protection group showing Storage Consumed over time (multiple vaults = multiple series on the same chart). |
 | `--debug` | Print exact request URL and raw response sample for comparison with Chrome DevTools |
 
 ---
