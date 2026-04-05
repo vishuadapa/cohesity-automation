@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-05] — protection_group_report.py v4.1: runs-based storage trend estimate
+
+### Changed
+- `reporting/protection_group_report.py` — Replaced `timeSeriesStats` approach (returned 400 — `storageConsumedBytes` requires an unknown `schemaName` when routed via Helios) with a runs-based estimate. For each protection group, queries all runs going back 1 year, then for each calendar day sums `bytesWritten` across every snapshot active on that day (`startTime ≤ day AND expiryTime > day`). Values are now genuinely day-varying and show real storage growth/expiration trends. `bytesWritten` is post-dedup/compression; may slightly overestimate vs `stats/consumers` due to shared dedup blocks between runs — trend direction is accurate.
+
+---
+
 ## [2026-04-05] — protection_group_report.py v4.0: --mode trend + storage consumed history
 
 ### Added

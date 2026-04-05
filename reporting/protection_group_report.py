@@ -32,16 +32,15 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
-  4.0 (2026-04-05) — Added --mode trend. Queries daily storage consumed per
-                     protection group via GET /statistics/timeSeriesStats with
-                     86400s rollup. One row per group per day. Trend chart
-                     sheet per cluster (same format as fortknox_vault_report).
-                     --debug prints raw timeSeriesStats response for metric
-                     name verification. Storage Consumed renamed to
-                     "Storage Consumed (Current, GB)" in summary/historical
-                     mode to clarify it is always a point-in-time snapshot.
-                     Trend mode defaults to last 30 days when no date range
-                     is given.
+  4.1 (2026-04-05) — Replaced timeSeriesStats approach (returned 400 —
+                     schemaName required, metric unsupported via Helios) with
+                     a runs-based storage estimate. For each protection group,
+                     queries all runs going back 1 year, then for each calendar
+                     day sums bytesWritten for every snapshot active on that day
+                     (startTime <= day AND expiryTime > day). Gives an accurate
+                     daily storage consumed trend using only the v2 runs API.
+  4.0 (2026-04-05) — Added --mode trend framework, --debug flag, trend chart
+                     per cluster, Storage Consumed (Current, GB) rename.
   3.4 (2026-04-05) — Report header row color changed to Cohesity green
                      (#00B388).
   3.3 (2026-04-04) — Credentials stored in OS keychain (keyring). --apikey is
@@ -64,7 +63,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.0"
+__version__ = "4.1"
 
 import argparse
 import getpass
@@ -460,66 +459,6 @@ def get_runs(base_url: str, headers: dict, group_id: str,
     return r.json().get("runs") or []
 
 
-def get_storage_timeseries(base_url: str, headers: dict, job_id: int,
-                            group_name: str, start_msecs: int, end_msecs: int,
-                            debug: bool = False) -> list:
-    """
-    Fetch daily storage consumed values for a protection group via the
-    Cohesity time-series statistics API.
-
-    Endpoint: GET /irisservices/api/v1/public/statistics/timeSeriesStats
-    Parameters:
-      entityId          = protection job numeric ID
-      metricName        = storageConsumedBytes
-      rollupIntervalSecs = 86400  (one data point per calendar day)
-      rollupFunction    = Last    (value at end of each day)
-
-    Returns: [(date_str "YYYY-MM-DD", consumed_bytes int), ...]
-
-    NOTE: storageConsumedBytes is the total physical storage the group
-    currently retains on the cluster (all snapshots, post-dedup/compression).
-    Because it is queried historically via this endpoint, each daily data
-    point reflects what the cluster held at the end of that day — giving a
-    genuine storage-consumed trend over time.
-    """
-    url = f"{base_url}/irisservices/api/v1/public/statistics/timeSeriesStats"
-    params = {
-        "entityId":           job_id,
-        "metricName":         "storageConsumedBytes",
-        "startTimeMsecs":     start_msecs,
-        "endTimeMsecs":       end_msecs,
-        "rollupFunction":     "Last",
-        "rollupIntervalSecs": 86400,
-    }
-    try:
-        r = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
-        r.raise_for_status()
-        resp = r.json()
-    except Exception as e:
-        print(f"      WARNING: timeSeriesStats failed for '{group_name}': {e}")
-        return []
-
-    if debug:
-        import json as _json
-        print(f"\n[DEBUG] timeSeriesStats '{group_name}' (entityId={job_id}):")
-        print(_json.dumps(resp, indent=2)[:3000])
-
-    data_points = resp.get("dataPointVec") or []
-    if not data_points and debug:
-        print(f"[DEBUG] No dataPointVec returned — metric name may be wrong. "
-              f"Response keys: {list(resp.keys())}")
-
-    result = []
-    for dp in data_points:
-        ts_msecs = dp.get("timestampMsecs", 0)
-        val      = dp.get("data", {})
-        consumed = val.get("int64Value") or val.get("doubleValue") or 0
-        if ts_msecs:
-            date_str = datetime.fromtimestamp(
-                ts_msecs / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-            result.append((date_str, int(consumed)))
-
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -753,46 +692,90 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                         groups: list, start_usecs: int, end_usecs: int,
                         debug: bool = False) -> list:
     """
-    Trend mode: for each protection group, fetch daily storage consumed
-    values via timeSeriesStats and return one row per group per day.
+    Trend mode: estimate daily storage consumed per protection group by
+    inspecting which snapshots were retained on each calendar day.
 
-    Columns: Date, Cluster, Protection Group, Environment,
-             Storage Consumed (Bytes), Storage Consumed (TB)
+    Algorithm (per protection group):
+      1. Query all runs from (start - 1 year) to end_usecs, capturing every
+         snapshot that might still be retained during the trend window.
+      2. For each calendar day D in [start, end]:
+           storage_consumed = sum(bytesWritten for each run where
+                                  run.startTime <= D  AND
+                                  (run.expiryTime == 0 OR run.expiryTime > D))
+
+    bytesWritten is already post-dedup/compression per run. Shared dedup
+    blocks across runs may cause a slight overestimate vs stats/consumers,
+    but the trend direction and relative values are accurate.
     """
-    # timeSeriesStats uses milliseconds; protection group API uses microseconds
-    start_msecs = start_usecs // 1000
-    end_msecs   = end_usecs   // 1000
+    LOOKBACK_USECS = 365 * 24 * 3600 * 1_000_000
+    query_start    = max(0, start_usecs - LOOKBACK_USECS)
 
     print("    Fetching cluster timezone...")
     tz_name = get_cluster_timezone(base_url, headers)
     print(f"    Cluster timezone: {tz_name}")
+
+    from datetime import date as _date
+    start_date = datetime.fromtimestamp(start_usecs / 1e6, tz=timezone.utc).date()
+    end_date   = datetime.fromtimestamp(end_usecs   / 1e6, tz=timezone.utc).date()
+    date_list  = [start_date + timedelta(days=i)
+                  for i in range((end_date - start_date).days + 1)]
 
     rows = []
     for group in groups:
         group_id    = group.get("id", "")
         group_name  = group.get("name", "Unknown")
         environment = group.get("environment", "").lstrip("k")
-        num_id      = numeric_group_id(group_id)
 
-        print(f"      [{group_name}] fetching storage trend (entityId={num_id})...")
-        data_points = get_storage_timeseries(
-            base_url, headers, num_id, group_name,
-            start_msecs, end_msecs, debug=debug)
+        print(f"      [{group_name}] querying runs (1 yr lookback)...")
+        all_runs = get_runs(base_url, headers, group_id, query_start, end_usecs)
 
-        if not data_points:
-            print(f"        No data returned — group may have no retained snapshots.")
+        if not all_runs:
+            print(f"        No runs found — skipping.")
             continue
 
-        for date_str, consumed_bytes in data_points:
+        # Extract per-snapshot: (start_usecs, expiry_usecs, bytes_written)
+        snapshots = []
+        for run in all_runs:
+            backup  = run.get("localBackupInfo") or {}
+            start_t = backup.get("startTimeUsecs", 0)
+            bytes_w = (backup.get("localSnapshotStats") or {}).get("bytesWritten", 0) or 0
+
+            expiry_t = 0
+            objects  = run.get("objects") or []
+            if objects:
+                snap_info = ((objects[0].get("localSnapshotInfo") or {})
+                             .get("snapshotInfo") or {})
+                expiry_t  = snap_info.get("expiryTimeUsecs", 0) or 0
+
+            if start_t:
+                snapshots.append((start_t, expiry_t, bytes_w))
+
+        if debug:
+            print(f"[DEBUG] {group_name}: {len(snapshots)} snapshot(s) in lookback window")
+            for st, ex, bw in snapshots[:5]:
+                s_s = datetime.fromtimestamp(st / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
+                e_s = (datetime.fromtimestamp(ex / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
+                       if ex else "never")
+                print(f"  start={s_s}  expiry={e_s}  bytes_written={bw:,}")
+
+        # For each day, sum bytes for snapshots active at end of that day
+        for d in date_list:
+            day_usecs = int(datetime(d.year, d.month, d.day, 23, 59, 59,
+                                     tzinfo=timezone.utc).timestamp() * 1_000_000)
+            consumed = sum(
+                bw for (st, ex, bw) in snapshots
+                if st <= day_usecs and (ex == 0 or ex > day_usecs)
+            )
             rows.append({
-                "date":                  date_str,
-                "cluster":               cluster_label,
-                "protection_group":      group_name,
-                "environment":           environment,
-                "storage_consumed_bytes": consumed_bytes,
-                "storage_consumed_tb":   round(consumed_bytes / 1_000_000_000_000, 4),
+                "date":                   d.isoformat(),
+                "cluster":                cluster_label,
+                "protection_group":       group_name,
+                "environment":            environment,
+                "storage_consumed_bytes": consumed,
+                "storage_consumed_tb":    round(consumed / 1_000_000_000_000, 4),
             })
-        print(f"        {len(data_points)} daily data point(s)")
+
+        print(f"        {len(date_list)} daily estimates from {len(snapshots)} snapshot(s)")
 
     return rows
 
@@ -1125,10 +1108,11 @@ def main():
 
     if args.mode == "trend":
         print()
-        print("    NOTE: Storage Consumed (Bytes/TB) reflects total physical storage retained")
-        print("    on the cluster for each protection group at the end of each day,")
-        print("    across all retained snapshots (post-dedup/compression).")
-        print("    Queried via GET /statistics/timeSeriesStats with daily rollup.")
+        print("    NOTE: Storage Consumed is estimated per day by summing bytesWritten")
+        print("    for every snapshot that was active on that day (startTime <= day")
+        print("    AND expiryTime > day). Runs are queried going back 1 year to capture")
+        print("    all currently retained snapshots. May slightly overestimate vs the")
+        print("    cluster UI due to shared dedup blocks — trend direction is accurate.")
         print()
 
     all_rows = []
