@@ -365,7 +365,7 @@ def _add_trend_chart(wb, group_ranges: dict):
     """
     try:
         from openpyxl.chart import LineChart, Reference
-        from openpyxl.chart.series import Series, SeriesLabel
+        from openpyxl.chart.series import SeriesLabel
     except ImportError:
         print("WARNING: openpyxl chart module unavailable — chart skipped.")
         return
@@ -403,17 +403,16 @@ def _add_trend_chart(wb, group_ranges: dict):
         # Series data from Storage Consumed (TB) column
         data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
-        s = Series(data_ref)
+        chart.add_data(data_ref)
 
-        # Build a readable label
+        # Build a readable label and assign to the series just appended
         vault_count = sum(1 for k in group_ranges
                           if k[0] == cluster and k[1] == group)
         label = f"{group} ({cluster})" if multi_cluster else group
         if vault_count > 1:
             label += f" [{vault}]"
-        s.title = SeriesLabel(v=label)
+        chart.series[-1].title = SeriesLabel(v=label)
 
-        chart.series.append(s)
         n_series += 1
 
     if n_series == 0:
