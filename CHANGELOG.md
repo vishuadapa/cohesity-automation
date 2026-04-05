@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.7: Trend mode
+
+### Added
+- `reporting/fortknox_vault_report.py` — `--mode trend` flag. In trend mode the full date range is split into individual calendar days (using the auto-detected cluster timezone); each day is queried separately and produces its own set of rows. `Period Start` and `Period End` both show the specific date (YYYY-MM-DD) so rows from multiple runs can be stacked in Excel or a BI tool to plot a daily storage utilization trend per protection group. Vault IDs are fetched once per cluster and reused across all daily calls. Default behaviour (`--mode summary`) is unchanged.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.6: Auto-detect cluster timezone
 
 ### Changed

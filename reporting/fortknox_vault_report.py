@@ -18,6 +18,12 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.7 (2026-04-04) — Added --mode trend. In trend mode the date range is split
+                     into individual calendar days (cluster timezone); each day
+                     gets its own API call and rows so users can plot a daily
+                     storage utilization trend per protection group. Vault IDs
+                     are fetched once per cluster and reused across all days.
+                     Default remains --mode summary (existing behaviour).
   3.6 (2026-04-04) — Timezone auto-detected from cluster via GET /cluster.
                      Removed --timezone flag — no longer needed. Date
                      boundaries computed in cluster local time automatically.
@@ -60,7 +66,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.6"
+__version__ = "3.7"
 
 import argparse
 import csv
@@ -267,6 +273,28 @@ def resolve_date_range(args, tz) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Trend helper
+# ---------------------------------------------------------------------------
+
+def iter_days(start_msecs: int, end_msecs: int, tz):
+    """
+    Yield (day_start_msecs, day_end_msecs, date_str) for each calendar day
+    in the range [start_msecs, end_msecs], computed in tz.
+    """
+    # Snap to the start of the calendar day containing start_msecs
+    start_dt = datetime.fromtimestamp(start_msecs / 1000, tz=tz).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    end_dt   = datetime.fromtimestamp(end_msecs   / 1000, tz=tz)
+
+    current = start_dt
+    while current <= end_dt:
+        day_start = int(current.timestamp() * 1000)
+        day_end   = int(current.replace(hour=23, minute=59, second=59).timestamp() * 1000)
+        yield day_start, day_end, current.strftime("%Y-%m-%d")
+        current += timedelta(days=1)
+
+
+# ---------------------------------------------------------------------------
 # CSV output
 # ---------------------------------------------------------------------------
 
@@ -321,6 +349,10 @@ Examples:
     parser.add_argument("--vault",   help="Filter to a specific vault (partial name match)")
     parser.add_argument("--output",  default="fortknox_report.csv",
                         help="Output CSV filename (default: fortknox_report.csv)")
+    parser.add_argument("--mode",    choices=["summary", "trend"], default="summary",
+                        help="summary (default): one row per protection group covering the full "
+                             "date range. trend: one row per protection group per day, enabling "
+                             "storage utilization trend lines over time.")
     parser.add_argument("--debug",   action="store_true",
                         help="Print raw API response samples")
 
@@ -364,33 +396,60 @@ def main():
     s = datetime.fromtimestamp(start_msecs / 1000, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
     e = datetime.fromtimestamp(end_msecs   / 1000, tz=tz).strftime("%Y-%m-%d %H:%M %Z")
     print(f"[*] Date range: {s} → {e}")
+    print(f"[*] Mode: {args.mode}")
 
-    all_rows = []
-    for c in clusters:
+    # Filter cluster list once
+    target_clusters = [c for c in clusters
+                       if not args.cluster or args.cluster.lower() in c["name"].lower()]
+
+    # Fetch vault IDs once per cluster (reused across all days in trend mode)
+    cluster_vault_ids = {}
+    for c in target_clusters:
         cname = c["name"]
-        if args.cluster and args.cluster.lower() not in cname.lower():
-            continue
-
         print(f"  [{cname}] fetching vault IDs...")
         vault_ids = get_fortknox_vault_ids(args.apikey, c["clusterId"])
         if not vault_ids:
             print(f"  [{cname}] no FortKnox vaults — skipping")
-            continue
+        else:
+            cluster_vault_ids[cname] = (c["clusterId"], vault_ids)
 
-        print(f"  [{cname}] {len(vault_ids)} vault(s) — fetching report...")
-        rows = get_data_transfer_report(args.apikey, c["clusterId"], cname,
-                                        vault_ids, start_msecs, end_msecs,
-                                        debug=args.debug)
+    if not cluster_vault_ids:
+        print("No clusters with FortKnox vaults found.")
+        sys.exit(0)
 
-        if args.vault:
-            rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+    all_rows = []
 
-        for r in rows:
-            r["period_start"] = s
-            r["period_end"]   = e
+    if args.mode == "summary":
+        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+            print(f"  [{cname}] fetching summary report...")
+            rows = get_data_transfer_report(args.apikey, cid, cname,
+                                            vault_ids, start_msecs, end_msecs,
+                                            debug=args.debug)
+            if args.vault:
+                rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+            for r in rows:
+                r["period_start"] = s
+                r["period_end"]   = e
+            print(f"  [{cname}] {len(rows)} row(s)")
+            all_rows.extend(rows)
 
-        print(f"  [{cname}] {len(rows)} protection group row(s)")
-        all_rows.extend(rows)
+    else:  # trend
+        days = list(iter_days(start_msecs, end_msecs, tz))
+        print(f"[*] Trend mode: {len(days)} day(s) × {len(cluster_vault_ids)} cluster(s) "
+              f"= up to {len(days) * len(cluster_vault_ids)} report call(s)")
+        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+            print(f"  [{cname}]")
+            for day_start, day_end, date_str in days:
+                rows = get_data_transfer_report(args.apikey, cid, cname,
+                                                vault_ids, day_start, day_end,
+                                                debug=args.debug)
+                if args.vault:
+                    rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+                for r in rows:
+                    r["period_start"] = date_str
+                    r["period_end"]   = date_str
+                print(f"    {date_str}: {len(rows)} row(s)")
+                all_rows.extend(rows)
 
     write_csv(all_rows, args.output)
 

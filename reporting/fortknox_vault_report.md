@@ -8,7 +8,7 @@ Requires a **Helios API key** — FortKnox is a Helios-managed feature.
 
 Default date range is the last 7 days.
 
-**Version:** 3.6
+**Version:** 3.7
 
 ---
 
@@ -29,14 +29,17 @@ per FortKnox vault ID on the cluster).
 ## Usage
 
 ```bash
-# Last 7 days (default):
+# Last 7 days summary (default):
 python3 fortknox_vault_report.py --apikey <key>
 
-# Last 30 days:
+# Last 30 days summary:
 python3 fortknox_vault_report.py --apikey <key> --days 30
 
-# Specific date range:
-python3 fortknox_vault_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
+# Trend mode — one row per protection group per day for the last 30 days:
+python3 fortknox_vault_report.py --apikey <key> --days 30 --mode trend
+
+# Trend mode over a specific date range:
+python3 fortknox_vault_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01 --mode trend
 
 # Filter to one cluster:
 python3 fortknox_vault_report.py --apikey <key> --cluster <cluster-name>
@@ -63,6 +66,7 @@ python3 fortknox_vault_report.py --apikey <key> --debug
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
 | `--start-msecs MS` | Exact start timestamp in milliseconds — paste directly from Chrome DevTools request URL to match UI exactly |
 | `--end-msecs MS` | Exact end timestamp in milliseconds — paste directly from Chrome DevTools request URL |
+| `--mode` | `summary` (default): one row per protection group for the full date range. `trend`: one row per protection group **per day**, enabling daily storage utilization trend lines. |
 | `--debug` | Print exact request URL and raw response sample for comparison with Chrome DevTools |
 
 ---
