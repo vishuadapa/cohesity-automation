@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v4.2: Storage Consumed (TB) column + TB trend chart
+
+### Added
+- `reporting/fortknox_vault_report.py` — `Storage Consumed (TB)` column added to every row (raw bytes ÷ 1,000,000,000,000, 4 decimal places). Trend chart Y axis now plots TB values instead of raw bytes, giving a human-readable scale.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v4.1: Chart references Report sheet directly
 
 ### Changed

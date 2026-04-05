@@ -18,6 +18,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.2 (2026-04-04) — Added Storage Consumed (TB) column (÷ 1,000,000,000,000,
+                     4 decimal places). Trend chart now plots TB values instead
+                     of raw bytes for human-readable Y axis.
   4.1 (2026-04-04) — Chart references Report sheet directly — no data duplication
                      on the chart sheet. Report rows sorted by (group, cluster,
                      vault, date) so each series is a contiguous range. All-zero
@@ -85,7 +88,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "4.1"
+__version__ = "4.2"
 
 import argparse
 import sys
@@ -216,14 +219,16 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
         vault_name = vault_summary.get("vaultName", "")
         vault_type = vault_summary.get("vaultType", "N/A")
         for job in (vault_summary.get("dataTransferPerProtectionJob") or []):
+            consumed_bytes = job.get("storageConsumed", 0) or 0
             rows.append({
-                "cluster":               cluster_name,
-                "vault_name":            vault_name,
-                "vault_type":            vault_type,
-                "protection_group":      job.get("protectionJobName", ""),
-                "logical_bytes":         job.get("numLogicalBytesTransferred", 0),
-                "physical_bytes":        job.get("numPhysicalBytesTransferred", 0),
-                "storage_consumed_bytes": job.get("storageConsumed", 0),
+                "cluster":                cluster_name,
+                "vault_name":             vault_name,
+                "vault_type":             vault_type,
+                "protection_group":       job.get("protectionJobName", ""),
+                "logical_bytes":          job.get("numLogicalBytesTransferred", 0),
+                "physical_bytes":         job.get("numPhysicalBytesTransferred", 0),
+                "storage_consumed_bytes": consumed_bytes,
+                "storage_consumed_tb":    round(consumed_bytes / 1_000_000_000_000, 4),
             })
     return rows
 
@@ -326,7 +331,12 @@ COLUMNS = [
     ("Logical Transferred (Bytes)",  "logical_bytes"),
     ("Physical Transferred (Bytes)", "physical_bytes"),
     ("Storage Consumed (Bytes)",     "storage_consumed_bytes"),
+    ("Storage Consumed (TB)",        "storage_consumed_tb"),
 ]
+
+# Column index (1-based) of the TB column in the Report sheet — used by chart
+_TB_COL_IDX = next(i for i, (_, k) in enumerate(COLUMNS, start=1)
+                   if k == "storage_consumed_tb")
 
 
 def _safe_sheet_name(name: str, existing: list) -> str:
@@ -368,7 +378,7 @@ def _add_trend_chart(wb, group_ranges: dict):
     chart.style  = 10
     chart.height = 18   # cm  ≈ fits a standard laptop screen
     chart.width  = 28   # cm
-    chart.y_axis.title = "Storage Consumed (Bytes)"
+    chart.y_axis.title = "Storage Consumed (TB)"
     chart.x_axis.title = "Date"
 
     cats_set = False
@@ -390,8 +400,8 @@ def _add_trend_chart(wb, group_ranges: dict):
             chart.set_categories(cats_ref)
             cats_set = True
 
-        # Series data from Storage Consumed column (col 9)
-        data_ref = Reference(report_ws, min_col=9,
+        # Series data from Storage Consumed (TB) column
+        data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
         s = Series(data_ref)
 

@@ -13,7 +13,7 @@ pip install openpyxl
 
 Default date range is the last 7 days.
 
-**Version:** 4.1
+**Version:** 4.2
 
 ---
 
@@ -99,6 +99,7 @@ The script automatically queries the timezone from the first cluster via `GET /i
 | Logical Transferred (Bytes) | `numLogicalBytesTransferred` | Logical bytes sent to vault (pre-compression) |
 | Physical Transferred (Bytes) | `numPhysicalBytesTransferred` | Bytes actually sent over the network (post-compression) |
 | Storage Consumed (Bytes) | `storageConsumed` | Physical storage currently retained in this vault for this protection group across all retained snapshots |
+| Storage Consumed (TB) | _(derived)_ | Same value converted to TB (÷ 1,000,000,000,000, 4 decimal places). Used as the Y axis in the trend chart. |
 
 ---
 
