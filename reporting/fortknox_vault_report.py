@@ -18,6 +18,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  3.3 (2026-04-04) — Output raw bytes — no conversion. Column headers updated
+                     to (Bytes). Allows direct comparison to API payload values
+                     confirmed via Chrome DevTools.
   3.2 (2026-04-04) — Unit changed from GB to TB (÷ 1,000,000,000,000). UI
                      displays binary TiB; 1 TiB = 1.09951 TB so script values
                      are ~9.95% higher than UI figures — correct decimal
@@ -43,7 +46,7 @@ Usage:
   python3 fortknox_vault_report.py --apikey <key> --vault <vault-name>
 """
 
-__version__ = "3.2"
+__version__ = "3.3"
 
 import argparse
 import csv
@@ -171,13 +174,10 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 # Size / date helpers
 # ---------------------------------------------------------------------------
 
-def to_tb(byte_count) -> str:
-    """Convert bytes to TB (decimal SI: 1 TB = 1,000,000,000,000 bytes).
-    The UI displays binary TiB; 1 TiB = 1.09951 TB, so script values will be
-    ~9.95% higher than UI figures — this is the correct decimal equivalent."""
+def fmt_bytes(byte_count) -> str:
     if not byte_count:
-        return "0.00"
-    return f"{byte_count / 1_000_000_000_000:.4f}"
+        return "0"
+    return str(int(byte_count))
 
 
 def now_msecs() -> int:
@@ -228,9 +228,9 @@ COLUMNS = [
     ("Vault Name",                 "vault_name"),
     ("Vault Type",                 "vault_type"),
     ("Protection Group",           "protection_group"),
-    ("Logical Transferred (TB)",   "logical_bytes"),
-    ("Physical Transferred (TB)",  "physical_bytes"),
-    ("Storage Consumed (TB)",      "storage_consumed_bytes"),
+    ("Logical Transferred (Bytes)",   "logical_bytes"),
+    ("Physical Transferred (Bytes)",  "physical_bytes"),
+    ("Storage Consumed (Bytes)",      "storage_consumed_bytes"),
 ]
 
 
@@ -244,7 +244,7 @@ def write_csv(rows: list, output_file: str):
         writer.writeheader()
         for row in rows:
             writer.writerow({
-                col: (to_tb(row[key]) if key.endswith("_bytes") else row[key])
+                col: (fmt_bytes(row[key]) if key.endswith("_bytes") else row[key])
                 for col, key in COLUMNS
             })
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")

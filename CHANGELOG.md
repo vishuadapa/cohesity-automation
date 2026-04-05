@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-04] — fortknox_vault_report.py v3.3: Output raw bytes
+
+### Changed
+- `reporting/fortknox_vault_report.py` — Size columns now report raw bytes (no conversion). Column headers updated from `(TB)` to `(Bytes)`. API payload confirmed via Chrome DevTools to return values in bytes; all prior unit conversions produced values that did not match the UI.
+
+---
+
 ## [2026-04-04] — fortknox_vault_report.py v3.2: Switch to TB units
 
 ### Changed
