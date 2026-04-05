@@ -3,18 +3,18 @@
 Generates an Excel report of protection group activity across Cohesity clusters. Supports two modes:
 
 - **`--mode summary`** (default): last run per group, or all runs within a date range (one row per run). All timestamps in the cluster's local timezone.
-- **`--mode trend`**: daily storage consumed per protection group via the Cohesity time-series statistics API. One row per group per day + a trend chart sheet per cluster. Mirrors the FortKnox report's trend capability for local cluster storage.
+- **`--mode trend`**: daily storage consumed per protection group. One row per group per day + a trend chart sheet per cluster. Mirrors the FortKnox report's trend capability for local cluster storage.
 
 Requires a **Helios API key** (for Helios mode) or cluster credentials (for direct mode). Credentials are stored securely in the OS keychain after the first run.
 
-> **Storage Consumed note:** In `--mode trend`, `Storage Consumed (Bytes/TB)` is sourced from `GET /statistics/timeSeriesStats` with a daily rollup — this gives a genuine historical value at the end of each day. In `--mode summary`, the column is labelled **Storage Consumed (Current, GB)** because `GET /stats/consumers` is a point-in-time snapshot with no date parameter — it always reflects the current cluster state.
+> **Storage Consumed note:** In `--mode trend`, `Storage Consumed (Bytes/TB)` is calculated per day by summing `bytesWritten` across all snapshots that were retained on that day. In `--mode summary`, the column is labelled **Storage Consumed (Current, GB)** because `GET /stats/consumers` is a point-in-time snapshot — it always reflects the current cluster state.
 
 Required packages:
 ```bash
 pip install openpyxl keyring
 ```
 
-**Version:** 4.0
+**Version:** 4.1
 
 ---
 
@@ -80,7 +80,7 @@ Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS
 | Cluster | Cluster name |
 | Protection Group | Name of the protection group |
 | Environment | Workload type: `VMware`, `PhysicalFiles`, `Oracle`, etc. |
-| Storage Consumed (Bytes) | Total physical storage retained on the cluster for this group at end of day, across all retained snapshots (post-dedup/compression). Sourced from `timeSeriesStats` with daily rollup. |
+| Storage Consumed (Bytes) | Storage consumed by this protection group at the end of each day, calculated by summing `bytesWritten` across all snapshots retained on that day. |
 | Storage Consumed (TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
 
 ---
