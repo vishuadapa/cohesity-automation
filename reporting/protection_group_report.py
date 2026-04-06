@@ -32,6 +32,13 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  4.4 (2026-04-06) — Reverted trend mode Storage Consumed to stats/consumers
+                     (same source as summary mode). Previous snapshot-summing
+                     approach grossly exceeded cluster capacity because
+                     bytesWritten does not account for cross-snapshot dedup.
+                     Column renamed to "Storage Consumed (As of End Date)"
+                     to make clear it is a current-state value, not per-day
+                     historical. Startup caveat message added. README updated.
   4.3 (2026-04-05) — Trend mode now includes all summary mode columns
                      alongside the storage trend. Run detail columns (type,
                      status, SLA, objects, sizes, replication, archive) are
@@ -72,7 +79,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.3"
+__version__ = "4.4"
 
 import argparse
 import getpass
@@ -629,9 +636,9 @@ TREND_COLUMNS = [
     ("Policy Name",              "policy_name"),
     ("Is Active",                "is_active"),
     ("Is Paused",                "is_paused"),
-    # Storage trend (chart Y axis)
-    ("Storage Consumed (Bytes)", "storage_consumed_bytes"),
-    ("Storage Consumed (TB)",    "storage_consumed_tb"),
+    # Storage — current state as of report end date (same value on every row for a group)
+    ("Storage Consumed (As of End Date, Bytes)", "storage_consumed_bytes"),
+    ("Storage Consumed (As of End Date, TB)",    "storage_consumed_tb"),
     # Run detail for the day (aggregated across all runs that started on this date)
     ("Runs On Day",              "runs_on_day"),
     ("Run Type",                 "run_type"),
@@ -819,29 +826,31 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                         groups: list, start_usecs: int, end_usecs: int,
                         debug: bool = False) -> list:
     """
-    Trend mode: estimate daily storage consumed per protection group by
-    inspecting which snapshots were retained on each calendar day.
+    Trend mode: one row per protection group per day.
 
-    Algorithm (per protection group):
-      1. Query all runs from (start - 1 year) to end_usecs, capturing every
-         snapshot that might still be retained during the trend window.
-      2. For each calendar day D in [start, end]:
-           storage_consumed = sum(bytesWritten for each run where
-                                  run.startTime <= D  AND
-                                  (run.expiryTime == 0 OR run.expiryTime > D))
+    Storage Consumed is sourced from GET /stats/consumers (same as summary
+    mode) — a point-in-time snapshot of current cluster storage at the time
+    the script runs. This value is stamped identically on every date row for
+    a given protection group.
 
-    bytesWritten is already post-dedup/compression per run. Shared dedup
-    blocks across runs may cause a slight overestimate vs stats/consumers,
-    but the trend direction and relative values are accurate.
+    LIMITATION: Cohesity does not expose a per-day historical storage consumed
+    value per protection group via any public API accessible through Helios.
+    A previous implementation attempted to estimate this by summing bytesWritten
+    across active snapshots per day, but the result grossly exceeded actual
+    cluster capacity because bytesWritten does not account for cross-snapshot
+    deduplication. The current approach is honest: the number is accurate but
+    static across all dates for a group. Use the Run Detail columns (Data
+    Written, Objects count, etc.) for per-day trend analysis of backup activity.
     """
-    LOOKBACK_USECS = 365 * 24 * 3600 * 1_000_000
-    query_start    = max(0, start_usecs - LOOKBACK_USECS)
-
     print("    Fetching cluster timezone...")
     tz_name = get_cluster_timezone(base_url, headers)
     print(f"    Cluster timezone: {tz_name}")
 
+    print("    Fetching storage stats (current state)...")
+    storage_map = get_storage_stats(base_url, headers)  # {numeric_id: bytes}
+
     from datetime import date as _date
+    from collections import defaultdict
     start_date = datetime.fromtimestamp(start_usecs / 1e6, tz=timezone.utc).date()
     end_date   = datetime.fromtimestamp(end_usecs   / 1e6, tz=timezone.utc).date()
     date_list  = [start_date + timedelta(days=i)
@@ -856,43 +865,18 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
         is_active   = group.get("isActive", True)
         is_paused   = group.get("isPaused", False)
         policy_name = get_policy_name(base_url, headers, policy_id)
+        num_id      = numeric_group_id(group_id)
 
-        print(f"      [{group_name}] querying runs (1 yr lookback)...")
-        all_runs = get_runs(base_url, headers, group_id, query_start, end_usecs)
+        # Current storage — same value on every date row for this group
+        consumed_bytes = storage_map.get(num_id, 0) or 0
+        consumed_tb    = round(consumed_bytes / 1_000_000_000_000, 4)
 
-        if not all_runs:
-            print(f"        No runs found — skipping.")
-            continue
+        print(f"      [{group_name}] querying runs...")
+        all_runs = get_runs(base_url, headers, group_id, start_usecs, end_usecs)
 
-        # Extract per-snapshot: (start_usecs, expiry_usecs, bytes_written)
-        snapshots = []
-        for run in all_runs:
-            backup  = run.get("localBackupInfo") or {}
-            start_t = backup.get("startTimeUsecs", 0)
-            bytes_w = (backup.get("localSnapshotStats") or {}).get("bytesWritten", 0) or 0
-
-            expiry_t = 0
-            objects  = run.get("objects") or []
-            if objects:
-                snap_info = ((objects[0].get("localSnapshotInfo") or {})
-                             .get("snapshotInfo") or {})
-                expiry_t  = snap_info.get("expiryTimeUsecs", 0) or 0
-
-            if start_t:
-                snapshots.append((start_t, expiry_t, bytes_w))
-
-        if debug:
-            print(f"[DEBUG] {group_name}: {len(snapshots)} snapshot(s) in lookback window")
-            for st, ex, bw in snapshots[:5]:
-                s_s = datetime.fromtimestamp(st / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
-                e_s = (datetime.fromtimestamp(ex / 1e6, tz=timezone.utc).strftime("%Y-%m-%d")
-                       if ex else "never")
-                print(f"  start={s_s}  expiry={e_s}  bytes_written={bw:,}")
-
-        # Index runs by the calendar date they started (for run detail columns)
-        from collections import defaultdict
+        # Index runs by the calendar date they started
         runs_by_date: dict = defaultdict(list)
-        for run in all_runs:
+        for run in (all_runs or []):
             backup  = run.get("localBackupInfo") or {}
             start_t = backup.get("startTimeUsecs", 0)
             if start_t:
@@ -900,16 +884,8 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                     start_t / 1e6, tz=timezone.utc).date()
                 runs_by_date[run_date].append(run)
 
-        # For each day: storage estimate + aggregated run stats
         for d in date_list:
-            day_usecs = int(datetime(d.year, d.month, d.day, 23, 59, 59,
-                                     tzinfo=timezone.utc).timestamp() * 1_000_000)
-            consumed = sum(
-                bw for (st, ex, bw) in snapshots
-                if st <= day_usecs and (ex == 0 or ex > day_usecs)
-            )
             run_stats = aggregate_day_runs(runs_by_date.get(d, []), tz_name)
-
             rows.append({
                 "date":                   d.isoformat(),
                 "cluster":                cluster_label,
@@ -918,12 +894,12 @@ def build_trend_report(cluster_label: str, base_url: str, headers: dict,
                 "policy_name":            policy_name,
                 "is_active":              is_active,
                 "is_paused":              is_paused,
-                "storage_consumed_bytes": consumed,
-                "storage_consumed_tb":    round(consumed / 1_000_000_000_000, 4),
+                "storage_consumed_bytes": consumed_bytes,
+                "storage_consumed_tb":    consumed_tb,
                 **run_stats,
             })
 
-        print(f"        {len(date_list)} daily estimates from {len(snapshots)} snapshot(s)")
+        print(f"        {len(date_list)} row(s), storage consumed: {consumed_tb:.4f} TB")
 
     return rows
 
@@ -1256,11 +1232,14 @@ def main():
 
     if args.mode == "trend":
         print()
-        print("    NOTE: Storage Consumed is estimated per day by summing bytesWritten")
-        print("    for every snapshot that was active on that day (startTime <= day")
-        print("    AND expiryTime > day). Runs are queried going back 1 year to capture")
-        print("    all currently retained snapshots. May slightly overestimate vs the")
-        print("    cluster UI due to shared dedup blocks — trend direction is accurate.")
+        print("    LIMITATION — Storage Consumed:")
+        print("    Cohesity does not provide a historical per-day storage consumed value")
+        print("    per protection group via any public API accessible through Helios.")
+        print("    The 'Storage Consumed (As of End Date)' column reflects the CURRENT")
+        print(f"   state of the cluster as of when this script ran — it will show the")
+        print("    same value on every date row for a given protection group.")
+        print("    For per-day backup activity trends, use the Run Detail columns")
+        print("    (Data Written, Objects Succeeded, Run Status, etc.).")
         print()
 
     all_rows = []

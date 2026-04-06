@@ -5,6 +5,13 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-06] — protection_group_report.py v4.4: revert to stats/consumers for storage
+
+### Changed
+- `reporting/protection_group_report.py` — Reverted trend mode Storage Consumed to `GET /stats/consumers` (same source as summary mode). Previous snapshot-summing approach (`sum(bytesWritten)` across active snapshots per day) grossly exceeded actual cluster physical capacity because `bytesWritten` is measured before cross-snapshot deduplication. Column renamed to **"Storage Consumed (As of End Date, Bytes/TB)"** to make clear it is a current-state value stamped identically on all date rows for a group. Startup caveat message added. README updated with limitation note.
+
+---
+
 ## [2026-04-05] — protection_group_report.py v4.3: full column parity in trend mode
 
 ### Added

@@ -7,14 +7,14 @@ Generates an Excel report of protection group activity across Cohesity clusters.
 
 Requires a **Helios API key** (for Helios mode) or cluster credentials (for direct mode). Credentials are stored securely in the OS keychain after the first run.
 
-> **Storage Consumed note:** In `--mode trend`, `Storage Consumed (Bytes/TB)` is calculated per day by summing `bytesWritten` across all snapshots that were retained on that day. In `--mode summary`, the column is labelled **Storage Consumed (Current, GB)** because `GET /stats/consumers` is a point-in-time snapshot — it always reflects the current cluster state.
+> **Storage Consumed limitation:** Cohesity does not provide a historical per-day storage consumed value per protection group through any public API accessible via Helios. Both `--mode summary` and `--mode trend` source this value from `GET /stats/consumers`, which returns the **current state of the cluster at the time the script runs**. In trend mode the column is named **"Storage Consumed (As of End Date)"** — it will show the same value on every date row for a given protection group. For per-day backup activity trends, use the run detail columns (Data Written, Objects Succeeded, Run Status, etc.).
 
 Required packages:
 ```bash
 pip install openpyxl keyring
 ```
 
-**Version:** 4.3
+**Version:** 4.4
 
 ---
 
@@ -83,8 +83,8 @@ Output file is created automatically as `protection_group_report_YYYYMMDD_HHMMSS
 | Policy Name | Protection policy assigned to the group |
 | Is Active | `True` if the group is active |
 | Is Paused | `True` if the group is currently paused |
-| Storage Consumed (Bytes) | Storage consumed at the end of each day, calculated by summing `bytesWritten` across all snapshots retained on that day. |
-| Storage Consumed (TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
+| Storage Consumed (As of End Date, Bytes) | Current physical storage this group occupies on the cluster, sourced from `GET /stats/consumers`. **Same value on every date row** — reflects cluster state at script run time, not a per-day historical value. See limitation note above. |
+| Storage Consumed (As of End Date, TB) | Same value ÷ 1,000,000,000,000, 4 decimal places. Used as the Y axis in trend charts. |
 | Runs On Day | Number of protection runs that started on this date (`0` = no run scheduled/completed) |
 | Run Type | Type of the last run on this date: `Regular`, `Full`, `Log`, `System` |
 | Sla Violated | `Yes` if any run on this date breached the policy SLA window |
