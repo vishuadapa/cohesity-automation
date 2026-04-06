@@ -18,6 +18,12 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.7 (2026-04-06) — Fixed x-axis dates not showing on trend charts. Root
+                     cause: openpyxl set_categories() emits <c:numRef> in
+                     chart XML; Excel discards string values passed via numRef.
+                     Fix: assign DataSource(strRef=StrRef(...)) directly to
+                     each series' .cat — forces <c:strRef> so Excel renders
+                     date strings as text labels on the x-axis.
   4.6 (2026-04-05) — Fixed axis labels not rendering: removed numFmt from
                      category (string) x-axis, added delete=False on both
                      axes. X-axis tick density auto-reduces: every day for
@@ -104,7 +110,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.6"
+__version__ = "4.7"
 
 import argparse
 import getpass
@@ -502,18 +508,41 @@ def _make_chart(title: str, report_ws, series_list: list,
     legend.overlay  = False
     chart.legend = legend
 
-    cats_set = False
-    for label, start_row, end_row in series_list:
-        if not cats_set:
-            cats_ref = Reference(report_ws, min_col=1,
-                                 min_row=start_row, max_row=end_row)
-            chart.set_categories(cats_ref)
-            cats_set = True
+    # Build all series first, then assign string categories to each one.
+    # openpyxl's set_categories() generates <c:numRef> in the XML — Excel
+    # treats string date values as invalid numbers and shows nothing.
+    # Using StrRef forces <c:strRef> so Excel renders them as text labels.
+    try:
+        from openpyxl.chart.data_source import DataSource, StrRef
+        from openpyxl.utils import get_column_letter as _gcl
+        _use_strref = True
+    except ImportError:
+        _use_strref = False
 
+    cat_formula = None
+    for label, start_row, end_row in series_list:
         data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
         chart.add_data(data_ref)
         chart.series[-1].title = SeriesLabel(v=label)
+
+        # Capture category formula from the first (longest) series
+        if cat_formula is None:
+            col_a = _gcl(1) if _use_strref else "A"
+            cat_formula = (f"'{report_ws.title}'!${col_a}${start_row}"
+                           f":${col_a}${end_row}")
+
+    # Assign string categories to every series
+    if cat_formula:
+        if _use_strref:
+            str_cat = DataSource(strRef=StrRef(f=cat_formula))
+            for s in chart.series:
+                s.cat = str_cat
+        else:
+            # Fallback: let openpyxl use numRef (dates may not display)
+            chart.set_categories(Reference(report_ws, min_col=1,
+                                           min_row=series_list[0][1],
+                                           max_row=series_list[0][2]))
 
     return chart
 

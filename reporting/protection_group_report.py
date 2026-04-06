@@ -79,7 +79,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.4"
+__version__ = "4.5"
 
 import argparse
 import getpass
@@ -978,16 +978,36 @@ def _make_pg_chart(title: str, report_ws, series_list: list,
     legend.overlay  = False
     chart.legend    = legend
 
-    cats_set = False
+    # Use StrRef so Excel renders string dates as labels, not numbers.
+    # openpyxl's set_categories() generates <c:numRef> which causes blank x-axis.
+    try:
+        from openpyxl.chart.data_source import DataSource, StrRef
+        from openpyxl.utils import get_column_letter as _gcl
+        _use_strref = True
+    except ImportError:
+        _use_strref = False
+
+    cat_formula = None
     for label, start_row, end_row in series_list:
-        if not cats_set:
-            chart.set_categories(
-                Reference(report_ws, min_col=1, min_row=start_row, max_row=end_row))
-            cats_set = True
         chart.add_data(
             Reference(report_ws, min_col=_TREND_TB_COL_IDX,
                       min_row=start_row, max_row=end_row))
         chart.series[-1].title = SeriesLabel(v=label)
+
+        if cat_formula is None:
+            col_a = _gcl(1) if _use_strref else "A"
+            cat_formula = (f"'{report_ws.title}'!${col_a}${start_row}"
+                           f":${col_a}${end_row}")
+
+    if cat_formula:
+        if _use_strref:
+            str_cat = DataSource(strRef=StrRef(f=cat_formula))
+            for s in chart.series:
+                s.cat = str_cat
+        else:
+            chart.set_categories(Reference(report_ws, min_col=1,
+                                           min_row=series_list[0][1],
+                                           max_row=series_list[0][2]))
 
     return chart
 
