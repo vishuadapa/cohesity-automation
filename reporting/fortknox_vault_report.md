@@ -13,7 +13,7 @@ pip install openpyxl keyring
 
 Default date range is the last 7 days.
 
-**Version:** 4.3
+**Version:** 4.9
 
 ---
 
@@ -112,3 +112,16 @@ Fields available in the `dataTransferToVaults` response that are not included by
 | Number of protection jobs | `dataTransferSummary[].numProtectionJobs` | Count of protection groups writing to this vault |
 | Logical transferred time-series | `dataTransferSummary[].logicalDataTransferredBytesDuringTimeRange[]` | Array of per-period logical transfer values |
 | Physical transferred time-series | `dataTransferSummary[].physicalDataTransferredBytesDuringTimeRange[]` | Array of per-period physical transfer values |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 4.9 | 2026-04-07 | Fixed Logical/Physical Transferred — switched from cumulative `dataTransferPerProtectionJob` fields to `GET /public/protectionRuns` per-run stats (time-windowed). Now matches UI values. |
+| 4.8 | 2026-04-07 | Added Storage Consumed (TiB) column; fixed `--days` / default range to snap to calendar day start; fixed `end_of_day_msecs` to cover full last second |
+| 4.7 | 2026-04-06 | Fixed x-axis dates not showing on trend charts |
+| 4.6 | 2026-04-05 | Fixed axis labels; x-axis tick density auto-reduces |
+| 4.5 | 2026-04-05 | One chart sheet per cluster |
+| 4.3 | 2026-04-04 | Secure credential storage via OS keychain |
