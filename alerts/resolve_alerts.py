@@ -126,7 +126,7 @@ def get_helios_clusters(api_key: str) -> list:
 
 
 def get_open_alerts(api_key: str, cluster_id: int) -> list:
-    url    = f"https://{HELIOS_HOST}/v2/alerts"
+    url    = f"https://{HELIOS_HOST}/irisservices/api/v1/public/alerts"
     params = {"alertStateList": "kOpen", "maxAlerts": 1000}
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
@@ -135,11 +135,12 @@ def get_open_alerts(api_key: str, cluster_id: int) -> list:
     except requests.exceptions.HTTPError:
         print(f"    WARN: alerts fetch failed ({r.status_code}) — skipping")
         return []
-    return r.json().get("alerts", [])
+    data = r.json()
+    return data if isinstance(data, list) else data.get("alerts", [])
 
 
 def resolve_alerts(api_key: str, cluster_id: int, alert_ids: list) -> bool:
-    url     = f"https://{HELIOS_HOST}/v2/alerts/resolve"
+    url     = f"https://{HELIOS_HOST}/irisservices/api/v1/public/alerts/resolve"
     payload = {"alertIdList": alert_ids}
     try:
         r = requests.post(url, headers=helios_headers(api_key, cluster_id),

@@ -146,7 +146,7 @@ def usecs_to_str(usecs: int) -> str:
 
 def get_alerts(api_key: str, cluster_id: int, start_usecs: int,
                end_usecs: int, debug: bool = False) -> list:
-    url    = f"https://{HELIOS_HOST}/v2/alerts"
+    url    = f"https://{HELIOS_HOST}/irisservices/api/v1/public/alerts"
     params = {
         "startDateUsecs": start_usecs,
         "endDateUsecs":   end_usecs,
@@ -161,7 +161,8 @@ def get_alerts(api_key: str, cluster_id: int, start_usecs: int,
     except requests.exceptions.HTTPError:
         print(f"    WARN: alerts fetch failed ({r.status_code}) — skipping cluster")
         return []
-    return r.json().get("alerts", [])
+    data = r.json()
+    return data if isinstance(data, list) else data.get("alerts", [])
 
 
 # ---------------------------------------------------------------------------
