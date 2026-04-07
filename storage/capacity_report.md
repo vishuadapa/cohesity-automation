@@ -90,5 +90,5 @@ Output file is created automatically as `capacity_report_YYYYMMDD_HHMMSS.xlsx` i
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed empty columns: v1 `/public/cluster` API nests capacity stats under `stats.usagePerfStats` and data reduction stats under `stats.dataUsageStats` — code was reading flat `stats.*` fields that don't exist at that level |
+| 1.1 | 2026-04-07 | Fixed empty columns: v1 `/public/cluster` returns `stats=null` by default — added `?fetchStats=true` parameter. Also fixed field paths: stats are nested under `usagePerfStats` / `dataUsageStats`, not at the top level |
 | 1.0 | 2026-04-06 | Initial release |

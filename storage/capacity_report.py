@@ -17,10 +17,11 @@ API endpoints used:
                       (stats.usableSizeBytes, stats.usedSizeBytes, etc.)
 
 Version history:
-  1.1 (2026-04-07) — Fixed empty columns: v1 API nests stats under
-                     usagePerfStats / dataUsageStats, not at the top level.
-                     Updated all field paths to match actual API response.
-                     Added fallback for softwareVersion field name.
+  1.1 (2026-04-07) — Fixed empty columns: v1 /public/cluster returns
+                     stats=null by default; added ?fetchStats=true parameter.
+                     Fixed field paths: stats are nested under usagePerfStats
+                     and dataUsageStats, not at the top level.
+                     Added softwareVersion fallback for Software Version column.
   1.0 (2026-04-06) — Initial release. Capacity summary with dedup and
                      compression ratios, used/free/usable in TB,
                      data reduction savings. Single-sheet Excel output
@@ -142,6 +143,7 @@ def get_cluster_detail(api_key: str, cluster_id: int) -> dict:
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/cluster"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                         params={"fetchStats": "true"},
                          verify=False, timeout=20)
         r.raise_for_status()
         return r.json()
