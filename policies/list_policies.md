@@ -9,7 +9,16 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.0
+**Version:** 1.1
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed `AttributeError: 'NoneType' object has no attribute 'get'` crash when the API returns explicit `null` for `backupPolicy`, `regular`, `fullBackups`, `incremental`, `log`, `retention`, or `remoteTargetPolicy` fields. `dict.get(key, {})` does not protect against null values — replaced all chained `.get()` calls with `or {}` / `or []` fallbacks. |
+| 1.0 | 2026-04-06 | Initial release |
 
 ---
 

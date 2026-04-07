@@ -14,6 +14,11 @@ API endpoints used:
   Policies:      GET  https://helios.cohesity.com/v2/data-protect/policies
 
 Version history:
+  1.1 (2026-04-07) — Fixed AttributeError when API returns null for backupPolicy,
+                     regular, fullBackups, incremental, log, retention, or
+                     remoteTargetPolicy fields. dict.get(key, {}) does not
+                     guard against explicit null values; replaced all chained
+                     .get() calls with `or {}` / `or []` fallbacks.
   1.0 (2026-04-06) — Initial release. Retention, full/incremental schedules,
                      replication targets and retention, archival targets and
                      retention, policy type, and associated group count.
@@ -26,7 +31,7 @@ Usage:
   python3 list_policies.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -283,10 +288,10 @@ def main():
             print(f"    sample: {policies[:1]}")
 
         for p in policies:
-            backup = p.get("backupPolicy", {})
-            reg    = backup.get("regular", {})
-            full_s = schedule_str(reg.get("fullBackups", {}).get("schedule", {}))
-            incr_s = schedule_str(reg.get("incremental", {}).get("schedule", {}))
+            backup = p.get("backupPolicy") or {}
+            reg    = backup.get("regular") or {}
+            full_s = schedule_str((reg.get("fullBackups") or {}).get("schedule") or {})
+            incr_s = schedule_str((reg.get("incremental") or {}).get("schedule") or {})
 
             rows.append({
                 "Cluster":             cname,
@@ -296,13 +301,13 @@ def main():
                 "Full Backup Schedule": full_s,
                 "Incremental Schedule": incr_s,
                 "Local Retention":     retention_str(
-                    reg.get("retention", {})),
+                    reg.get("retention") or {}),
                 "Log Retention":       retention_str(
-                    backup.get("log", {}).get("retention", {})),
+                    (backup.get("log") or {}).get("retention") or {}),
                 "Replication Targets": replication_summary(
-                    p.get("remoteTargetPolicy", {}).get("replicationTargets", [])),
+                    (p.get("remoteTargetPolicy") or {}).get("replicationTargets") or []),
                 "Archival Targets":    archival_summary(
-                    p.get("remoteTargetPolicy", {}).get("archivalTargets", [])),
+                    (p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []),
                 "Is Active":           "Yes" if not p.get("isDeleted") else "No",
                 "Groups Using Policy": p.get("numProtectionGroups", ""),
             })
