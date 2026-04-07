@@ -17,6 +17,10 @@ API endpoints used:
                       (stats.usableSizeBytes, stats.usedSizeBytes, etc.)
 
 Version history:
+  1.1 (2026-04-07) — Fixed empty columns: v1 API nests stats under
+                     usagePerfStats / dataUsageStats, not at the top level.
+                     Updated all field paths to match actual API response.
+                     Added fallback for softwareVersion field name.
   1.0 (2026-04-06) — Initial release. Capacity summary with dedup and
                      compression ratios, used/free/usable in TB,
                      data reduction savings. Single-sheet Excel output
@@ -29,7 +33,7 @@ Usage:
   python3 capacity_report.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -248,30 +252,33 @@ def main():
         print(f"\n[*] Querying: {cname}")
 
         detail = get_cluster_detail(api_key, cid)
-        stats  = detail.get("stats", {})
+        stats  = detail.get("stats") or {}
+        # v1 /public/cluster nests capacity under usagePerfStats
+        # and data reduction stats under dataUsageStats
+        usage  = stats.get("usagePerfStats") or {}
+        data   = stats.get("dataUsageStats") or {}
         nodes  = detail.get("nodeCount", 0)
 
         if args.debug:
-            print(f"    stats: {stats}")
+            print(f"    usagePerfStats: {usage}")
+            print(f"    dataUsageStats: {data}")
 
-        usable   = stats.get("usableSizeBytes", 0)
-        used     = stats.get("usedSizeBytes", 0)
-        logical  = stats.get("dataInBytes", 0)
-        physical = stats.get("dataInBytesAfterReduction", 0)
+        usable   = usage.get("physicalCapacityBytes", 0)
+        used     = usage.get("totalPhysicalUsageBytes", 0)
+        logical  = data.get("dataInBytes", 0)
+        physical = data.get("dataInBytesAfterReduction", 0)
+        dedup_after = data.get("dataInBytesAfterDedup", 0)
         free     = max(0, usable - used)
         used_pct = round(used / usable * 100, 1) if usable else 0.0
         dr_ratio = ratio(logical, physical) if physical else 0.0
         savings  = tb(logical) - tb(physical) if logical and physical else 0.0
-
-        # dedup / compression from separate fields if available
-        dedup = ratio(stats.get("dataInBytes", 0),
-                      stats.get("dataInBytesAfterDedup", logical))
-        comp  = ratio(stats.get("dataInBytesAfterDedup", physical),
-                      stats.get("dataInBytesAfterReduction", physical))
+        dedup    = ratio(logical, dedup_after) if dedup_after else 0.0
+        comp     = ratio(dedup_after, physical) if physical and dedup_after else 0.0
 
         rows.append({
             "Cluster":              cname,
-            "Software Version":     detail.get("clusterSoftwareVersion", ""),
+            "Software Version":     (detail.get("clusterSoftwareVersion")
+                                     or detail.get("softwareVersion", "")),
             "Usable Capacity (TB)": tb(usable),
             "Used (TB)":            tb(used),
             "Free (TB)":            tb(free),

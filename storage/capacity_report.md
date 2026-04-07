@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -83,3 +83,12 @@ Output file is created automatically as `capacity_report_YYYYMMDD_HHMMSS.xlsx` i
 
 - These metrics reflect the current cluster state and include all storage used by snapshots, replication, archival metadata, and system data.
 - Capacity is reported in decimal TB (thousands) as shown in the Cohesity UI.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed empty columns: v1 `/public/cluster` API nests capacity stats under `stats.usagePerfStats` and data reduction stats under `stats.dataUsageStats` — code was reading flat `stats.*` fields that don't exist at that level |
+| 1.0 | 2026-04-06 | Initial release |
