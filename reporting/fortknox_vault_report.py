@@ -18,6 +18,10 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.10 (2026-04-07) — Fixed blank Logical/Physical Transferred: vault ID in
+                     protectionRuns copyRun is nested at
+                     target.archivalTarget.vaultId, not target.vaultId.
+                     The vault ID match always failed, leaving all rows at 0.
   4.9 (2026-04-07) — Fixed Logical Transferred and Physical Transferred to be
                      time-windowed instead of cumulative lifetime totals.
                      Root cause: numLogicalBytesTransferred /
@@ -130,7 +134,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.9"
+__version__ = "4.10"
 
 import argparse
 import getpass
@@ -404,7 +408,11 @@ def get_protection_runs_transfer(api_key: str, cluster_id: int, cluster_name: st
         return {}
 
     if debug:
+        import json
         print(f"[DEBUG] {cluster_name} — {len(runs)} protection run(s) returned")
+        for run in runs[:1]:
+            for cr in (run.get("copyRun") or [])[:1]:
+                print(f"[DEBUG] copyRun sample = {json.dumps(cr, indent=2)[:800]}")
 
     vault_id_set = set(vault_ids)
     result = {}  # (job_name, vault_id) -> {logical, physical, by_date}
@@ -416,7 +424,8 @@ def get_protection_runs_transfer(api_key: str, cluster_id: int, cluster_name: st
             target = copy_run.get("target") or {}
             if target.get("type") != "kArchival":
                 continue
-            vault_id = target.get("vaultId")
+            archival_target = target.get("archivalTarget") or {}
+            vault_id = archival_target.get("vaultId")
             if vault_id not in vault_id_set:
                 continue
             if copy_run.get("status") not in ("kSuccess", "kWarning"):

@@ -13,7 +13,7 @@ pip install openpyxl keyring
 
 Default date range is the last 7 days.
 
-**Version:** 4.9
+**Version:** 4.10
 
 ---
 
@@ -119,6 +119,7 @@ Fields available in the `dataTransferToVaults` response that are not included by
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 4.10 | 2026-04-07 | Fixed blank Logical/Physical Transferred: vault ID is at `target.archivalTarget.vaultId` in protectionRuns copyRun, not `target.vaultId` — vault match always failed leaving all rows at 0 |
 | 4.9 | 2026-04-07 | Fixed Logical/Physical Transferred — switched from cumulative `dataTransferPerProtectionJob` fields to `GET /public/protectionRuns` per-run stats (time-windowed). Now matches UI values. |
 | 4.8 | 2026-04-07 | Added Storage Consumed (TiB) column; fixed `--days` / default range to snap to calendar day start; fixed `end_of_day_msecs` to cover full last second |
 | 4.7 | 2026-04-06 | Fixed x-axis dates not showing on trend charts |
