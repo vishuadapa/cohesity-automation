@@ -14,6 +14,11 @@ API endpoints used:
   Policies:      GET  https://helios.cohesity.com/v2/data-protect/policies
 
 Version history:
+  1.3 (2026-04-07) — Groups Using Policy (col L) now sourced from
+                     GET /v2/data-protect/protection-groups per cluster:
+                     counts how many groups reference each policy ID.
+                     Replaces unreliable numProtectionGroups field which
+                     is not returned by the v2 policies API.
   1.2 (2026-04-07) — Fixed empty columns D, E, H, I, J, L caused by wrong
                      field names for the v2 API response:
                      - Policy Type: "policyCategory" → "type"
@@ -43,7 +48,7 @@ Usage:
   python3 list_policies.py --clear-credentials
 """
 
-__version__ = "1.2"
+__version__ = "1.3"
 
 import argparse
 import getpass
@@ -155,6 +160,28 @@ def get_policies(api_key: str, cluster_id: int) -> list:
                          verify=False, timeout=20)
         r.raise_for_status()
         return r.json().get("policies", [])
+    except Exception:
+        return []
+
+
+def get_policy_group_counts(api_key: str, cluster_id: int) -> dict:
+    """Return {policy_id: group_count} by fetching all protection groups
+    and counting how many reference each policy ID."""
+    url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups"
+    try:
+        r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                         params={"includeTenants": True},
+                         verify=False, timeout=30)
+        r.raise_for_status()
+        groups = r.json().get("protectionGroups", [])
+    except Exception:
+        return {}
+    counts = {}
+    for g in groups:
+        pid = g.get("policyId")
+        if pid:
+            counts[pid] = counts.get(pid, 0) + 1
+    return counts
     except Exception:
         return []
 
@@ -329,9 +356,11 @@ def main():
         cname = c["name"]
         cid   = c["clusterId"]
         print(f"\n[*] Fetching policies: {cname}")
-        policies = get_policies(api_key, cid)
+        policies    = get_policies(api_key, cid)
+        group_counts = get_policy_group_counts(api_key, cid)
         if args.debug:
             print(f"    sample: {policies[:1]}")
+            print(f"    group_counts sample: {dict(list(group_counts.items())[:3])}")
 
         for p in policies:
             backup = p.get("backupPolicy") or {}
@@ -359,9 +388,8 @@ def main():
                 "Archival Targets":    archival_summary(
                     remote.get("archivalTargets") or []),
                 "Is Active":           "Yes" if not p.get("isDeleted") else "No",
-                # v2 may not return numProtectionGroups; fall back gracefully
-                "Groups Using Policy": p.get("numProtectionGroups",
-                                             p.get("numberOfProtectionGroups", "")),
+                # Count derived from protection-groups endpoint (policyId match)
+                "Groups Using Policy": group_counts.get(p.get("id"), ""),
             })
 
         print(f"    {len(policies)} policy/ies")
