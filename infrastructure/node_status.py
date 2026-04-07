@@ -132,24 +132,40 @@ def get_helios_clusters(api_key: str) -> list:
 
 
 def get_nodes(api_key: str, cluster_id: int) -> list:
-    url = f"https://{HELIOS_HOST}/v2/nodes"
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/nodes"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          verify=False, timeout=20)
         r.raise_for_status()
-        return r.json().get("nodes", [])
-    except Exception:
+        data = r.json()
+        return data if isinstance(data, list) else data.get("nodes", [])
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: node fetch failed ({r.status_code})")
         return []
 
 
 def get_disks(api_key: str, cluster_id: int) -> list:
-    url = f"https://{HELIOS_HOST}/v2/disks"
+    """Disk info is embedded in the node objects from the v1 nodes endpoint.
+    This fetches nodes with disk details via fetchStats=true."""
+    url    = f"https://{HELIOS_HOST}/irisservices/api/v1/public/nodes"
+    params = {"fetchStats": "true"}
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         verify=False, timeout=20)
+                         params=params, verify=False, timeout=20)
         r.raise_for_status()
-        return r.json().get("disks", [])
-    except Exception:
+        nodes = r.json()
+        if not isinstance(nodes, list):
+            nodes = nodes.get("nodes", [])
+        # Flatten disk info from all nodes
+        disks = []
+        for n in nodes:
+            node_ip = n.get("ip", "")
+            for d in n.get("disksInformation", []):
+                d["nodeIp"] = node_ip
+                disks.append(d)
+        return disks
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: disk fetch failed ({r.status_code})")
         return []
 
 

@@ -134,26 +134,29 @@ def get_helios_clusters(api_key: str) -> list:
 
 
 def get_cluster_detail(api_key: str, cluster_id: int) -> dict:
-    """GET /v2/clusters — returns cluster config including version."""
-    url = f"https://{HELIOS_HOST}/v2/clusters"
+    """GET /irisservices/api/v1/public/cluster — returns cluster config including version."""
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/cluster"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          verify=False, timeout=20)
         r.raise_for_status()
         return r.json()
-    except Exception:
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: cluster detail fetch failed ({r.status_code})")
         return {}
 
 
 def get_node_list(api_key: str, cluster_id: int) -> list:
-    """GET /v2/nodes — returns list of nodes."""
-    url = f"https://{HELIOS_HOST}/v2/nodes"
+    """GET /irisservices/api/v1/public/nodes — returns list of nodes."""
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/nodes"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          verify=False, timeout=20)
         r.raise_for_status()
-        return r.json().get("nodes", [])
-    except Exception:
+        data = r.json()
+        return data if isinstance(data, list) else data.get("nodes", [])
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: node list fetch failed ({r.status_code})")
         return []
 
 

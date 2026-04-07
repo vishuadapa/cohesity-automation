@@ -135,13 +135,14 @@ def get_helios_clusters(api_key: str) -> list:
 
 
 def get_cluster_detail(api_key: str, cluster_id: int) -> dict:
-    url = f"https://{HELIOS_HOST}/v2/clusters"
+    url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/cluster"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          verify=False, timeout=20)
         r.raise_for_status()
         return r.json()
-    except Exception:
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: cluster detail fetch failed ({r.status_code})")
         return {}
 
 

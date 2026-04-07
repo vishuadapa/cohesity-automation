@@ -152,7 +152,12 @@ def hget(api_key: str, cluster_id: int, path: str, params: dict = None) -> dict:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          params=params, verify=False, timeout=20)
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        # v1 endpoints that return arrays — wrap so callers can use .get()
+        return {"_list": data} if isinstance(data, list) else data
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: {path} failed ({r.status_code})")
+        return {}
     except Exception:
         return {}
 
@@ -162,7 +167,8 @@ def hget(api_key: str, cluster_id: int, path: str, params: dict = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def check_nodes(api_key: str, cluster_id: int) -> tuple:
-    nodes = hget(api_key, cluster_id, "/v2/nodes").get("nodes", [])
+    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes")
+    nodes = data.get("_list", data.get("nodes", []))
     if not nodes:
         return STATUS_WARN, "Could not retrieve node list"
     unhealthy = [n for n in nodes
@@ -174,7 +180,12 @@ def check_nodes(api_key: str, cluster_id: int) -> tuple:
 
 
 def check_disks(api_key: str, cluster_id: int) -> tuple:
-    disks = hget(api_key, cluster_id, "/v2/disks").get("disks", [])
+    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes",
+                 params={"fetchStats": "true"})
+    nodes = data.get("_list", data.get("nodes", []))
+    disks = []
+    for n in nodes:
+        disks.extend(n.get("disksInformation", []))
     if not disks:
         return STATUS_WARN, "Could not retrieve disk list"
     faulted = [d for d in disks
@@ -218,8 +229,8 @@ def check_version(cluster_version: str, min_version: str) -> tuple:
 
 
 def check_capacity(api_key: str, cluster_id: int) -> tuple:
-    data  = hget(api_key, cluster_id, "/v2/clusters")
-    stats = data.get("stats", {})
+    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/cluster")
+    stats = data.get("stats", data.get("clusterInfo", {}).get("stats", {}))
     total = stats.get("usableSizeBytes", 0)
     used  = stats.get("usedSizeBytes", 0)
     if not total:
@@ -336,7 +347,7 @@ def main():
         cid   = c["clusterId"]
 
         # Get version for version check
-        detail_data     = hget(api_key, cid, "/v2/clusters")
+        detail_data     = hget(api_key, cid, "/irisservices/api/v1/public/cluster")
         cluster_version = detail_data.get("clusterSoftwareVersion", "")
 
         checks = [
