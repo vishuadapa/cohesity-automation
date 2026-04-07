@@ -331,6 +331,8 @@ def main():
     parser.add_argument("--cluster",             help="Filter to one cluster by name")
     parser.add_argument("--min-version",         help="Minimum required version (e.g. 7.1)")
     parser.add_argument("--output",              help="Save results to .xlsx (optional)")
+    parser.add_argument("--debug",  action="store_true",
+                        help="Print raw cluster API response for field inspection")
     parser.add_argument("--clear-credentials",   action="store_true",
                         help="Remove stored Helios API key and exit")
     args = parser.parse_args()
@@ -359,6 +361,9 @@ def main():
         # Get version for version check
         detail_data     = hget(api_key, cid, "/irisservices/api/v1/public/cluster")
         cluster_version = detail_data.get("clusterSoftwareVersion", "")
+        if args.debug:
+            print(f"  [debug] cluster raw response keys: {list(detail_data.keys())}")
+            print(f"  [debug] stats value: {detail_data.get('stats')}")
 
         checks = [
             ("Node Health",    *check_nodes(api_key, cid)),
