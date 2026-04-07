@@ -17,6 +17,16 @@ API endpoints used:
                          ?includeStats=true
 
 Version history:
+  1.1 (2026-04-07) — Fixed empty columns: corrected all field names to match
+                     actual v2 API response. stats.dataInBytes (logical),
+                     stats.storageConsumedBytes (physical),
+                     storagePolicy.deduplicationParams.enabled (dedup),
+                     storagePolicy.compressionParams.type (compression),
+                     storagePolicy.encryptionType, erasureCodingParams.enabled,
+                     cloudDownWaterFallParams.thresholdSecs (cloud tiering).
+                     Removed Physical Capacity, View Count, Default Domain
+                     (not returned by API). Added Dedup Ratio, Compression
+                     Ratio, Erasure Coding columns.
   1.0 (2026-04-06) — Initial release. Storage domain name, physical capacity,
                      logical usage, data reduction ratio, dedup enabled flag,
                      compression policy, tier info, and view count.
@@ -28,7 +38,7 @@ Usage:
   python3 storage_domain_report.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -193,10 +203,10 @@ def write_excel(rows: list, output_path: str):
     ws.title = "Storage Domains"
     headers  = [
         "Cluster", "Domain Name", "Domain ID",
-        "Physical Capacity (TB)", "Logical Used (TB)", "Physical Used (TB)",
-        "Data Reduction Ratio", "Dedup Enabled", "Compression Policy",
-        "Encryption Enabled", "Cloud Tiering Enabled",
-        "View Count", "Default Domain",
+        "Logical Data (TB)", "Physical Used (TB)",
+        "Data Reduction Ratio", "Dedup Ratio", "Compression Ratio",
+        "Dedup Enabled", "Compression Type",
+        "Encryption Type", "Erasure Coding", "Cloud Tiering",
     ]
     ws.append(headers)
     for row in rows:
@@ -252,32 +262,39 @@ def main():
             print(f"    sample domain: {json.dumps(domains[0], indent=4)}")
 
         for d in domains:
-            stats   = d.get("stats", {})
-            logical = stats.get("logicalUsageBytes", 0)
-            physical = stats.get("physicalUsageBytes", 0)
-            capacity = stats.get("totalPhysicalCapacityBytes", 0)
-            dr       = ratio(logical, physical)
+            stats      = d.get("stats") or {}
+            logical    = stats.get("dataInBytes", 0)
+            dedup_out  = stats.get("dataInBytesAfterDedup", 0)
+            physical   = stats.get("storageConsumedBytes", 0)
+            dr         = ratio(logical, physical)
+            dedup_r    = ratio(logical, dedup_out) if dedup_out else 0.0
+            comp_r     = ratio(dedup_out, physical) if physical and dedup_out else 0.0
 
-            storage_pol = d.get("storagePolicy", {})
-            dedup_en    = storage_pol.get("deduplicationEnabled", False)
-            comp_pol    = storage_pol.get("compressionPolicy", "")
-            enc_en      = storage_pol.get("encryptionPolicy", "") not in ("", "kNone")
-            cloud_tier  = "Yes" if d.get("cloudDownWaterfallThresholdPct") else "No"
+            stor_pol   = d.get("storagePolicy") or {}
+            dedup_p    = stor_pol.get("deduplicationParams") or {}
+            comp_p     = stor_pol.get("compressionParams") or {}
+            ec_p       = stor_pol.get("erasureCodingParams") or {}
+            dedup_en   = dedup_p.get("enabled", False)
+            comp_type  = comp_p.get("type", "")
+            enc_type   = stor_pol.get("encryptionType", "")
+            ec_en      = ec_p.get("enabled", False)
+            cloud_fall = d.get("cloudDownWaterFallParams") or {}
+            cloud_tier = "Yes" if cloud_fall.get("thresholdSecs", 0) > 0 else "No"
 
             rows.append({
-                "Cluster":               cname,
-                "Domain Name":           d.get("name", ""),
-                "Domain ID":             d.get("id", ""),
-                "Physical Capacity (TB)": tb(capacity),
-                "Logical Used (TB)":     tb(logical),
-                "Physical Used (TB)":    tb(physical),
-                "Data Reduction Ratio":  dr,
-                "Dedup Enabled":         "Yes" if dedup_en else "No",
-                "Compression Policy":    comp_pol,
-                "Encryption Enabled":    "Yes" if enc_en else "No",
-                "Cloud Tiering Enabled": cloud_tier,
-                "View Count":            d.get("numViews", ""),
-                "Default Domain":        "Yes" if d.get("isDefault") else "No",
+                "Cluster":            cname,
+                "Domain Name":        d.get("name", ""),
+                "Domain ID":          d.get("id", ""),
+                "Logical Data (TB)":  tb(logical),
+                "Physical Used (TB)": tb(physical),
+                "Data Reduction Ratio": dr,
+                "Dedup Ratio":        dedup_r,
+                "Compression Ratio":  comp_r,
+                "Dedup Enabled":      "Yes" if dedup_en else "No",
+                "Compression Type":   comp_type,
+                "Encryption Type":    enc_type,
+                "Erasure Coding":     "Yes" if ec_en else "No",
+                "Cloud Tiering":      cloud_tier,
             })
 
         print(f"    {len(domains)} storage domain(s)")

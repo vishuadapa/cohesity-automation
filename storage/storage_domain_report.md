@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -57,16 +57,16 @@ Output file is created automatically as `storage_domain_report_YYYYMMDD_HHMMSS.x
 | Cluster | Cluster name |
 | Domain Name | Storage domain name |
 | Domain ID | Internal Cohesity storage domain identifier |
-| Physical Capacity (TB) | Total capacity of the storage domain in TB |
-| Logical Used (TB) | Logical bytes consumed (before dedup/compression) |
-| Physical Used (TB) | Physical bytes on disk (after dedup/compression) |
-| Data Reduction Ratio | Ratio of logical to physical (`Logical / Physical`) |
-| Dedup Enabled | `True` if deduplication is active on this domain |
-| Compression Policy | Compression setting: `Enabled`, `Disabled`, or policy name |
-| Encryption Enabled | `True` if encryption is configured on this domain |
-| Cloud Tiering Enabled | `True` if cloud tiering (archival to external targets) is configured |
-| View Count | Number of NAS views hosted on this storage domain |
-| Default Domain | `True` if this is the default domain (used for new views by default) |
+| Logical Data (TB) | Logical bytes ingested (before dedup/compression) |
+| Physical Used (TB) | Physical bytes on disk after all reduction |
+| Data Reduction Ratio | Overall ratio of logical to physical (`Logical / Physical`) |
+| Dedup Ratio | Reduction from deduplication only (`Logical / After-Dedup`) |
+| Compression Ratio | Reduction from compression only (`After-Dedup / Physical`) |
+| Dedup Enabled | `Yes` if inline deduplication is active on this domain |
+| Compression Type | Compression algorithm: e.g., `Low`, `High` |
+| Encryption Type | Encryption algorithm: e.g., `Strong` |
+| Erasure Coding | `Yes` if erasure coding is enabled (instead of RF2/RF3) |
+| Cloud Tiering | `Yes` if cloud down-waterfall tiering is configured |
 
 ---
 
@@ -83,5 +83,14 @@ Output file is created automatically as `storage_domain_report_YYYYMMDD_HHMMSS.x
 ## Notes
 
 - Each cluster typically has one default storage domain. Additional domains can be created for tiering, dedicated workloads, or multi-tenant isolation.
-- Cloud tiering enabled means the domain is configured to send data to external targets (e.g., FortKnox), but does not indicate active archival of every backup to those targets — that depends on individual protection policies.
-- Dedup and compression are cluster-wide features; enabling/disabling on a domain affects all new writes to that domain.
+- Cloud tiering means the domain is configured to automatically move cold data to external targets; it does not indicate every backup is archived — that depends on individual protection policies.
+- Dedup and compression settings apply to all new writes to that domain.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed empty columns — all field names corrected to match v2 API: `stats.dataInBytes` (logical), `stats.storageConsumedBytes` (physical), `storagePolicy.deduplicationParams.enabled`, `compressionParams.type`, `encryptionType`, `erasureCodingParams.enabled`, `cloudDownWaterFallParams.thresholdSecs`. Removed Physical Capacity, View Count, Default Domain (not in API). Added Dedup Ratio, Compression Ratio, Erasure Coding columns. |
+| 1.0 | 2026-04-06 | Initial release |
