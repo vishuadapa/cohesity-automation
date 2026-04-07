@@ -6,11 +6,11 @@ Scripts for managing protection groups (jobs), policies, and schedules. Use case
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `run_protection_group.py` | Trigger an on-demand backup run (kRegular / kFull / kLog) | Helios |
-| `pause_resume_groups.py` | Bulk pause or resume groups by name pattern with optional timed auto-resume | Helios |
-| `clone_protection_group.py` | Copy a group's config to a new group (policy, schedule, objects) | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `run_protection_group.py` | [docs](run_protection_group.md) | Trigger an on-demand backup run (kRegular / kFull / kLog) | Helios |
+| `pause_resume_groups.py` | [docs](pause_resume_groups.md) | Bulk pause or resume groups by name pattern with optional timed auto-resume | Helios |
+| `clone_protection_group.py` | [docs](clone_protection_group.md) | Copy a group's config to a new group (policy, schedule, objects) | Helios |
 
 ---
 

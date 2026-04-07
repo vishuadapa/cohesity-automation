@@ -6,11 +6,11 @@ Scripts for querying, summarizing, and routing Cohesity alerts. Useful for proac
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `alert_summary_report.py` | Active alerts by severity, category, and cluster — dual-sheet Excel (Summary + detail) | Helios |
-| `resolve_alerts.py` | Bulk resolve open alerts matching a severity / category / alert code filter | Helios |
-| `alert_to_csv.py` | Export full alert history for a date range to CSV | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `alert_summary_report.py` | [docs](alert_summary_report.md) | Active alerts by severity, category, and cluster — dual-sheet Excel (Summary + detail) | Helios |
+| `resolve_alerts.py` | [docs](resolve_alerts.md) | Bulk resolve open alerts matching a severity / category / alert code filter | Helios |
+| `alert_to_csv.py` | [docs](alert_to_csv.md) | Export full alert history for a date range to CSV | Helios |
 
 ---
 

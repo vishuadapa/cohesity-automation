@@ -6,11 +6,11 @@ Scripts for auditing, creating, and modifying protection policies. Useful for en
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `list_policies.py` | List all policies with retention, replication, and archival settings | Helios |
-| `policy_compliance_report.py` | Flag protection groups whose policy doesn't meet configurable SLA targets | Helios |
-| `clone_policy.py` | Duplicate a policy as a starting point for a new one | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `list_policies.py` | [docs](list_policies.md) | List all policies with retention, replication, and archival settings | Helios |
+| `policy_compliance_report.py` | [docs](policy_compliance_report.md) | Flag protection groups whose policy doesn't meet configurable SLA targets | Helios |
+| `clone_policy.py` | [docs](clone_policy.md) | Duplicate a policy as a starting point for a new one | Helios |
 
 ---
 

@@ -6,11 +6,11 @@ Scripts for automating restore operations — VMs, files, databases, NAS. Useful
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `list_snapshots.py` | List available recovery points for any protected object | Helios |
-| `restore_vm.py` | Restore a VMware VM to original or alternate location | Helios |
-| `recover_files.py` | File/folder level recovery to original or alternate path | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `list_snapshots.py` | [docs](list_snapshots.md) | List available recovery points for any protected object | Helios |
+| `restore_vm.py` | [docs](restore_vm.md) | Restore a VMware VM to original or alternate location | Helios |
+| `recover_files.py` | [docs](recover_files.md) | File/folder level recovery to original or alternate path | Helios |
 
 ---
 

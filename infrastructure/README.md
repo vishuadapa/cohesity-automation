@@ -6,11 +6,11 @@ Scripts for cluster-level operations — node status, software version inventory
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `cluster_info_report.py` | Software version, node count, cluster ID, DNS/NTP/timezone config across all clusters | Helios |
-| `node_status.py` | Node health, disk status, fault counts, and capacity — dual-sheet Excel (Nodes + Disks) | Helios |
-| `upgrade_readiness.py` | Pre-upgrade checks: node health, disk health, active runs, version, and capacity margin | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `cluster_info_report.py` | [docs](cluster_info_report.md) | Software version, node count, cluster ID, DNS/NTP/timezone config across all clusters | Helios |
+| `node_status.py` | [docs](node_status.md) | Node health, disk status, fault counts, and capacity — dual-sheet Excel (Nodes + Disks) | Helios |
+| `upgrade_readiness.py` | [docs](upgrade_readiness.md) | Pre-upgrade checks: node health, disk health, active runs, version, and capacity margin | Helios |
 
 ---
 

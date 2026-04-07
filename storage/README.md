@@ -6,11 +6,11 @@ Scripts for capacity management, storage domains, views (SMB/NFS shares), and da
 
 ## Scripts
 
-| Script | Description | Auth |
-|--------|-------------|------|
-| `capacity_report.py` | Cluster capacity, used/free/usable in TB, data reduction ratio, dedup, compression, savings | Helios |
-| `list_views.py` | Enumerate all NAS views with quota, logical usage, protocol, and share paths | Helios |
-| `storage_domain_report.py` | Storage domain utilization — physical/logical usage, DR ratio, dedup and encryption config | Helios |
+| Script | README | Description | Auth |
+|--------|--------|-------------|------|
+| `capacity_report.py` | [docs](capacity_report.md) | Cluster capacity, used/free/usable in TB, data reduction ratio, dedup, compression, savings | Helios |
+| `list_views.py` | [docs](list_views.md) | Enumerate all NAS views with quota, logical usage, protocol, and share paths | Helios |
+| `storage_domain_report.py` | [docs](storage_domain_report.md) | Storage domain utilization — physical/logical usage, DR ratio, dedup and encryption config | Helios |
 
 ---
 
