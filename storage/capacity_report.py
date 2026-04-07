@@ -17,6 +17,10 @@ API endpoints used:
                       (stats.usableSizeBytes, stats.usedSizeBytes, etc.)
 
 Version history:
+  1.2 (2026-04-07) — Fixed remaining empty columns: dataInBytes and
+                     dataInBytesAfterReduction are in usagePerfStats, not
+                     dataUsageStats. DR ratio now uses API-computed
+                     dataReductionRatio field directly.
   1.1 (2026-04-07) — Fixed empty columns: v1 /public/cluster returns
                      stats=null by default; added ?fetchStats=true parameter.
                      Fixed field paths: stats are nested under usagePerfStats
@@ -34,7 +38,7 @@ Usage:
   python3 capacity_report.py --clear-credentials
 """
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import argparse
 import getpass
@@ -266,17 +270,20 @@ def main():
             print(f"    RAW detail keys: {list(detail.keys())}")
             print(f"    RAW stats value: {json.dumps(detail.get('stats'), indent=6)}")
 
-        usable   = usage.get("physicalCapacityBytes", 0)
-        used     = usage.get("totalPhysicalUsageBytes", 0)
-        logical  = data.get("dataInBytes", 0)
-        physical = data.get("dataInBytesAfterReduction", 0)
+        # usagePerfStats: capacity, usage, and post-reduction bytes
+        # dataUsageStats: logical/dedup breakdown
+        usable      = usage.get("physicalCapacityBytes", 0)
+        used        = usage.get("totalPhysicalUsageBytes", 0)
+        logical     = usage.get("dataInBytes", 0)
+        physical    = usage.get("dataInBytesAfterReduction", 0)
         dedup_after = data.get("dataInBytesAfterDedup", 0)
-        free     = max(0, usable - used)
-        used_pct = round(used / usable * 100, 1) if usable else 0.0
-        dr_ratio = ratio(logical, physical) if physical else 0.0
-        savings  = tb(logical) - tb(physical) if logical and physical else 0.0
-        dedup    = ratio(logical, dedup_after) if dedup_after else 0.0
-        comp     = ratio(dedup_after, physical) if physical and dedup_after else 0.0
+        free        = max(0, usable - used)
+        used_pct    = round(used / usable * 100, 1) if usable else 0.0
+        # Use the pre-computed cluster-level DR ratio from the API when available
+        dr_ratio    = round(stats.get("dataReductionRatio", 0.0), 2)
+        savings     = tb(logical) - tb(physical) if logical and physical else 0.0
+        dedup       = ratio(logical, dedup_after) if dedup_after else 0.0
+        comp        = ratio(dedup_after, physical) if physical and dedup_after else 0.0
 
         rows.append({
             "Cluster":              cname,
