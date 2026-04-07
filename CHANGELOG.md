@@ -5,6 +5,60 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-06] — Initial scripts for all planned folders (alerts, infrastructure, policies, protection, recovery, storage, utils)
+
+### Added
+- `utils/cohesity_auth.py` v1.0 — Shared auth module: Helios API key + direct cluster Bearer token,
+  OS keychain credential storage, `get_helios_clusters`. Extracted from existing reporting scripts
+  for reuse across new scripts.
+- `utils/formatters.py` v1.0 — Shared formatting helpers: `usecs_to_datetime`, `bytes_to_gb`,
+  `bytes_to_tb`, `format_duration`, `style_worksheet` (Cohesity green headers), `auto_fit_columns`.
+- `alerts/alert_summary_report.py` v1.0 — Active alerts by severity and category across all clusters.
+  Dual-sheet Excel output (Summary counts + Alerts detail). Supports `--days` window and `--cluster` filter.
+- `alerts/resolve_alerts.py` v1.0 — Bulk resolve open alerts matching `--severity`, `--category`,
+  or `--code` filter. Previews matches and confirms before resolving. `--yes` skips prompt.
+- `alerts/alert_to_csv.py` v1.0 — Export alert history for a date range to CSV. Supports
+  `--days`, `--start`/`--end`, severity and category filters.
+- `infrastructure/cluster_info_report.py` v1.0 — Software version, node count, cluster ID,
+  DNS/NTP/timezone config across all Helios clusters. Excel output.
+- `infrastructure/node_status.py` v1.0 — Node health, disk status, fault counts, and capacity.
+  Dual-sheet Excel (Nodes + Disks). `--unhealthy-only` flag for issue-focused view.
+- `infrastructure/upgrade_readiness.py` v1.0 — Pre-upgrade readiness check: node health, disk health,
+  active runs in progress, software version vs minimum, and disk capacity margin. PASS/WARN/FAIL per
+  check with console table and color-coded Excel output.
+- `policies/list_policies.py` v1.0 — List all policies with retention, replication targets, archival
+  targets, and schedule settings. Excel output.
+- `policies/policy_compliance_report.py` v1.0 — Flag protection groups whose policy doesn't meet
+  configurable SLA targets (`--min-retention`, `--require-replication`, `--require-archival`,
+  `--rpo-hours`). Color-coded Excel (green/yellow/red).
+- `policies/clone_policy.py` v1.0 — Clone a policy by name or ID to a new name. Strips server-managed
+  fields before POST. `--dry-run` mode.
+- `protection/run_protection_group.py` v1.0 — Trigger on-demand backup run (kRegular/kFull/kLog)
+  by group name. `--wait` flag polls for completion with configurable timeout.
+- `protection/pause_resume_groups.py` v1.0 — Bulk pause or resume groups by name pattern.
+  Confirmation prompt (bypass with `--yes`). `--resume-after N` auto-resumes after N minutes.
+- `protection/clone_protection_group.py` v1.0 — Clone a protection group's full config to a new
+  group name. Created in paused state. `--no-objects` clears object list; `--dry-run` mode.
+- `recovery/list_snapshots.py` v1.0 — List available snapshots for any protected object with
+  timestamp, run type, status, expiry, and local/replication/archival flags.
+- `recovery/restore_vm.py` v1.0 — Restore a VMware VM to original location with optional suffix rename,
+  snapshot selection, and `--power-on` flag. `--dry-run` mode.
+- `recovery/recover_files.py` v1.0 — File/folder level recovery from any protected physical or NAS
+  source. Multiple paths per run, optional alternate destination, overwrite flag, `--dry-run` mode.
+- `storage/capacity_report.py` v1.0 — Cluster capacity summary: usable/used/free in TB, data
+  reduction ratio, dedup ratio, compression ratio, and savings. Excel output.
+- `storage/list_views.py` v1.0 — Enumerate all NAS views with quota, logical usage, protocol
+  (SMB/NFS/S3), share paths, and creation date. Optional protocol filter. Excel output.
+- `storage/storage_domain_report.py` v1.0 — Storage domain utilization: physical/logical capacity,
+  data reduction ratio, dedup and compression config, encryption, cloud tiering, view count. Excel output.
+
+### Changed
+- All folder `README.md` files updated: planned scripts moved to the Scripts table with descriptions,
+  auth pattern, and per-script usage examples.
+- Root `README.md` updated with full quick-reference command list for all new scripts.
+
+---
+
 ## [2026-04-06] — protection_group_report.py v4.4: revert to stats/consumers for storage
 
 ### Changed
