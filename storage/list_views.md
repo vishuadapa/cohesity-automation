@@ -92,5 +92,5 @@ Output file is created automatically as `list_views_YYYYMMDD_HHMMSS.xlsx` in the
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed `AttributeError` crashes caused by API returning explicit `null` for `logicalQuota`, `storagePolicy`, `stats`, `smbMountPaths`, `nfsMountPaths` — replaced `dict.get(k, {})` with `(... or {})` guards; improved error reporting in views fetch |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.1 | 2026-04-07 | fix: AttributeError — API returns explicit `null` for `logicalQuota`, `storagePolicy`, `stats`, `smbMountPaths`, `nfsMountPaths`; replace `.get(k, {})` with `(... or {})` guards; improve error reporting in views fetch |
+| 1.0 | 2026-04-06 | feat: initial release |

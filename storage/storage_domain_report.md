@@ -92,5 +92,5 @@ Output file is created automatically as `storage_domain_report_YYYYMMDD_HHMMSS.x
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed empty columns — all field names corrected to match v2 API: `stats.dataInBytes` (logical), `stats.storageConsumedBytes` (physical), `storagePolicy.deduplicationParams.enabled`, `compressionParams.type`, `encryptionType`, `erasureCodingParams.enabled`, `cloudDownWaterFallParams.thresholdSecs`. Removed Physical Capacity, View Count, Default Domain (not in API). Added Dedup Ratio, Compression Ratio, Erasure Coding columns. |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.1 | 2026-04-07 | fix: empty columns — all field names corrected to match v2 API (`stats.dataInBytes`, `stats.storageConsumedBytes`, `deduplicationParams.enabled`, `compressionParams.type`, `encryptionType`, `erasureCodingParams.enabled`, `cloudDownWaterFallParams.thresholdSecs`); remove Physical Capacity, View Count, Default Domain (not in API); add Dedup Ratio, Compression Ratio, Erasure Coding columns |
+| 1.0 | 2026-04-06 | feat: initial release |

@@ -146,10 +146,10 @@ Fields available in the `dataTransferToVaults` response that are not included by
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 4.10 | 2026-04-07 | Fixed blank Logical/Physical Transferred: vault ID is at `target.archivalTarget.vaultId` in protectionRuns copyRun, not `target.vaultId` — vault match always failed leaving all rows at 0 |
-| 4.9 | 2026-04-07 | Fixed Logical/Physical Transferred — switched from cumulative `dataTransferPerProtectionJob` fields to `GET /public/protectionRuns` per-run stats (time-windowed). Now matches UI values. |
-| 4.8 | 2026-04-07 | Added Storage Consumed (TiB) column; fixed `--days` / default range to snap to calendar day start; fixed `end_of_day_msecs` to cover full last second |
-| 4.7 | 2026-04-06 | Fixed x-axis dates not showing on trend charts |
-| 4.6 | 2026-04-05 | Fixed axis labels; x-axis tick density auto-reduces |
-| 4.5 | 2026-04-05 | One chart sheet per cluster |
-| 4.3 | 2026-04-04 | Secure credential storage via OS keychain |
+| 4.10 | 2026-04-07 | fix: blank Logical/Physical Transferred — vault ID is at `target.archivalTarget.vaultId` in protectionRuns copyRun, not `target.vaultId` |
+| 4.9 | 2026-04-07 | fix: Logical/Physical Transferred — switch from cumulative `dataTransferPerProtectionJob` to `GET /public/protectionRuns` per-run stats (time-windowed) |
+| 4.8 | 2026-04-07 | feat: add Storage Consumed (TiB) column; fix `--days` range to snap to calendar day start; fix `end_of_day_msecs` to cover full last second |
+| 4.7 | 2026-04-06 | fix: x-axis dates not showing on trend charts |
+| 4.6 | 2026-04-05 | fix: axis labels; auto-reduce x-axis tick density |
+| 4.5 | 2026-04-05 | feat: one chart sheet per cluster |
+| 4.3 | 2026-04-04 | feat: secure credential storage via OS keychain |

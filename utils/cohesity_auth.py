@@ -22,12 +22,14 @@ Typical import pattern:
   )
 
 Version history:
-  1.0 (2026-04-06) — Initial module. Extracted shared auth patterns from
+  1.1 (2026-04-07) — fix: parse response JSON once in get_auth_token;
+                     validate access token is non-empty before returning.
+  1.0 (2026-04-06) — feat: initial module. Extracted shared auth patterns from
                      fortknox_vault_report.py and protection_group_report.py
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import getpass
 import sys
@@ -178,7 +180,12 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str) -> s
     except requests.exceptions.HTTPError as e:
         print(f"ERROR: Authentication failed: {e}\n       Response: {r.text}")
         sys.exit(1)
-    token = r.json().get("tokenType", "Bearer") + " " + r.json().get("accessToken", "")
+    data         = r.json()
+    access_token = data.get("accessToken", "")
+    if not access_token:
+        print(f"ERROR: No access token in response: {r.text[:200]}")
+        sys.exit(1)
+    token = f"{data.get('tokenType', 'Bearer')} {access_token}"
     print(f"[+] Authenticated to {cluster} as {domain}\\{username}")
     return token
 

@@ -92,5 +92,5 @@ Confirmation message with recovery details: source host/share, paths being recov
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed alternate destination path field name: `absolutePath` → `alternateRestoreBaseDirectory` (v2 API). Removed redundant `restore_params` intermediary and unused `targetEnvironment` variable. |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.1 | 2026-04-07 | fix: alternate destination path field name `absolutePath` → `alternateRestoreBaseDirectory` (v2 API); remove redundant `restore_params` intermediary and unused `targetEnvironment` |
+| 1.0 | 2026-04-06 | feat: initial release |

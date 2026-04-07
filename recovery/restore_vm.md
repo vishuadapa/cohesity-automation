@@ -77,5 +77,5 @@ Confirmation message with recovery details: source VM, snapshot date, destinatio
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed rename params: eliminated None/delete pattern by building `originalSourceConfig` conditionally before payload construction |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.1 | 2026-04-07 | fix: rename params — eliminate None/delete pattern by building `originalSourceConfig` conditionally before payload construction |
+| 1.0 | 2026-04-06 | feat: initial release |

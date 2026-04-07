@@ -224,4 +224,6 @@ end_time = usecs_to_datetime(run["endTimeUsecs"], tz=tz)
 
 ## Version History
 
-**1.0 (2026-04-06)** — Initial module. Extracted repeated formatting helpers from reporting scripts into a shared module.
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial module — extracted repeated formatting helpers from reporting scripts into a shared module |

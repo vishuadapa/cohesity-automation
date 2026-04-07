@@ -90,6 +90,6 @@ Output file is created automatically as `capacity_report_YYYYMMDD_HHMMSS.xlsx` i
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.2 | 2026-04-07 | Fixed remaining empty columns: `dataInBytes` and `dataInBytesAfterReduction` are in `usagePerfStats` not `dataUsageStats`. DR ratio now uses API-computed `dataReductionRatio` directly |
-| 1.1 | 2026-04-07 | Fixed empty columns: v1 `/public/cluster` returns `stats=null` by default — added `?fetchStats=true` parameter. Also fixed field paths: stats are nested under `usagePerfStats` / `dataUsageStats`, not at the top level |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.2 | 2026-04-07 | fix: empty columns — `dataInBytes` and `dataInBytesAfterReduction` are in `usagePerfStats` not `dataUsageStats`; use API-computed `dataReductionRatio` directly |
+| 1.1 | 2026-04-07 | fix: empty columns — v1 `/public/cluster` returns `stats=null` without `?fetchStats=true`; stats nested under `usagePerfStats`/`dataUsageStats` not at top level |
+| 1.0 | 2026-04-06 | feat: initial release |

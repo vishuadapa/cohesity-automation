@@ -75,5 +75,5 @@ Console table and optional Excel file with the following columns:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Removed unused `targets` variable (dead code — `indexingStatus` field was assigned but never referenced) |
-| 1.0 | 2026-04-06 | Initial release |
+| 1.1 | 2026-04-07 | refactor: remove unused `targets` variable (`indexingStatus` assigned but never referenced) |
+| 1.0 | 2026-04-06 | feat: initial release |
