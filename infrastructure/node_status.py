@@ -144,29 +144,14 @@ def get_nodes(api_key: str, cluster_id: int) -> list:
         return []
 
 
-def get_disks(api_key: str, cluster_id: int) -> list:
-    """Disk info is embedded in the node objects from the v1 nodes endpoint.
-    This fetches nodes with disk details via fetchStats=true."""
-    url    = f"https://{HELIOS_HOST}/irisservices/api/v1/public/nodes"
-    params = {"fetchStats": "true"}
-    try:
-        r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=20)
-        r.raise_for_status()
-        nodes = r.json()
-        if not isinstance(nodes, list):
-            nodes = nodes.get("nodes", [])
-        # Flatten disk info from all nodes
-        disks = []
-        for n in nodes:
-            node_ip = n.get("ip", "")
-            for d in n.get("disksInformation", []):
-                d["nodeIp"] = node_ip
-                disks.append(d)
-        return disks
-    except requests.exceptions.HTTPError:
-        print(f"    WARN: disk fetch failed ({r.status_code})")
-        return []
+def node_status_str(n: dict) -> str:
+    """Derive a human-readable node status from v1 node fields."""
+    if n.get("isMarkedForRemoval"):
+        return "Marked for Removal"
+    state = n.get("removalState", "")
+    if state == "kDontRemove":
+        return "Healthy"
+    return state if state else "Unknown"
 
 
 def bytes_to_tb(b) -> float:
@@ -212,9 +197,9 @@ def write_excel(node_rows: list, disk_rows: list, output_path: str):
     ws_n = wb.active
     ws_n.title = "Nodes"
     node_headers = [
-        "Cluster", "Node ID", "Node IP", "Status", "Node Role",
-        "Total Disks", "Healthy Disks", "Faulted Disks",
-        "Usable Capacity (TB)", "Software Version",
+        "Cluster", "Node ID", "Node IP", "Status", "Node Type",
+        "Total Disks", "Capacity (TB)", "Model", "Host Name",
+        "Serial", "Software Version",
     ]
     ws_n.append(node_headers)
     for row in node_rows:
@@ -222,11 +207,11 @@ def write_excel(node_rows: list, disk_rows: list, output_path: str):
     style_ws(ws_n)
     auto_fit(ws_n)
 
-    # ---- Disks sheet ----
-    ws_d = wb.create_sheet("Disks")
+    # ---- Disk Tiers sheet (tier-level breakdown per node) ----
+    ws_d = wb.create_sheet("Disk Tiers")
     disk_headers = [
-        "Cluster", "Node IP", "Disk ID", "Disk Slot", "Disk Tier",
-        "Capacity (TB)", "Status", "Mount Path",
+        "Cluster", "Node IP", "Host Name", "Storage Tier",
+        "Disk Count", "Tier Capacity (TB)",
     ]
     ws_d.append(disk_headers)
     for row in disk_rows:
@@ -236,7 +221,7 @@ def write_excel(node_rows: list, disk_rows: list, output_path: str):
 
     wb.save(output_path)
     print(f"\n[+] Report saved: {output_path}")
-    print(f"    Nodes: {len(node_rows)}  |  Disks: {len(disk_rows)}")
+    print(f"    Nodes: {len(node_rows)}  |  Disk tier rows: {len(disk_rows)}")
 
 
 # ---------------------------------------------------------------------------
@@ -281,62 +266,56 @@ def main():
         print(f"\n[*] Querying: {cname}")
 
         nodes = get_nodes(api_key, cid)
-        disks = get_disks(api_key, cid)
 
         if args.debug:
             print(f"    nodes sample: {nodes[:1]}")
-            print(f"    disks sample: {disks[:1]}")
-
-        # Index disks by node IP for quick lookup
-        disks_by_node: dict = {}
-        for d in disks:
-            node_ip = d.get("nodeIp", "")
-            disks_by_node.setdefault(node_ip, []).append(d)
 
         for n in nodes:
-            status = n.get("nodeStatus", {}).get("overallStatus", "")
-            if args.unhealthy_only and status == "kNormal":
+            status   = node_status_str(n)
+            node_ip  = n.get("ip", "")
+            hostname = n.get("hostName", "")
+
+            if args.unhealthy_only and status == "Healthy":
                 continue
 
-            node_ip = n.get("ip", "")
-            n_disks  = disks_by_node.get(node_ip, [])
-            healthy  = sum(1 for d in n_disks if d.get("diskStatus") == "kNormal")
-            faulted  = sum(1 for d in n_disks if d.get("diskStatus") != "kNormal")
-            cap_tb   = bytes_to_tb(
-                sum(d.get("capacity", 0) for d in n_disks))
+            cap_tb = bytes_to_tb(n.get("maxPhysicalCapacityBytes", 0))
 
             node_rows.append({
-                "Cluster":             cname,
-                "Node ID":             n.get("id", ""),
-                "Node IP":             node_ip,
-                "Status":              status,
-                "Node Role":           n.get("nodeRole", ""),
-                "Total Disks":         len(n_disks),
-                "Healthy Disks":       healthy,
-                "Faulted Disks":       faulted,
-                "Usable Capacity (TB)": cap_tb,
-                "Software Version":    n.get("nodeSoftwareVersion", ""),
+                "Cluster":        cname,
+                "Node ID":        n.get("id", ""),
+                "Node IP":        node_ip,
+                "Status":         status,
+                "Node Type":      n.get("nodeType", ""),
+                "Total Disks":    n.get("diskCount", ""),
+                "Capacity (TB)":  cap_tb,
+                "Model":          n.get("hardwareModel", n.get("productModel", "")),
+                "Host Name":      hostname,
+                "Serial":         n.get("cohesityNodeSerial", ""),
+                "Software Version": n.get("nodeSoftwareVersion", ""),
             })
 
-        for d in disks:
-            disk_status = d.get("diskStatus", "")
-            if args.unhealthy_only and disk_status == "kNormal":
-                continue
-            disk_rows.append({
-                "Cluster":       cname,
-                "Node IP":       d.get("nodeIp", ""),
-                "Disk ID":       d.get("id", ""),
-                "Disk Slot":     d.get("diskSlot", ""),
-                "Disk Tier":     d.get("diskTier", ""),
-                "Capacity (TB)": bytes_to_tb(d.get("capacity")),
-                "Status":        disk_status,
-                "Mount Path":    d.get("mountPath", ""),
-            })
+            # Disk tier breakdown rows (one per storage tier per node)
+            for tier in n.get("diskCountByTier", []):
+                tier_name  = tier.get("storageTier", "")
+                tier_count = tier.get("diskCount", 0)
+                # Match capacity for this tier
+                tier_cap   = next(
+                    (bytes_to_tb(t.get("tierMaxPhysicalCapacityBytes", 0))
+                     for t in n.get("capacityByTier", [])
+                     if t.get("storageTier") == tier_name),
+                    ""
+                )
+                disk_rows.append({
+                    "Cluster":          cname,
+                    "Node IP":          node_ip,
+                    "Host Name":        hostname,
+                    "Storage Tier":     tier_name,
+                    "Disk Count":       tier_count,
+                    "Tier Capacity (TB)": tier_cap,
+                })
 
-        healthy_nodes = sum(1 for n in nodes
-                            if n.get("nodeStatus", {}).get("overallStatus") == "kNormal")
-        print(f"    Nodes: {len(nodes)} ({healthy_nodes} healthy)  "
-              f"Disks: {len(disks)}")
+        healthy_nodes = sum(1 for n in nodes if node_status_str(n) == "Healthy")
+        print(f"    Nodes: {len(nodes)} ({healthy_nodes} healthy)")
 
     write_excel(node_rows, disk_rows, output)
 
