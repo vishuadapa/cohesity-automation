@@ -248,7 +248,8 @@ def main():
         domains = get_storage_domains(api_key, cid)
 
         if args.debug and domains:
-            print(f"    sample domain: {domains[0]}")
+            import json
+            print(f"    sample domain: {json.dumps(domains[0], indent=4)}")
 
         for d in domains:
             stats   = d.get("stats", {})
