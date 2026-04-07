@@ -18,6 +18,13 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.8 (2026-04-07) — Added Storage Consumed (TiB) column (÷ 1,099,511,627,776)
+                     alongside the existing TB column so values match the Helios
+                     UI directly. Fixed --days / default date range to snap to
+                     00:00:00 of the start day (calendar-day boundary) instead
+                     of a rolling window from the current time. Fixed
+                     end_of_day_msecs to include full last second (23:59:59.999)
+                     so the final second of a period is not excluded.
   4.7 (2026-04-06) — Fixed x-axis dates not showing on trend charts. Root
                      cause: openpyxl set_categories() emits <c:numRef> in
                      chart XML; Excel discards string values passed via numRef.
@@ -110,7 +117,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.7"
+__version__ = "4.8"
 
 import argparse
 import getpass
@@ -325,6 +332,7 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
                 "physical_bytes":         job.get("numPhysicalBytesTransferred", 0),
                 "storage_consumed_bytes": consumed_bytes,
                 "storage_consumed_tb":    round(consumed_bytes / 1_000_000_000_000, 4),
+                "storage_consumed_tib":   round(consumed_bytes / 1_099_511_627_776, 4),
             })
     return rows
 
@@ -366,7 +374,7 @@ def end_of_day_msecs(date_str: str, tz) -> int:
     """End of day (23:59:59) in tz."""
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d").replace(
-            hour=23, minute=59, second=59, tzinfo=tz)
+            hour=23, minute=59, second=59, microsecond=999000, tzinfo=tz)
     except ValueError:
         print(f"ERROR: Invalid date '{date_str}'. Use YYYY-MM-DD.")
         sys.exit(1)
@@ -380,14 +388,16 @@ def resolve_date_range(args, tz) -> tuple:
         end   = int(args.end_msecs)   if args.end_msecs   else now_msecs()
         return start, end
     if args.days:
-        start = datetime.now(tz=tz) - timedelta(days=args.days)
+        start = (datetime.now(tz=tz) - timedelta(days=args.days)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
         return int(start.timestamp() * 1000), now_msecs()
     if args.start:
         return date_to_msecs(args.start, tz), \
                (end_of_day_msecs(args.end, tz) if args.end else now_msecs())
     if args.end:
         print("WARNING: --end given without --start. Ignoring.")
-    start = datetime.now(tz=tz) - timedelta(days=7)
+    start = (datetime.now(tz=tz) - timedelta(days=7)).replace(
+        hour=0, minute=0, second=0, microsecond=0)
     return int(start.timestamp() * 1000), now_msecs()
 
 
@@ -428,6 +438,7 @@ COLUMNS = [
     ("Physical Transferred (Bytes)", "physical_bytes"),
     ("Storage Consumed (Bytes)",     "storage_consumed_bytes"),
     ("Storage Consumed (TB)",        "storage_consumed_tb"),
+    ("Storage Consumed (TiB)",       "storage_consumed_tib"),
 ]
 
 # Column index (1-based) of the TB column in the Report sheet — used by chart
