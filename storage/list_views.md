@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -85,3 +85,12 @@ Output file is created automatically as `list_views_YYYYMMDD_HHMMSS.xlsx` in the
 
 - Logical usage reflects the current data in the view and does not account for deduplication across other views or protection groups.
 - Share paths show the complete access paths for each protocol (e.g., `\\cluster-name\view-name` for SMB, `/cluster-name/view-name` for NFS).
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed `AttributeError` crashes caused by API returning explicit `null` for `logicalQuota`, `storagePolicy`, `stats`, `smbMountPaths`, `nfsMountPaths` — replaced `dict.get(k, {})` with `(... or {})` guards; improved error reporting in views fetch |
+| 1.0 | 2026-04-06 | Initial release |

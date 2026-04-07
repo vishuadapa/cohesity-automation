@@ -14,6 +14,10 @@ API endpoints used:
                       ?maxCount=2000&includeStats=true
 
 Version history:
+  1.1 (2026-04-07) — Fixed AttributeError crashes: API returns explicit null
+                     for logicalQuota, storagePolicy, stats, smbMountPaths,
+                     nfsMountPaths — replaced .get(k, {}) with (... or {})
+                     throughout so null values are treated as absent.
   1.0 (2026-04-06) — Initial release. View name, storage domain, protocol
                      access (SMB/NFS/S3), quota limit, logical usage,
                      creation time, and share path.
@@ -26,7 +30,7 @@ Usage:
   python3 list_views.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -138,8 +142,12 @@ def get_views(api_key: str, cluster_id: int) -> list:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          params=params, verify=False, timeout=20)
         r.raise_for_status()
-        return r.json().get("views", [])
-    except Exception:
+        return r.json().get("views") or []
+    except requests.exceptions.HTTPError:
+        print(f"    WARN: views fetch failed ({r.status_code}): {r.text[:200]}")
+        return []
+    except Exception as e:
+        print(f"    WARN: views fetch error: {e}")
         return []
 
 
@@ -267,18 +275,22 @@ def main():
             if args.protocol and args.protocol.upper() not in proto:
                 continue
 
-            quota_bytes = (v.get("logicalQuota", {}).get("hardLimitBytes")
-                           or v.get("storagePolicy", {}).get("storageQuotaPolicy", {})
-                           .get("hardLimitBytes"))
-            usage_bytes = (v.get("stats", {}).get("dataUsageStats", {})
-                           .get("totalLogicalUsageBytes"))
+            quota_bytes = (
+                (v.get("logicalQuota") or {}).get("hardLimitBytes")
+                or ((v.get("storagePolicy") or {})
+                    .get("storageQuotaPolicy") or {}).get("hardLimitBytes")
+            )
+            usage_bytes = (
+                ((v.get("stats") or {}).get("dataUsageStats") or {})
+                .get("totalLogicalUsageBytes")
+            )
             quota_gb    = gb(quota_bytes)
             usage_gb    = gb(usage_bytes)
             usage_pct   = (round(usage_gb / quota_gb * 100, 1)
                            if quota_gb else "N/A")
 
-            smb_paths = ", ".join(v.get("smbMountPaths", []))
-            nfs_paths = ", ".join(v.get("nfsMountPaths", []))
+            smb_paths = ", ".join(v.get("smbMountPaths") or [])
+            nfs_paths = ", ".join(v.get("nfsMountPaths") or [])
 
             rows.append({
                 "Cluster":          cname,
