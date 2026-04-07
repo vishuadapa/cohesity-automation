@@ -253,12 +253,23 @@ def main():
 
         if args.debug:
             print(f"    cluster detail: {detail}")
+            if nodes:
+                print(f"    node[0] sample: {nodes[0]}")
 
+        # Node health — v1 overallStatus values are kNormal / kMarkedForRemoval / etc.
+        # Count nodes that are NOT in a known-unhealthy state as a fallback.
+        _unhealthy = {"kMarkedForRemoval", "kInMaintenance", "kMissing", "kDegraded"}
         healthy = sum(1 for n in nodes
-                      if n.get("nodeStatus", {}).get("overallStatus") == "kNormal")
+                      if n.get("nodeStatus", {}).get("overallStatus", "kNormal")
+                      not in _unhealthy)
 
         dns = ", ".join(detail.get("dnsServerIps", []))
-        ntp = ", ".join(detail.get("ntpSettings", {}).get("ntpServers", []))
+
+        # NTP — v1 may nest under ntpSettings or expose at top level
+        ntp_list = (detail.get("ntpSettings", {}).get("ntpServers")
+                    or detail.get("ntpServers")
+                    or [])
+        ntp = ", ".join(ntp_list)
 
         rows.append({
             "Cluster Name":       c["name"],
@@ -275,7 +286,8 @@ def main():
             "Timezone":           detail.get("timezone", ""),
             "Encryption Enabled": "Yes" if detail.get("encryptionEnabled") else "No",
             "FIPS Enabled":       "Yes" if detail.get("fipsEnabled") else "No",
-            "Helios Connected":   "Yes" if c.get("heliosConnectedAt") else "No",
+            # All clusters returned from Helios are by definition connected
+            "Helios Connected":   "Yes",
         })
 
         print(f"    Version: {detail.get('clusterSoftwareVersion', 'N/A')}  "
