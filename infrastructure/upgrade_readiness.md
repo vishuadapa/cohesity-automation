@@ -101,3 +101,11 @@ One row per (cluster, check). Color-coded:
 - Red (`#FFC7CE`) — FAIL
 
 Columns: Cluster, Check, Status, Detail
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

@@ -65,3 +65,11 @@ python3 clone_policy.py --clear-credentials
 ## Output
 
 Confirmation message with cloned policy details: source policy name, new policy name, and basic configuration summary. If `--dry-run` is specified, prints the JSON payload instead of creating the policy.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

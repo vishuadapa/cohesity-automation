@@ -72,3 +72,11 @@ python3 clone_protection_group.py --clear-credentials
 ## Output
 
 Summary of cloned protection group with new name, policy, and object count. If `--dry-run` is specified, prints the JSON payload instead of creating the group.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

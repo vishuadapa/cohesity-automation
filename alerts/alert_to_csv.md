@@ -88,3 +88,11 @@ Output is auto-generated as `alert_to_csv_YYYYMMDD_HHMMSS.csv` in the current di
 | Acknowledged | `acknowledged` | `Yes` or `No` |
 | Node ID | `propertyList[nodeId]` | Node that raised the alert, if applicable |
 | Entity Name | `propertyList[entityName]` | Entity (disk, volume, etc.) related to the alert |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

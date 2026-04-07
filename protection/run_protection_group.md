@@ -69,3 +69,11 @@ python3 run_protection_group.py --clear-credentials
 ## Output
 
 Summary of triggered runs with run ID and status. If `--wait` is set, continuous polling output until completion.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

@@ -85,3 +85,11 @@ One row per cluster.
 | Encryption Enabled | `encryptionEnabled` | Whether data-at-rest encryption is enabled |
 | FIPS Enabled | `fipsEnabled` | Whether FIPS 140-2 mode is enabled |
 | Helios Connected | _(derived)_ | Always `Yes` — clusters returned from Helios are connected by definition |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

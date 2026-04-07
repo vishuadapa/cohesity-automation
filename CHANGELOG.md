@@ -1,11 +1,13 @@
 # Changelog
 
 All notable changes to this repository are documented here.
-Format: `[YYYY-MM-DD] — description`
+Format: `[YYYY-MM-DD] type(scope): description`
+
+Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `docs` (docs only), `chore` (maintenance)
 
 ---
 
-## [2026-04-07] — Infrastructure scripts: v1 API + fix node health, disk, and capacity checks
+## [2026-04-07] fix(infrastructure): v1 API field names — node health, disk, and capacity checks
 
 ### Changed
 - `infrastructure/cluster_info_report.py` — Switched from v2 to v1 API endpoints. Fixed: `Healthy Nodes`, `NTP Servers`, and `Helios Connected` columns now populate correctly from v1 response structure.
@@ -17,7 +19,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-07] — Alerts scripts: switch to v1 public alerts endpoint
+## [2026-04-07] fix(alerts): switch to v1 public alerts API endpoint
 
 ### Changed
 - `alerts/alert_summary_report.py` — Switched from v2 to v1 public alerts API endpoint (`GET /irisservices/api/v1/public/alerts`). More reliable alert data retrieval via Helios.
@@ -26,7 +28,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-07] — Storage scripts: switch to v1 API endpoints
+## [2026-04-07] fix(storage): switch to v1 API endpoints
 
 ### Changed
 - `storage/capacity_report.py` — Switched from v2 to v1 API endpoints for cluster capacity and stat reporting.
@@ -35,7 +37,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-06] — Initial scripts for all planned folders (alerts, infrastructure, policies, protection, recovery, storage, utils)
+## [2026-04-06] feat: initial scripts for all planned folders (alerts, infrastructure, policies, protection, recovery, storage, utils)
 
 ### Added
 - `utils/cohesity_auth.py` v1.0 — Shared auth module: Helios API key + direct cluster Bearer token,
@@ -89,35 +91,35 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-06] — protection_group_report.py v4.4: revert to stats/consumers for storage
+## [2026-04-06] fix(reporting): protection_group_report v4.4 — revert Storage Consumed to stats/consumers endpoint
 
 ### Changed
 - `reporting/protection_group_report.py` — Reverted trend mode Storage Consumed to `GET /stats/consumers` (same source as summary mode). Previous snapshot-summing approach (`sum(bytesWritten)` across active snapshots per day) grossly exceeded actual cluster physical capacity because `bytesWritten` is measured before cross-snapshot deduplication. Column renamed to **"Storage Consumed (As of End Date, Bytes/TB)"** to make clear it is a current-state value stamped identically on all date rows for a group. Startup caveat message added. README updated with limitation note.
 
 ---
 
-## [2026-04-05] — protection_group_report.py v4.3: full column parity in trend mode
+## [2026-04-05] feat(reporting): protection_group_report v4.3 — full column parity in trend mode
 
 ### Added
 - `reporting/protection_group_report.py` — `--mode trend` now includes all summary mode columns alongside the daily storage data. Run detail columns (Run Type, SLA Violated, Run Status, Run Start/End, Duration, Snapshot Expiry, Object counts, Data Read/Written/Logical Size, Replication and Archive status/targets/expiry) are aggregated across all runs that started on each day: counts and sizes are summed; status, type, targets, and expiry reflect the last run; SLA is "Yes" if any run violated. A new `Runs On Day` column shows how many runs occurred (`0` = no backup ran that day, storage consumed is still shown).
 
 ---
 
-## [2026-04-05] — protection_group_report.py v4.2: restore context columns in trend mode
+## [2026-04-05] feat(reporting): protection_group_report v4.2 — add Policy Name, Is Active, Is Paused in trend mode
 
 ### Added
 - `reporting/protection_group_report.py` — `--mode trend` output now includes **Policy Name**, **Is Active**, and **Is Paused** alongside the daily storage data. These are group-level attributes (same across all date rows for a group) that provide the context needed to filter and interpret the trend chart.
 
 ---
 
-## [2026-04-05] — protection_group_report.py v4.1: runs-based storage trend estimate
+## [2026-04-05] fix(reporting): protection_group_report v4.1 — replace timeSeriesStats (400 error) with runs-based storage estimate
 
 ### Changed
 - `reporting/protection_group_report.py` — Replaced `timeSeriesStats` approach (returned 400 — `storageConsumedBytes` requires an unknown `schemaName` when routed via Helios) with a runs-based estimate. For each protection group, queries all runs going back 1 year, then for each calendar day sums `bytesWritten` across every snapshot active on that day (`startTime ≤ day AND expiryTime > day`). Values are now genuinely day-varying and show real storage growth/expiration trends. `bytesWritten` is post-dedup/compression; may slightly overestimate vs `stats/consumers` due to shared dedup blocks between runs — trend direction is accurate.
 
 ---
 
-## [2026-04-05] — protection_group_report.py v4.0: --mode trend + storage consumed history
+## [2026-04-05] feat(reporting): protection_group_report v4.0 — --mode trend with daily storage history and chart per cluster
 
 ### Added
 - `reporting/protection_group_report.py` — `--mode trend`: queries daily storage consumed per protection group via `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (metric: `storageConsumedBytes`, `rollupIntervalSecs=86400`, `rollupFunction=Last`). Produces one row per group per day and adds a trend chart sheet per cluster — identical format to `fortknox_vault_report.py` (bottom legend, labelled axes, auto tick density). Default date range in trend mode is last 30 days. `--debug` prints raw `timeSeriesStats` response for metric name verification.
@@ -127,7 +129,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-05] — Rename: cohesity_protection_report → protection_group_report
+## [2026-04-05] refactor(reporting): rename cohesity_protection_report → protection_group_report
 
 ### Changed
 - `reporting/cohesity_protection_report.py` renamed to `reporting/protection_group_report.py`
@@ -136,7 +138,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-05] — fortknox_vault_report.py v4.6: Fix axis labels + auto tick density
+## [2026-04-05] fix(reporting): fortknox_vault_report v4.6 — fix axis labels; auto-reduce x-axis tick density
 
 ### Fixed
 - `reporting/fortknox_vault_report.py` — X-axis date labels were invisible because `numFmt = "yyyy-mm-dd"` was set on a category axis whose values are strings — Excel tried to parse them as date serials and rendered nothing. Removed `numFmt` from the category axis; strings now display as-is. Added `delete = False` on both axes to guarantee labels always render.
@@ -146,14 +148,14 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-05] — fortknox_vault_report.py v4.5: One chart sheet per cluster
+## [2026-04-05] feat(reporting): fortknox_vault_report v4.5 — one chart sheet per cluster
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — `--mode trend` now creates one chart sheet per cluster (sheet named after the cluster) instead of a single combined sheet. Each chart shows all protection groups for that cluster as separate series, with the same styling (16 pt bold title, bottom legend, labelled axes).
 
 ---
 
-## [2026-04-05] — Cohesity green branding across both reports
+## [2026-04-05] feat(reporting): Cohesity green header branding across fortknox and protection_group reports
 
 ### Changed
 - `reporting/fortknox_vault_report.py` v4.4 — Trend chart improvements: 16 pt bold chart title, legend repositioned to bottom (no overlap with chart area), x-axis labelled "Date" with `yyyy-mm-dd` tick format, y-axis labelled "Storage Consumed (TB)" with 4-decimal number format. Report header row color changed from dark blue to Cohesity green (`#00B388`).
@@ -161,49 +163,49 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — protection_group_report.py v3.3: Secure credential storage + Excel output
+## [2026-04-04] feat(reporting): protection_group_report v3.3 — OS keychain credential storage; Excel output
 
 ### Changed
 - `reporting/protection_group_report.py` — `--apikey` is now optional. Helios API key is stored in the OS keychain (`keyring`) after the first run and retrieved automatically on subsequent runs. Direct cluster passwords are also stored in the keychain (keyed by `cluster:domain:username`). `--clear-credentials` removes the stored Helios key; `--clear-credentials --cluster <ip>` removes a cluster password. Output changed from CSV to Excel (`.xlsx`) with styled headers (bold white on dark blue), frozen header row, and auto-fit columns. Output filename is auto-generated as `<script_name>_YYYYMMDD_HHMMSS.xlsx` in the current working directory. Requires `pip install keyring openpyxl`.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v4.3: Secure credential storage + auto output filename
+## [2026-04-04] feat(reporting): fortknox_vault_report v4.3 — OS keychain credential storage; auto output filename
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — `--apikey` is now optional. API key is stored in the OS keychain (`keyring`) after the first run and retrieved automatically on subsequent runs — never visible in the process list or written to disk in plaintext. `--clear-credentials` removes the stored key. Output filename is auto-generated as `<script_name>_YYYYMMDD_HHMMSS.xlsx` in the current working directory. Requires `pip install keyring`.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v4.2: Storage Consumed (TB) column + TB trend chart
+## [2026-04-04] feat(reporting): fortknox_vault_report v4.2 — add Storage Consumed (TB) column; TB trend chart
 
 ### Added
 - `reporting/fortknox_vault_report.py` — `Storage Consumed (TB)` column added to every row (raw bytes ÷ 1,000,000,000,000, 4 decimal places). Trend chart Y axis now plots TB values instead of raw bytes, giving a human-readable scale.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v4.1: Chart references Report sheet directly
+## [2026-04-04] refactor(reporting): fortknox_vault_report v4.1 — chart references Report sheet directly; no data duplication
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Trend chart no longer duplicates data on the chart sheet. Report rows are sorted by (group, cluster, vault, date) so each series is a contiguous range that the chart references directly in the Report sheet. All-zero Storage Consumed series are excluded. Chart fixed to 18 × 28 cm to fit a single screen. "Trend Charts" sheet contains only the chart.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v4.0: Single combined trend chart + column filters
+## [2026-04-04] feat(reporting): fortknox_vault_report v4.0 — single combined trend chart with column filter dropdowns
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Replaced per-group chart sheets with a single **"Trend Charts"** sheet. Contains a pivot table (Date × Protection Group) formatted as an Excel Table with ▼ column-filter dropdowns on every header for group/date navigation. Chart below shows all protection groups as series. Storage is summed across vaults per group per day. Native slicers require pivot tables (not supported by openpyxl); the column-filter dropdowns provide equivalent navigation.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.9: Excel output + trend charts
+## [2026-04-04] feat(reporting): fortknox_vault_report v3.9 — switch to Excel output; add per-group trend charts
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Output changed from CSV to Excel (`.xlsx`) via `openpyxl`. Header row styled (bold white on dark blue), columns auto-fitted, header frozen. In `--mode trend`, one chart sheet is added per protection group showing `Storage Consumed (Bytes)` as a line chart over time. If a protection group archives to multiple vaults, each vault is a separate series on the same chart. Requires `pip install openpyxl`.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.8: Zero-transfer caveat + primary field note
+## [2026-04-04] docs(reporting): fortknox_vault_report v3.8 — add zero-transfer caveat and primary field note
 
 ### Added
 - `reporting/fortknox_vault_report.py` — Startup note explaining that `Storage Consumed` is the primary metric, and that zero `Logical/Physical Transferred` values are expected for groups with no archival run in the queried window.
@@ -211,56 +213,56 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.7: Trend mode
+## [2026-04-04] feat(reporting): fortknox_vault_report v3.7 — --mode trend with per-day rows
 
 ### Added
 - `reporting/fortknox_vault_report.py` — `--mode trend` flag. In trend mode the full date range is split into individual calendar days (using the auto-detected cluster timezone); each day is queried separately and produces its own set of rows. `Period Start` and `Period End` both show the specific date (YYYY-MM-DD) so rows from multiple runs can be stacked in Excel or a BI tool to plot a daily storage utilization trend per protection group. Vault IDs are fetched once per cluster and reused across all daily calls. Default behaviour (`--mode summary`) is unchanged.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.6: Auto-detect cluster timezone
+## [2026-04-04] feat(reporting): fortknox_vault_report v3.6 — auto-detect cluster timezone; remove manual --timezone flag
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Timezone is now queried automatically from the cluster via `GET /irisservices/api/v1/public/cluster` before computing date boundaries. Removed the manual `--timezone` flag. When `--cluster` is specified the matching cluster is queried; otherwise the first available cluster is used. Startup banner shows the detected timezone and resolved start/end timestamps for verification.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.5: Timezone-aware date boundaries
+## [2026-04-04] feat(reporting): fortknox_vault_report v3.5 — timezone-aware date boundaries via --timezone flag
 
 ### Added
 - `reporting/fortknox_vault_report.py` — `--timezone TZ` flag (default: `UTC`). When `--start`/`--end`/`--days` are used, start-of-day and end-of-day boundaries are now computed in the given timezone instead of UTC. The Helios UI uses the cluster's local time (e.g. `America/Chicago` for US Central / GMT-6) for its date range — setting `--timezone` to match eliminates the window mismatch. Startup banner now shows the resolved timestamps with timezone label for verification.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.4: Exact timestamp flags + debug URL
+## [2026-04-04] feat(reporting): fortknox_vault_report v3.4 — --start-msecs/--end-msecs flags; --debug prints request URL
 
 ### Added
 - `reporting/fortknox_vault_report.py` — `--start-msecs` / `--end-msecs` flags accept exact millisecond timestamps pasted from the Chrome DevTools request URL, eliminating time boundary differences between script and UI. `--debug` now prints the exact request URL before the call so it can be compared directly against the Chrome network request.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.3: Output raw bytes
+## [2026-04-04] fix(reporting): fortknox_vault_report v3.3 — output raw bytes; remove unit conversions that didn't match UI
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Size columns now report raw bytes (no conversion). Column headers updated from `(TB)` to `(Bytes)`. API payload confirmed via Chrome DevTools to return values in bytes; all prior unit conversions produced values that did not match the UI.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.2: Switch to TB units
+## [2026-04-04] fix(reporting): fortknox_vault_report v3.2 — switch size columns from GB to TB
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Size columns changed from GB (÷ 1e9) to TB (÷ 1e12). Helios UI shows binary TiB; 1 TiB = 1.09951 TB so script TB values are ~9.95% higher than UI TiB figures — correct decimal equivalent. Column headers updated from `(GB)` to `(TB)`. Precision increased to 4 decimal places.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.1: Correct GB conversion + period timestamp columns
+## [2026-04-04] fix(reporting): fortknox_vault_report v3.1 — correct GB conversion to decimal SI; add Period Start/End columns
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — GB conversion corrected from binary (÷ 1024³) to decimal SI (÷ 1,000,000,000). Added `Period Start` and `Period End` columns (YYYY-MM-DD) to every row so stacked CSV runs from periodic executions can be used to build a storage utilization trend in Excel or similar tools.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v3.0: Rewrite using dataTransferToVaults only
+## [2026-04-04] refactor(reporting): fortknox_vault_report v3.0 — rewrite using dataTransferToVaults as single source of truth
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Full rewrite. Removed Helios activity API and Reporting API component calls (data was inaccurate). Single source of truth is now `GET /irisservices/api/v1/public/reports/dataTransferToVaults` per cluster, the same report shown in the Helios single-cluster "Data Transferred to External Targets" UI. One row per protection group per vault. Columns: Cluster, Vault Name, Vault Type, Protection Group, Logical Transferred (GB), Physical Transferred (GB), Storage Consumed (GB).
@@ -268,35 +270,35 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — Fix: SSL verification disabled across all calls
+## [2026-04-04] fix(reporting): SSL verification disabled across all calls — was causing ConnectionError on corporate networks
 
 ### Fixed
 - `reporting/protection_group_report.py` — Set `verify=False` on all requests. Previously only the cluster discovery call had SSL disabled; the protection groups and runs calls still used `verify=True`, causing `SSLCertVerificationError` on corporate networks with SSL inspection proxies. Removed `verify_ssl` parameter entirely — it's always `False` in this environment.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v2.4: Per-group retained storage via v1 report API
+## [2026-04-04] fix(reporting): fortknox_vault_report v2.4 — per-group retained storage via v1 dataTransferToVaults report API
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Vault Storage Consumed now sourced from `GET /irisservices/api/v1/public/reports/dataTransferToVaults` (Helios-routed per-cluster via `accessClusterId`), filtered by FortKnox vault IDs and the report date range. Vault IDs fetched from `GET /vaults?includeFortKnoxVault=true`. This is the same endpoint used by the Helios single-cluster "Data Transferred to External Targets" Protection Group tab.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v2.3: Use component 1601 for retained storage
+## [2026-04-04] fix(reporting): fortknox_vault_report v2.3 — use Reporting API component 1601 for retained storage
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Vault Storage Consumed now sourced from Helios Reporting API component 1601 ("Data Transferred to External Targets"), filtered by `systemId` (clusterId:clusterIncarnationId) per cluster. This is the same data shown in the Helios UI report. Lookup keyed by (cluster, group, vault). `--debug` flag shows first component 1601 record to confirm field names.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v2.2: Per-group vault storage
+## [2026-04-04] fix(reporting): fortknox_vault_report v2.2 — per-group vault storage from cloudTotalPhysicalUsageBytes
 
 ### Fixed
 - `reporting/fortknox_vault_report.py` — `Vault Storage Consumed` now uses `cloudTotalPhysicalUsageBytes` from `GET /irisservices/api/v1/public/stats/consumers?consumerType=kProtectionRuns`, fetched once per unique cluster in the activity results and keyed by `(clusterName, groupName)`. Previously used the vault-level `scRetainedBytes` aggregate which was wildly inaccurate at the group level.
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v2.1: Fix storage stats + new vault columns
+## [2026-04-04] fix(reporting): fortknox_vault_report v2.1 — fix storage stats parsing; add vault-level columns
 
 ### Fixed
 - `reporting/fortknox_vault_report.py` — Storage stats parsed from `resp['component']['data']` (was falling back to the `filters` echo list, giving 0 results and empty Storage Consumed column).
@@ -306,7 +308,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — fortknox_vault_report.py v2.0: Rewrite using Helios activity API
+## [2026-04-04] refactor(reporting): fortknox_vault_report v2.0 — rewrite using Helios activity API
 
 ### Changed
 - `reporting/fortknox_vault_report.py` — Full rewrite. Replaced per-cluster protection-group-runs approach with the Helios-native activity API (`POST /v2/mcm/data-protect/protection-group/activity` with `isRpaas=true`). One call returns all FortKnox runs across all clusters. Vault storage (`scRetainedBytes`) now sourced from Helios Reporting API (`POST /heliosreporting/api/v1/public/components/1600/preview` filtered to `managedBy=FortKnox`). Approach identified from ELF script (cohesityInv.ps1). Script is now Helios-only (`--apikey` required). Default date range is last 7 days.
@@ -314,7 +316,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — Per-script READMEs
+## [2026-04-04] docs(reporting): add per-script READMEs for fortknox and protection_group reports
 
 ### Changed
 - `reporting/README.md` — Slimmed to an index table linking to per-script docs.
@@ -323,7 +325,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — New script: fortknox_vault_report.py v1.0
+## [2026-04-04] feat(reporting): fortknox_vault_report v1.0 — initial FortKnox vault activity report
 
 ### Added
 - `reporting/fortknox_vault_report.py` — FortKnox (RPaaS) vault activity report. One row per FortKnox archival target per run per protection group. Filters on `targetType = kRpaas`. Reports: Vault Name, Run Type, SLA Violated, Vault Status, Run Start, Vault Start/End, Duration, Vault Expiry, Objects Succeeded/Failed/Canceled, Data Read (GB), Logical Size (GB), Logical Transferred (GB), Physical Transferred (GB), Vault Storage Consumed (GB). Supports `--vault` filter, `--days`/`--start`/`--end` date range, Helios and direct cluster auth. Cluster-local timestamps, GB-only size columns.
@@ -331,7 +333,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — v3.2: Policy Name replaces Policy ID
+## [2026-04-04] feat(reporting): protection_group_report v3.2 — Policy Name column replaces Policy ID
 
 ### Changed
 - `reporting/protection_group_report.py` — `Policy ID` column replaced with `Policy Name`. Name is resolved via `GET /v2/data-protect/policies/{id}` with in-process caching so each unique policy is only fetched once per script run. Falls back to the raw ID if the lookup fails.
@@ -339,7 +341,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — v3.1: GB-only size columns, updated README
+## [2026-04-04] fix(reporting): protection_group_report v3.1 — GB-only size columns for pivot table compatibility
 
 ### Changed
 - `reporting/protection_group_report.py` — Size values (Data Read, Data Written, Logical Size, Storage Consumed) now report as plain GB decimal numbers. The `(GB)` label is in the column header only, keeping cell values numeric for Excel pivot tables and sorting. Replaces the previous auto-scaling TB/GB/MB format.
@@ -347,7 +349,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — v2.0: Historical run data, version numbering
+## [2026-04-04] feat(reporting): protection_group_report v2.0 — historical run data with --days/--start/--end flags
 
 ### Added
 - `reporting/protection_group_report.py` — `__version__ = "2.0"`. Version history block in docstring. Version number shown in `--help`.
@@ -363,14 +365,14 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — Fix: Bytes read/written fields empty
+## [2026-04-04] fix(reporting): protection_group_report — bytes read/written always empty; wrong stats nesting path
 
 ### Fixed
 - `reporting/protection_group_report.py` — Bytes read/written (columns N, O) were always N/A. Stats are nested at `localBackupInfo.localSnapshotStats`, not `localBackupInfo.stats`. Fixed by changing `backup.get("stats", {})` to `backup.get("localSnapshotStats", {})`.
 
 ---
 
-## [2026-04-04] — Fix: Correct Helios cluster routing header
+## [2026-04-04] fix(reporting): protection_group_report — wrong Helios cluster routing header (clusterIdentifier → accessClusterId)
 
 ### Fixed
 - `reporting/protection_group_report.py` — The Helios cluster routing header was wrong: `clusterIdentifier` does not exist. The correct header confirmed in `cohesity-api.ps1` (Brian Seltzer) is **`accessClusterId`**. This was causing Helios to proxy to no cluster, returning an empty result for every API call — hence "Found 0 active protection jobs".
@@ -379,7 +381,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — Refactor: Switch to v1 API for job listing and run stats
+## [2026-04-04] refactor(reporting): protection_group_report — switch to v1 API for job listing and run stats
 
 ### Changed
 - `reporting/protection_group_report.py` — Replaced v2 `data-protect/protection-groups` and `protection-groups/{id}/runs` endpoints with v1 `protectionJobs` and `protectionRuns` endpoints (same approach used in Brian Seltzer's reporting scripts).
@@ -390,21 +392,21 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 
 ---
 
-## [2026-04-04] — Fix: Helios cluster list endpoint
+## [2026-04-04] fix(reporting): protection_group_report — wrong Helios cluster list endpoint (/mcm/clusters/info → /mcm/clusters/connectionStatus)
 
 ### Fixed
 - `reporting/protection_group_report.py` — Corrected Helios cluster discovery endpoint from `/mcm/clusters/info` (404) to `/mcm/clusters/connectionStatus`.
 
 ---
 
-## [2026-04-04] — Fix: Helios SSL on corporate networks
+## [2026-04-04] fix(reporting): protection_group_report — SSL verification error on corporate networks with proxy CA
 
 ### Fixed
 - `reporting/protection_group_report.py` — Changed `verify=True` to `verify=False` for Helios cluster discovery call. Corporate laptops with SSL inspection (proxy CA) caused a `ConnectionError` on the initial Helios connection even when the API key was valid.
 
 ---
 
-## [2026-04-04]
+## [2026-04-04] feat(reporting): protection_group_report v1.0 — initial protection group last-run status report
 
 ### Added
 - `reporting/protection_group_report.py` — Initial script. Generates a CSV report of all protection group last-run status, timing, object counts, and data written/read. Supports Cohesity 7.1 and 7.3.

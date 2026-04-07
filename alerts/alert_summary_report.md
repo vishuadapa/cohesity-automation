@@ -89,3 +89,11 @@ One row per alert with full detail.
 | Last Updated | `latestTimestampUsecs` | When the alert was last updated (UTC) |
 | Node ID | `propertyList[nodeId]` | Node that raised the alert, if applicable |
 | Acknowledged | `acknowledged` | Whether the alert has been acknowledged |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

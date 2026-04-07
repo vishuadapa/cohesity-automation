@@ -64,3 +64,11 @@ python3 pause_resume_groups.py --clear-credentials
 ## Output
 
 Lists matched protection groups with their current state and requests confirmation. After the action completes, prints summary of updated groups.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

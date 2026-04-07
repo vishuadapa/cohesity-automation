@@ -86,3 +86,11 @@ Output file is created automatically as `policy_compliance_report_YYYYMMDD_HHMMS
   - **Warning (yellow):** `--rpo-hours` check failed (last run was too long ago).
   - **Fail (red):** Retention, replication, or archival requirements not met.
 - **Output:** Excel file with color-coded row backgrounds and detailed issue descriptions in the last column for easy filtering in spreadsheets or customer reports.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

@@ -71,3 +71,11 @@ python3 resolve_alerts.py --clear-credentials
 4. Prompts for confirmation (`y/N`) unless `--yes` is set
 5. POSTs the resolve request with the list of alert IDs per cluster
 6. Reports the total count of successfully resolved alerts
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

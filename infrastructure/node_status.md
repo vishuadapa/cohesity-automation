@@ -106,3 +106,11 @@ Node health is derived from two v1 fields (no `nodeStatus.overallStatus` in v1):
 | Storage Tier | `diskCountByTier[].storageTier` | Tier name: `PCIeSSD`, `SATA-HDD`, `SATA-SSD`, etc. |
 | Disk Count | `diskCountByTier[].diskCount` | Number of disks in this tier on this node |
 | Tier Capacity (TB) | `capacityByTier[].tierMaxPhysicalCapacityBytes` | Raw capacity for this tier in TB |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-04-06 | feat: initial release |

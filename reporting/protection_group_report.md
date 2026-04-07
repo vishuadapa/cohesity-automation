@@ -163,3 +163,21 @@ Fields available in the Cohesity v2 API that are not included in the default out
 | Cloud archive tier | `runs[].archivalInfo.archivalTargetResults[].tierSettings` | Tiering info for cloud archives (S3 Standard, Glacier, etc.) |
 | Cloud spin-up status | `runs[].cloudSpinInfo` | Status of any cloud spin-up (AWS/Azure DR) |
 | Tenant ID | `protectionGroups[].tenantId` | Multi-tenant environment: which tenant owns this group |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 4.4 | 2026-04-06 | fix: revert Storage Consumed to `stats/consumers` endpoint; rename column to clarify point-in-time value |
+| 4.3 | 2026-04-05 | feat: full column parity in trend mode — run detail columns aggregated per day; add Runs On Day column |
+| 4.2 | 2026-04-05 | feat: add Policy Name, Is Active, Is Paused columns in trend mode |
+| 4.1 | 2026-04-05 | fix: replace `timeSeriesStats` (400 error via Helios) with runs-based storage estimate |
+| 4.0 | 2026-04-05 | feat: `--mode trend` with daily storage history and chart sheet per cluster |
+| 3.4 | 2026-04-04 | feat: Cohesity green header branding |
+| 3.3 | 2026-04-04 | feat: secure credential storage via OS keychain; switch output from CSV to Excel |
+| 3.2 | 2026-04-04 | feat: Policy Name column — cached lookup replaces raw Policy ID |
+| 3.1 | 2026-04-04 | fix: GB-only size columns for Excel pivot compatibility |
+| 2.0 | 2026-04-04 | feat: historical run data with `--days`/`--start`/`--end` flags; one row per run |
+| 1.0 | 2026-04-04 | feat: initial release — protection group last-run status report |
