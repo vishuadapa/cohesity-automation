@@ -215,10 +215,10 @@ def check_disks(api_key: str, cluster_id: int) -> tuple:
 
 
 def check_active_runs(api_key: str, cluster_id: int) -> tuple:
-    data  = hget(api_key, cluster_id,
-                 "/v2/data-protect/protection-groups/runs",
-                 params={"runStatus": "Running"})
-    runs  = data.get("runs", [])
+    data = hget(api_key, cluster_id,
+                "/irisservices/api/v1/public/protectionRuns",
+                params={"runStatus": "kRunning", "numRuns": 100})
+    runs = data.get("_list", data.get("protectionRuns", []))
     if runs:
         return STATUS_WARN, f"{len(runs)} protection run(s) currently in progress"
     return STATUS_PASS, "No active protection runs"
@@ -238,20 +238,34 @@ def check_version(cluster_version: str, min_version: str) -> tuple:
 
 
 def check_capacity(api_key: str, cluster_id: int) -> tuple:
-    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/cluster")
-    stats = data.get("stats") or data.get("clusterInfo", {}).get("stats") or {}
-    # v1 field names vary slightly between versions — try both
-    total = stats.get("usableSizeBytes") or stats.get("totalUsableStorageBytes") or 0
-    used  = stats.get("usedSizeBytes") or stats.get("localUsageBytes") or 0
-    if not total:
-        return STATUS_WARN, "Capacity data not available (stats not returned by cluster)"
-    free_pct = (total - used) / total * 100
-    msg = f"{free_pct:.1f}% free ({round((total - used)/1e12, 2)} TB of {round(total/1e12, 2)} TB)"
-    if free_pct < 10:
-        return STATUS_FAIL, f"Critical — only {msg}"
-    if free_pct < 20:
-        return STATUS_WARN, f"Low capacity — {msg}"
-    return STATUS_PASS, msg
+    """
+    v1 /cluster endpoint returns stats=None. Compute raw physical capacity
+    by summing maxPhysicalCapacityBytes across all nodes (same data used
+    by check_disks). Reports total raw capacity and per-tier breakdown.
+    """
+    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes")
+    nodes = data.get("_list", data.get("nodes", []))
+    if not nodes:
+        return STATUS_WARN, "Could not retrieve nodes for capacity check"
+
+    total_bytes = sum(n.get("maxPhysicalCapacityBytes", 0) for n in nodes)
+    if not total_bytes:
+        return STATUS_WARN, "Capacity data not available from node responses"
+
+    total_tb = round(total_bytes / 1_000_000_000_000, 2)
+
+    # Per-tier breakdown from cluster-level diskCountByTier
+    cluster_data = hget(api_key, cluster_id, "/irisservices/api/v1/public/cluster")
+    tier_info    = cluster_data.get("diskCountByTier", [])
+    tier_str     = ""
+    if tier_info:
+        parts    = [f"{t.get('diskCount',0)} {t.get('storageTier','')}" for t in tier_info]
+        tier_str = f" ({', '.join(parts)})"
+
+    fault_level  = cluster_data.get("faultToleranceLevel", "")
+    fault_str    = f", FT: {fault_level}" if fault_level else ""
+
+    return STATUS_PASS, f"Raw physical: {total_tb} TB{tier_str}{fault_str}"
 
 
 # ---------------------------------------------------------------------------
