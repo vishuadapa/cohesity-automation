@@ -23,11 +23,11 @@ Default date range is the last 7 days.
 |---------|--------|----------|
 | Cluster list | `GET` | `https://helios.cohesity.com/mcm/clusters/connectionStatus` |
 | FortKnox vault IDs | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/vaults?includeFortKnoxVault=true` |
-| Data transfer report | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults` |
+| Storage consumed (per protection group) | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults` |
+| Logical / Physical transferred (per run) | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/protectionRuns` |
+| Cluster timezone | `GET` | `https://helios.cohesity.com/irisservices/api/v1/public/cluster` |
 
-The transfer report is fetched per cluster using the `accessClusterId` Helios
-routing header. Parameters: `startTimeMsecs`, `endTimeMsecs`, `vaultIds` (one
-per FortKnox vault ID on the cluster).
+Both report endpoints are fetched per cluster using the `accessClusterId` Helios routing header.
 
 ---
 
@@ -75,28 +75,55 @@ Output file is created automatically as `fortknox_vault_report_YYYYMMDD_HHMMSS.x
 
 ## Report Fields
 
-Size columns report raw bytes as returned by the API. Apply your own unit conversion (e.g. ÷ 1,099,511,627,776 for TiB to match the Helios UI).
+The script automatically queries the cluster timezone via `GET /public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates.
 
-The script automatically queries the timezone from the first cluster via `GET /irisservices/api/v1/public/cluster` and uses it for all date boundary calculations, matching how the Helios UI interprets selected dates. The detected timezone and resolved timestamps are printed at startup for verification.
+---
 
-> **Trend Charts sheet (--mode trend):** Contains a single full-screen line chart (one series per protection group). The chart references the **Report** sheet data directly — no data is duplicated on the chart sheet. Report rows are sorted by (Protection Group, Cluster, Vault, Date) so each series maps to a contiguous row range. Protection groups where all Storage Consumed values are zero are excluded from the chart automatically.
+### Why Logical and Physical Transferred do NOT come from the Helios UI
 
-> **Note — Primary field:** `Storage Consumed (Bytes)` is the key metric in this report. It reflects the total physical storage retained in the vault for a protection group across all snapshots, regardless of whether a transfer occurred in the queried period.
+> **Important:** The Logical Transferred and Physical Transferred values in this report will differ from what you see in the Helios UI's "Data Transfer to Vaults" page when broken down by protection group. This is intentional — the UI figures are inaccurate at the per-protection-group level. Here is why:
 
-> **Caveat — Zero transfer values:** `Logical Transferred` and `Physical Transferred` reflect data moved to the vault **within the queried time window only**. The API always returns every protection group that has retained storage in the vault — even if no archival run occurred during the period. Those groups will show `0` for both transfer fields. This is expected and most visible in `--mode trend` where each day is queried separately: groups that archive every few days (per their policy schedule) will show `0` transfer on days with no run. `Storage Consumed` remains populated for all rows.
+The `dataTransferToVaults` API (which the Helios UI uses) exposes two field families:
 
-| Column | Source field | Description |
-|--------|-------------|-------------|
-| Period Start | _(script)_ | Start date of the report window (YYYY-MM-DD). Use with Period End to identify which run produced a row when stacking CSVs for trend analysis. |
-| Period End | _(script)_ | End date of the report window (YYYY-MM-DD). |
-| Cluster | `clusterName` | Cluster name as registered in Helios |
-| Vault Name | `vaultName` | FortKnox vault target name |
-| Vault Type | `vaultType` | Cloud platform: `kAzure`, `kAmazon`, etc. |
-| Protection Group | `protectionJobName` | Protection group name |
-| Logical Transferred (Bytes) | `numLogicalBytesTransferred` | Logical bytes sent to vault (pre-compression) |
-| Physical Transferred (Bytes) | `numPhysicalBytesTransferred` | Bytes actually sent over the network (post-compression) |
-| Storage Consumed (Bytes) | `storageConsumed` | Physical storage currently retained in this vault for this protection group across all retained snapshots |
-| Storage Consumed (TB) | _(derived)_ | Same value converted to TB (÷ 1,000,000,000,000, 4 decimal places). Used as the Y axis in the trend chart. |
+| Field location | Field name | What it actually contains |
+|---|---|---|
+| Per protection group | `numLogicalBytesTransferred` | **Cumulative lifetime total** — all bytes ever transferred since the job was created, regardless of date range |
+| Per protection group | `numPhysicalBytesTransferred` | Same — cumulative, not time-windowed |
+| Vault level (aggregate) | `logicalDataTransferredBytesDuringTimeRange[]` | Correctly time-windowed daily array — but vault total only, not broken down per protection group |
+
+The Cohesity API does not provide time-windowed logical/physical transfer data broken down per protection group via `dataTransferToVaults`. If you select "last 7 days" in the UI, the per-group logical/physical numbers shown still reflect the **entire lifetime** of that protection group's transfers to the vault — not just the last 7 days. This is a limitation of the Cohesity API at the per-group level.
+
+### What this script does instead
+
+To get **accurate, time-windowed** logical and physical transfer data per protection group, this script calls a second endpoint:
+
+**`GET /public/protectionRuns`** — returns individual archival copy run records for the queried time window. Each run has:
+- `stats.logicalBytesTransferred` — logical bytes transferred in **that specific run**
+- `stats.physicalBytesTransferred` — physical bytes sent over the wire in that run
+
+The script sums these across all successful (`kSuccess` / `kWarning`) FortKnox archival runs within your selected date range, per protection group per vault. This gives a true time-bounded total that reflects what was actually archived in the period you asked for.
+
+`Storage Consumed` is sourced from `dataTransferToVaults` as before — it is a point-in-time snapshot and is not affected by the date range, so it matches the UI exactly.
+
+---
+
+### Column reference
+
+| Column | Source | Description |
+|--------|--------|-------------|
+| Period Start | _(script)_ | Start of the report window (YYYY-MM-DD) |
+| Period End | _(script)_ | End of the report window (YYYY-MM-DD) |
+| Cluster | `dataTransferToVaults` | Cluster name as registered in Helios |
+| Vault Name | `dataTransferToVaults → vaultName` | FortKnox vault target name |
+| Vault Type | `dataTransferToVaults → vaultType` | Cloud platform: `kAzure`, `kAmazon`, etc. |
+| Protection Group | `dataTransferToVaults → protectionJobName` | Protection group name |
+| Logical Transferred (Bytes) | `protectionRuns → stats.logicalBytesTransferred` | Sum of logical bytes (pre-compression) across all archival runs in the queried window — **time-windowed, not cumulative** |
+| Physical Transferred (Bytes) | `protectionRuns → stats.physicalBytesTransferred` | Sum of physical bytes (post-compression, over the wire) across all archival runs in the queried window — **time-windowed, not cumulative** |
+| Storage Consumed (Bytes) | `dataTransferToVaults → storageConsumed` | Point-in-time snapshot of total storage retained in the vault for this protection group across all snapshots. Matches the Helios UI exactly. |
+| Storage Consumed (TB) | _(derived)_ | Storage Consumed ÷ 1,000,000,000,000 |
+| Storage Consumed (TiB) | _(derived)_ | Storage Consumed ÷ 1,099,511,627,776 — matches the binary TiB value shown in the Helios UI |
+
+> **Zero transfer rows:** Groups with no archival run during the queried period will show `0` for Logical and Physical Transferred. This is expected — `Storage Consumed` remains populated because retained snapshots still exist in the vault from prior runs.
 
 ---
 
