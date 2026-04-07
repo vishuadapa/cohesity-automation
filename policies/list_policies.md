@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.1
+**Version:** 1.2
 
 ---
 
@@ -17,7 +17,8 @@ pip install requests keyring openpyxl
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.1 | 2026-04-07 | Fixed `AttributeError: 'NoneType' object has no attribute 'get'` crash when the API returns explicit `null` for `backupPolicy`, `regular`, `fullBackups`, `incremental`, `log`, `retention`, or `remoteTargetPolicy` fields. `dict.get(key, {})` does not protect against null values — replaced all chained `.get()` calls with `or {}` / `or []` fallbacks. |
+| 1.2 | 2026-04-07 | Fixed empty columns D, E, H, I, J, L: wrong field names for the v2 API — `policyCategory` → `type`, `fullBackups` → `full`, nested schedule frequency (`daySchedule`/`weekSchedule`/`hourSchedule`), improved replication and archival target name lookup with fallbacks |
+| 1.1 | 2026-04-07 | Fixed `AttributeError` crash when API returns explicit `null` for policy sub-fields |
 | 1.0 | 2026-04-06 | Initial release |
 
 ---

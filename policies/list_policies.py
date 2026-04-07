@@ -14,6 +14,18 @@ API endpoints used:
   Policies:      GET  https://helios.cohesity.com/v2/data-protect/policies
 
 Version history:
+  1.2 (2026-04-07) — Fixed empty columns D, E, H, I, J, L caused by wrong
+                     field names for the v2 API response:
+                     - Policy Type: "policyCategory" → "type"
+                     - Full Backup Schedule: "fullBackups" → "full"
+                     - schedule_str: frequency is nested in daySchedule/
+                       weekSchedule/hourSchedule/minuteSchedule sub-objects
+                       in v2, not a flat field on the schedule object
+                     - replication_summary: cluster name now reads from
+                       remoteTargetConfig.clusterName with fallbacks
+                     - archival_summary: vault name now reads from
+                       archivalTargetConfig with fallbacks
+                     - Groups Using Policy: also tries numberOfProtectionGroups
   1.1 (2026-04-07) — Fixed AttributeError when API returns null for backupPolicy,
                      regular, fullBackups, incremental, log, retention, or
                      remoteTargetPolicy fields. dict.get(key, {}) does not
@@ -31,7 +43,7 @@ Usage:
   python3 list_policies.py --clear-credentials
 """
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import argparse
 import getpass
@@ -148,18 +160,42 @@ def get_policies(api_key: str, cluster_id: int) -> list:
 
 
 def schedule_str(sched: dict) -> str:
-    """Return a short human-readable schedule string (e.g. 'Daily', 'Weekly/Mon')."""
+    """Return a short human-readable schedule string.
+
+    Handles the v2 API nested frequency format where frequency is inside
+    daySchedule.frequency, weekSchedule.dayOfWeek, hourSchedule.frequency, etc.
+    Also handles a flat frequency field for compatibility with older responses.
+    """
     if not sched:
         return ""
     unit = sched.get("unit", "")
-    freq = sched.get("frequency", 1)
+
     if unit == "Days":
+        freq = ((sched.get("daySchedule") or {}).get("frequency")
+                or sched.get("frequency", 1))
         return f"Every {freq}d" if freq > 1 else "Daily"
+
     if unit == "Weeks":
-        days = sched.get("dayOfWeek", [])
+        days = ((sched.get("weekSchedule") or {}).get("dayOfWeek")
+                or sched.get("dayOfWeek", []))
         return f"Weekly/{','.join(days)}" if days else "Weekly"
+
     if unit == "Hours":
+        freq = ((sched.get("hourSchedule") or {}).get("frequency")
+                or sched.get("frequency", 1))
         return f"Every {freq}h"
+
+    if unit == "Minutes":
+        freq = ((sched.get("minuteSchedule") or {}).get("frequency")
+                or sched.get("frequency", 1))
+        return f"Every {freq}m"
+
+    if unit == "Months":
+        return "Monthly"
+
+    if unit == "Years":
+        return "Yearly"
+
     return unit
 
 
@@ -176,8 +212,13 @@ def replication_summary(targets: list) -> str:
         return ""
     parts = []
     for t in targets:
-        cname = t.get("targetName", t.get("remoteTargetConfig", {}).get("clusterName", "?"))
-        ret   = retention_str(t.get("retention", {}))
+        # v2: clusterName is inside remoteTargetConfig; also try targetName
+        cfg   = t.get("remoteTargetConfig") or {}
+        cname = (t.get("targetName")
+                 or cfg.get("clusterName")
+                 or cfg.get("name")
+                 or "?")
+        ret   = retention_str(t.get("retention") or {})
         parts.append(f"{cname} ({ret})" if ret else cname)
     return "; ".join(parts)
 
@@ -187,9 +228,14 @@ def archival_summary(targets: list) -> str:
         return ""
     parts = []
     for t in targets:
-        tname = t.get("targetName", "?")
-        ttype = t.get("targetType", "")
-        ret   = retention_str(t.get("retention", {}))
+        # v2: targetName / targetType live directly on the target object
+        cfg   = t.get("archivalTargetConfig") or {}
+        tname = (t.get("targetName")
+                 or cfg.get("name")
+                 or cfg.get("vaultName")
+                 or "?")
+        ttype = t.get("targetType") or cfg.get("targetType") or ""
+        ret   = retention_str(t.get("retention") or {})
         label = f"{tname}/{ttype} ({ret})" if ret else f"{tname}/{ttype}"
         parts.append(label)
     return "; ".join(parts)
@@ -290,26 +336,32 @@ def main():
         for p in policies:
             backup = p.get("backupPolicy") or {}
             reg    = backup.get("regular") or {}
-            full_s = schedule_str((reg.get("fullBackups") or {}).get("schedule") or {})
-            incr_s = schedule_str((reg.get("incremental") or {}).get("schedule") or {})
+            # v2: full backup key is "full", not "fullBackups"
+            full_s = schedule_str(
+                (reg.get("full") or reg.get("fullBackups") or {}).get("schedule") or {})
+            incr_s = schedule_str(
+                (reg.get("incremental") or {}).get("schedule") or {})
+            remote = p.get("remoteTargetPolicy") or {}
 
             rows.append({
                 "Cluster":             cname,
                 "Policy Name":         p.get("name", ""),
                 "Policy ID":           p.get("id", ""),
-                "Policy Type":         p.get("policyCategory", ""),
+                # v2 uses "type" not "policyCategory"
+                "Policy Type":         p.get("type") or p.get("policyCategory", ""),
                 "Full Backup Schedule": full_s,
                 "Incremental Schedule": incr_s,
-                "Local Retention":     retention_str(
-                    reg.get("retention") or {}),
+                "Local Retention":     retention_str(reg.get("retention") or {}),
                 "Log Retention":       retention_str(
                     (backup.get("log") or {}).get("retention") or {}),
                 "Replication Targets": replication_summary(
-                    (p.get("remoteTargetPolicy") or {}).get("replicationTargets") or []),
+                    remote.get("replicationTargets") or []),
                 "Archival Targets":    archival_summary(
-                    (p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []),
+                    remote.get("archivalTargets") or []),
                 "Is Active":           "Yes" if not p.get("isDeleted") else "No",
-                "Groups Using Policy": p.get("numProtectionGroups", ""),
+                # v2 may not return numProtectionGroups; fall back gracefully
+                "Groups Using Policy": p.get("numProtectionGroups",
+                                             p.get("numberOfProtectionGroups", "")),
             })
 
         print(f"    {len(policies)} policy/ies")
