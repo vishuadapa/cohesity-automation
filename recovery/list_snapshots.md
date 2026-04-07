@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -68,3 +68,12 @@ Console table and optional Excel file with the following columns:
 - **Object search:** Uses partial name matching. If multiple objects match, all snapshots across all matches are listed.
 - **Output:** Printed to console as a formatted table. Use `--output` to also save to an Excel file with styled headers and auto-fit columns.
 - **Snapshot availability:** Snapshots are listed with their expiry dates. Snapshots past expiry will no longer be available for recovery.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Removed unused `targets` variable (dead code — `indexingStatus` field was assigned but never referenced) |
+| 1.0 | 2026-04-06 | Initial release |

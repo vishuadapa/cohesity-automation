@@ -16,6 +16,10 @@ API endpoints used:
   Initiate restore: POST  https://helios.cohesity.com/v2/data-protect/recoveries
 
 Version history:
+  1.1 (2026-04-07) — Fixed alternate destination path field name:
+                     absolutePath → alternateRestoreBaseDirectory (v2 API).
+                     Removed redundant restore_params intermediary and
+                     unused targetEnvironment variable.
   1.0 (2026-04-06) — Initial release. File/folder recovery to original or
                      alternate path, snapshot selection, dry-run mode.
 
@@ -29,7 +33,7 @@ Usage:
   python3 recover_files.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -242,21 +246,14 @@ def main():
     print(f"    Overwrite:         {'Yes' if args.overwrite else 'No'}")
 
     # Build recovery payload
-    restore_params = {
-        "targetEnvironment": "kPhysical",
-        "physicalTargetParams": {
-            "recoverFileAndFolderParams": {
-                "filesAndFolders": [{"absolutePath": p} for p in args.paths],
-                "targetEntity": {"id": obj.get("sourceId", obj_id)},
-                "overwriteExisting": args.overwrite,
-                "preserveAttributes": True,
-            }
-        },
+    recover_file_params = {
+        "filesAndFolders": [{"absolutePath": p} for p in args.paths],
+        "targetEntity": {"id": obj.get("sourceId", obj_id)},
+        "overwriteExisting": args.overwrite,
+        "preserveAttributes": True,
     }
     if args.dest_path:
-        (restore_params["physicalTargetParams"]
-                       ["recoverFileAndFolderParams"]
-                       ["absolutePath"]) = args.dest_path
+        recover_file_params["alternateRestoreBaseDirectory"] = args.dest_path
 
     payload = {
         "name":         (f"FileRestore-{obj_name}-"
@@ -265,8 +262,7 @@ def main():
         "physicalParams": {
             "objects": [{"snapshotId": snap.get("id")}],
             "recoveryAction": "RecoverFiles",
-            "recoverFileAndFolderParams": restore_params[
-                "physicalTargetParams"]["recoverFileAndFolderParams"],
+            "recoverFileAndFolderParams": recover_file_params,
         },
     }
 

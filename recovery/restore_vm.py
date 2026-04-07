@@ -17,6 +17,9 @@ API endpoints used:
   Initiate restore: POST  https://helios.cohesity.com/v2/data-protect/recoveries
 
 Version history:
+  1.1 (2026-04-07) — Fixed rename params: eliminated None/delete pattern
+                     by building originalSourceConfig conditionally before
+                     constructing the payload.
   1.0 (2026-04-06) — Initial release. Original-location restore with optional
                      suffix rename, snapshot selection by index or latest,
                      power-on after restore flag.
@@ -28,7 +31,7 @@ Usage:
   python3 restore_vm.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -243,40 +246,31 @@ def main():
     print(f"    Power on after:    {'Yes' if args.power_on else 'No'}")
 
     # Build recovery payload — original-location VMware restore
+    original_source_cfg = {
+        "networkConfig": {"detachNetwork": False},
+        "powerOnVms":    args.power_on,
+    }
+    if args.suffix:
+        original_source_cfg["renameRecoveredVmsParams"] = {"suffix": args.suffix}
+
     payload = {
         "name":         f"Restore-{vm_name}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
         "snapshotEnvironment": "kVMware",
         "vmwareParams": {
-            "objects": [
-                {
-                    "snapshotId": snap.get("id"),
-                }
-            ],
+            "objects": [{"snapshotId": snap.get("id")}],
             "recoveryAction": "RecoverVMs",
             "recoverVmParams": {
                 "targetEnvironment": "kVMware",
                 "recoverFromStandby": False,
                 "vmwareTargetParams": {
                     "recoveryTargetConfig": {
-                        "recoverToNewSource": False,
-                        "originalSourceConfig": {
-                            "networkConfig": {"detachNetwork": False},
-                            "powerOnVms": args.power_on,
-                            "renameRecoveredVmsParams": {
-                                "suffix": args.suffix,
-                            } if args.suffix else None,
-                        },
+                        "recoverToNewSource":  False,
+                        "originalSourceConfig": original_source_cfg,
                     }
                 },
             },
         },
     }
-
-    # Clean up None values
-    orig = payload["vmwareParams"]["recoverVmParams"]["vmwareTargetParams"][
-        "recoveryTargetConfig"]["originalSourceConfig"]
-    if orig.get("renameRecoveredVmsParams") is None:
-        del orig["renameRecoveredVmsParams"]
 
     if args.dry_run:
         import json

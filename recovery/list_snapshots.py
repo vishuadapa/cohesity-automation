@@ -15,6 +15,8 @@ API endpoints used:
   Snapshots:      GET  https://helios.cohesity.com/v2/data-protect/objects/{id}/snapshots
 
 Version history:
+  1.1 (2026-04-07) — Removed unused `targets` variable (dead code from
+                     indexingStatus field that was never referenced).
   1.0 (2026-04-06) — Initial release. Search by object name, list all
                      snapshots with timestamp, expiry, run type, status,
                      and target locations. Console table + optional Excel.
@@ -25,7 +27,7 @@ Usage:
   python3 list_snapshots.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
@@ -270,7 +272,6 @@ def main():
             expiry    = usecs_to_str(s.get("expiryTimeUsecs"))
             run_type  = s.get("runType", "")
             status    = s.get("runStatus", "")
-            targets   = s.get("indexingStatus", {})
 
             has_local = "Yes" if s.get("hasLocalSnapshot") else "No"
             has_repl  = "Yes" if s.get("hasReplicationSnapshot") else "No"

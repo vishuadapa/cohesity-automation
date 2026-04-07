@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -70,3 +70,12 @@ python3 restore_vm.py --clear-credentials
 ## Output
 
 Confirmation message with recovery details: source VM, snapshot date, destination VM name, and power-on status. If `--dry-run` is specified, prints the JSON recovery payload.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed rename params: eliminated None/delete pattern by building `originalSourceConfig` conditionally before payload construction |
+| 1.0 | 2026-04-06 | Initial release |

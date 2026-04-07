@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring
 ```
 
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -85,3 +85,12 @@ python3 recover_files.py --clear-credentials
 ## Output
 
 Confirmation message with recovery details: source host/share, paths being recovered, destination location, and overwrite status. If `--dry-run` is specified, prints the JSON recovery payload.
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.1 | 2026-04-07 | Fixed alternate destination path field name: `absolutePath` → `alternateRestoreBaseDirectory` (v2 API). Removed redundant `restore_params` intermediary and unused `targetEnvironment` variable. |
+| 1.0 | 2026-04-06 | Initial release |
