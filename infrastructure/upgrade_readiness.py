@@ -166,43 +166,52 @@ def hget(api_key: str, cluster_id: int, path: str, params: dict = None) -> dict:
 # Checks
 # ---------------------------------------------------------------------------
 
+def _node_is_healthy(n: dict) -> bool:
+    """v1 nodes have no nodeStatus.overallStatus — use isMarkedForRemoval + removalState."""
+    return not n.get("isMarkedForRemoval") and n.get("removalState", "kDontRemove") == "kDontRemove"
+
+
 def check_nodes(api_key: str, cluster_id: int) -> tuple:
     data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes")
     nodes = data.get("_list", data.get("nodes", []))
     if not nodes:
         return STATUS_WARN, "Could not retrieve node list"
-    unhealthy = [n for n in nodes
-                 if n.get("nodeStatus", {}).get("overallStatus") != "kNormal"]
+    unhealthy = [n for n in nodes if not _node_is_healthy(n)]
     if unhealthy:
-        ips = ", ".join(n.get("ip", "?") for n in unhealthy)
-        return STATUS_FAIL, f"{len(unhealthy)}/{len(nodes)} nodes unhealthy: {ips}"
+        details = ", ".join(
+            f"{n.get('ip','?')} ({n.get('removalState','unknown')})"
+            for n in unhealthy
+        )
+        return STATUS_FAIL, f"{len(unhealthy)}/{len(nodes)} nodes not healthy: {details}"
     return STATUS_PASS, f"All {len(nodes)} nodes healthy"
 
 
 def check_disks(api_key: str, cluster_id: int) -> tuple:
-    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes",
-                 params={"fetchStats": "true"})
+    """
+    v1 public API doesn't expose per-disk health in node responses.
+    Uses node-level disk counts and marks nodes with isMarkedForRemoval as a proxy.
+    """
+    data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/nodes")
     nodes = data.get("_list", data.get("nodes", []))
-    disks = []
+    if not nodes:
+        return STATUS_WARN, "Could not retrieve node list for disk check"
+
+    total_disks  = sum(n.get("diskCount", 0) for n in nodes)
+    problem_nodes = [n for n in nodes if not _node_is_healthy(n)]
+
+    if problem_nodes:
+        ips = ", ".join(n.get("ip", "?") for n in problem_nodes)
+        return STATUS_WARN, (f"{total_disks} total disks across {len(nodes)} nodes — "
+                             f"{len(problem_nodes)} node(s) flagged: {ips}")
+
+    # Break down by storage tier for informational detail
+    tier_counts: dict = {}
     for n in nodes:
-        disks.extend(n.get("disksInformation", []))
-    if not disks:
-        return STATUS_WARN, "Could not retrieve disk list"
-    faulted = [d for d in disks
-               if d.get("diskStatus") not in ("kNormal", "kMarkedForRemoval")]
-    marked  = [d for d in disks if d.get("diskStatus") == "kMarkedForRemoval"]
-    parts   = []
-    status  = STATUS_PASS
-    if faulted:
-        parts.append(f"{len(faulted)} faulted")
-        status = STATUS_FAIL
-    if marked:
-        parts.append(f"{len(marked)} marked for removal")
-        if status != STATUS_FAIL:
-            status = STATUS_WARN
-    if parts:
-        return status, f"{len(disks)} disks — " + ", ".join(parts)
-    return STATUS_PASS, f"All {len(disks)} disks healthy"
+        for t in n.get("diskCountByTier", []):
+            tier = t.get("storageTier", "Unknown")
+            tier_counts[tier] = tier_counts.get(tier, 0) + t.get("diskCount", 0)
+    tier_str = ", ".join(f"{v} {k}" for k, v in sorted(tier_counts.items()))
+    return STATUS_PASS, f"{total_disks} disks healthy ({tier_str})"
 
 
 def check_active_runs(api_key: str, cluster_id: int) -> tuple:
@@ -230,11 +239,12 @@ def check_version(cluster_version: str, min_version: str) -> tuple:
 
 def check_capacity(api_key: str, cluster_id: int) -> tuple:
     data  = hget(api_key, cluster_id, "/irisservices/api/v1/public/cluster")
-    stats = data.get("stats", data.get("clusterInfo", {}).get("stats", {}))
-    total = stats.get("usableSizeBytes", 0)
-    used  = stats.get("usedSizeBytes", 0)
+    stats = data.get("stats") or data.get("clusterInfo", {}).get("stats") or {}
+    # v1 field names vary slightly between versions — try both
+    total = stats.get("usableSizeBytes") or stats.get("totalUsableStorageBytes") or 0
+    used  = stats.get("usedSizeBytes") or stats.get("localUsageBytes") or 0
     if not total:
-        return STATUS_WARN, "Capacity data not available"
+        return STATUS_WARN, "Capacity data not available (stats not returned by cluster)"
     free_pct = (total - used) / total * 100
     msg = f"{free_pct:.1f}% free ({round((total - used)/1e12, 2)} TB of {round(total/1e12, 2)} TB)"
     if free_pct < 10:
