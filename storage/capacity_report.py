@@ -262,8 +262,9 @@ def main():
         nodes  = detail.get("nodeCount", 0)
 
         if args.debug:
-            print(f"    usagePerfStats: {usage}")
-            print(f"    dataUsageStats: {data}")
+            import json
+            print(f"    RAW detail keys: {list(detail.keys())}")
+            print(f"    RAW stats value: {json.dumps(detail.get('stats'), indent=6)}")
 
         usable   = usage.get("physicalCapacityBytes", 0)
         used     = usage.get("totalPhysicalUsageBytes", 0)
