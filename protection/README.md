@@ -2,6 +2,8 @@
 
 Scripts for managing protection groups (jobs), policies, and schedules. Use cases include bulk operations, pause/resume during maintenance windows, and on-demand backup triggers.
 
+**API:** Uses Cohesity v2 REST API endpoints via Helios.
+
 ## Scripts
 
 | Script | Description | Auth |

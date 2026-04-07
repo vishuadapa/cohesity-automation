@@ -2,6 +2,8 @@
 
 Scripts that pull data from Cohesity clusters and generate CSV reports for customer health checks, capacity planning, and executive summaries.
 
+**API:** Uses Cohesity v2 REST API endpoints. Supports direct cluster and Helios authentication.
+
 ## Scripts
 
 | Script | README | Description | Auth |

@@ -2,6 +2,8 @@
 
 Scripts for automating restore operations — VMs, files, databases, NAS. Useful for DR testing automation and customer recovery runbooks.
 
+**API:** Uses Cohesity v2 REST API endpoints via Helios.
+
 ## Scripts
 
 | Script | Description | Auth |

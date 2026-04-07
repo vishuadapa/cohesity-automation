@@ -2,6 +2,8 @@
 
 Scripts for querying, summarizing, and routing Cohesity alerts. Useful for proactive customer health monitoring and integrating with ticketing systems.
 
+**API:** Uses Cohesity v1 public alerts endpoint (`GET /irisservices/api/v1/public/alerts`) for reliable alert data retrieval via Helios.
+
 ## Scripts
 
 | Script | Description | Auth |

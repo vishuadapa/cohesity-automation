@@ -5,6 +5,36 @@ Format: `[YYYY-MM-DD] — description`
 
 ---
 
+## [2026-04-07] — Infrastructure scripts: v1 API + fix node health, disk, and capacity checks
+
+### Changed
+- `infrastructure/cluster_info_report.py` — Switched from v2 to v1 API endpoints. Fixed: `Healthy Nodes`, `NTP Servers`, and `Helios Connected` columns now populate correctly from v1 response structure.
+- `infrastructure/node_status.py` — Complete rewrite to use v1 API field names. Now correctly parses node IP, disk status, fault counts, and capacity from v1 response schema.
+- `infrastructure/upgrade_readiness.py` — Fixed node health check, disk health check, and disk capacity margin detection. Added `--debug` flag to inspect raw cluster API response for troubleshooting. Fixed active runs detection and disk capacity fallback logic.
+
+### Note
+All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 is more reliable for cluster infrastructure data via Helios.
+
+---
+
+## [2026-04-07] — Alerts scripts: switch to v1 public alerts endpoint
+
+### Changed
+- `alerts/alert_summary_report.py` — Switched from v2 to v1 public alerts API endpoint (`GET /irisservices/api/v1/public/alerts`). More reliable alert data retrieval via Helios.
+- `alerts/resolve_alerts.py` — Switched from v2 to v1 public alerts API endpoint.
+- `alerts/alert_to_csv.py` — Switched from v2 to v1 public alerts API endpoint.
+
+---
+
+## [2026-04-07] — Storage scripts: switch to v1 API endpoints
+
+### Changed
+- `storage/capacity_report.py` — Switched from v2 to v1 API endpoints for cluster capacity and stat reporting.
+- `storage/list_views.py` — Switched from v2 to v1 API endpoints for view enumeration.
+- `storage/storage_domain_report.py` — Switched from v2 to v1 API endpoints for domain utilization.
+
+---
+
 ## [2026-04-06] — Initial scripts for all planned folders (alerts, infrastructure, policies, protection, recovery, storage, utils)
 
 ### Added

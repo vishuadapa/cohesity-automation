@@ -2,6 +2,8 @@
 
 Scripts for auditing, creating, and modifying protection policies. Useful for enforcing RPO/RTO standards across a customer environment.
 
+**API:** Uses Cohesity v2 REST API endpoints via Helios.
+
 ## Scripts
 
 | Script | Description | Auth |

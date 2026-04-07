@@ -2,8 +2,17 @@
 
 Personal collection of Cohesity REST API automation scripts for reporting, operations, and customer use cases. Built and maintained by Vishu Adapa.
 
-Targets Cohesity 7.1 and 7.3. Uses the [Cohesity v2 REST API](https://developer.cohesity.com/).
+Targets Cohesity 7.1 and 7.3. Uses the [Cohesity REST API](https://developer.cohesity.com/) (v1 and v2 endpoints as appropriate).
 Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts).
+
+---
+
+## API Versions
+
+- **v1 API** — Used for infrastructure, alerts, storage, and other operations for better Helios reliability
+- **v2 API** — Used for protection group reporting, policies, protection operations, and recovery
+
+Individual `README.md` files in each folder document which API version is used by those scripts.
 
 ---
 

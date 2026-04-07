@@ -2,6 +2,8 @@
 
 Scripts for capacity management, storage domains, views (SMB/NFS shares), and data reduction reporting. Useful for capacity planning conversations and storage tier optimization.
 
+**API:** Uses Cohesity v1 REST API endpoints for capacity and storage operations.
+
 ## Scripts
 
 | Script | Description | Auth |
