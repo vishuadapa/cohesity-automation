@@ -13,7 +13,7 @@ pip install openpyxl keyring
 
 Default date range is the last 7 days.
 
-**Version:** 4.3
+**Version:** 4.9
 
 ---
 
@@ -43,6 +43,9 @@ python3 fortknox_vault_report.py --days 30 --mode trend
 python3 fortknox_vault_report.py --start 2026-03-01 --end 2026-04-01 --mode trend
 python3 fortknox_vault_report.py --cluster <cluster-name>
 
+# Exact UI match — paste full URL from Chrome DevTools:
+python3 fortknox_vault_report.py --url "https://helios.cohesity.com/irisservices/api/v1/public/reports/dataTransferToVaults?endTimeMsecs=...&startTimeMsecs=...&vaultIds=..."
+
 # One-time override with a different key (not saved):
 python3 fortknox_vault_report.py --apikey <key>
 
@@ -63,6 +66,7 @@ Output file is created automatically as `fortknox_vault_report_YYYYMMDD_HHMMSS.x
 | `--cluster` | Filter to a specific cluster (partial name match) |
 | `--vault` | Filter to a specific vault (partial name match) |
 | `--output` | Output Excel filename (default: `<script_name>_YYYYMMDD_HHMMSS.xlsx` in current directory) |
+| `--url URL` | Paste the full Helios report URL from Chrome DevTools — extracts `startTimeMsecs`, `endTimeMsecs`, and `vaultIds` automatically for an exact UI match |
 | `--days N` | Last N days (default: 7) |
 | `--start YYYY-MM-DD` | Start date (inclusive) |
 | `--end YYYY-MM-DD` | End date (inclusive, defaults to today) |
@@ -112,3 +116,16 @@ Fields available in the `dataTransferToVaults` response that are not included by
 | Number of protection jobs | `dataTransferSummary[].numProtectionJobs` | Count of protection groups writing to this vault |
 | Logical transferred time-series | `dataTransferSummary[].logicalDataTransferredBytesDuringTimeRange[]` | Array of per-period logical transfer values |
 | Physical transferred time-series | `dataTransferSummary[].physicalDataTransferredBytesDuringTimeRange[]` | Array of per-period physical transfer values |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 4.9 | 2026-04-07 | Added `--url` flag — paste full Helios URL from Chrome DevTools for exact UI match (startTimeMsecs, endTimeMsecs, vaultIds extracted automatically) |
+| 4.8 | 2026-04-07 | Added Storage Consumed (TiB) column (÷ 1,099,511,627,776); fixed `--days` and default range to snap to calendar day start; fixed `end_of_day_msecs` to include full last second |
+| 4.7 | 2026-04-06 | Fixed x-axis dates not showing on trend charts |
+| 4.6 | 2026-04-05 | Fixed axis labels not rendering; x-axis tick density auto-reduces |
+| 4.5 | 2026-04-05 | One chart sheet per cluster |
+| 4.3 | 2026-04-04 | Secure credential storage via OS keychain |

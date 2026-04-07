@@ -18,6 +18,10 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.9 (2026-04-07) — Added --url flag: paste the full Helios report URL copied
+                     from Chrome DevTools and the script extracts startTimeMsecs,
+                     endTimeMsecs, and vaultIds automatically. Guarantees an exact
+                     match with the UI — eliminates all timestamp and vault ID drift.
   4.8 (2026-04-07) — Added Storage Consumed (TiB) column (÷ 1,099,511,627,776)
                      alongside the existing TB column so values match the Helios
                      UI directly. Fixed --days / default date range to snap to
@@ -114,10 +118,11 @@ Usage:
   python3 fortknox_vault_report.py                         # prompts for key on first run
   python3 fortknox_vault_report.py --days 30               # uses stored key
   python3 fortknox_vault_report.py --mode trend --days 30  # trend mode
+  python3 fortknox_vault_report.py --url "<paste URL from Chrome DevTools>"  # exact UI match
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.8"
+__version__ = "4.9"
 
 import argparse
 import getpass
@@ -125,6 +130,7 @@ import os
 import sys
 import urllib3
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse, parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
@@ -381,8 +387,30 @@ def end_of_day_msecs(date_str: str, tz) -> int:
     return int(dt.timestamp() * 1000)
 
 
+def parse_helios_url(url: str) -> dict:
+    """
+    Parse a Helios dataTransferToVaults URL copied from Chrome DevTools.
+    Returns {"start_msecs": int, "end_msecs": int, "vault_ids": [int, ...]}
+    Exits with an error if required parameters are missing.
+    """
+    qs = parse_qs(urlparse(url).query)
+    missing = [p for p in ("startTimeMsecs", "endTimeMsecs") if p not in qs]
+    if missing:
+        print(f"ERROR: --url is missing parameters: {', '.join(missing)}")
+        sys.exit(1)
+    vault_ids = [int(v) for v in qs.get("vaultIds", [])]
+    return {
+        "start_msecs": int(qs["startTimeMsecs"][0]),
+        "end_msecs":   int(qs["endTimeMsecs"][0]),
+        "vault_ids":   vault_ids,
+    }
+
+
 def resolve_date_range(args, tz) -> tuple:
     """Return (start_msecs, end_msecs). Default: last 7 days."""
+    if hasattr(args, "url") and args.url:
+        parsed = parse_helios_url(args.url)
+        return parsed["start_msecs"], parsed["end_msecs"]
     if args.start_msecs or args.end_msecs:
         start = int(args.start_msecs) if args.start_msecs else now_msecs() - 7 * 86400 * 1000
         end   = int(args.end_msecs)   if args.end_msecs   else now_msecs()
@@ -735,6 +763,10 @@ Examples:
                         help="Print raw API response samples")
 
     dg = parser.add_argument_group("Date range (default: last 7 days)")
+    dg.add_argument("--url",         metavar="URL",
+                    help="Paste the full Helios report URL from Chrome DevTools — "
+                         "startTimeMsecs, endTimeMsecs, and vaultIds are extracted "
+                         "automatically, guaranteeing an exact match with the UI")
     dg.add_argument("--days",        type=int, metavar="N",        help="Last N days")
     dg.add_argument("--start",       metavar="YYYY-MM-DD",         help="Start date (inclusive)")
     dg.add_argument("--end",         metavar="YYYY-MM-DD",         help="End date (inclusive, defaults to today)")
@@ -795,12 +827,23 @@ def main():
     target_clusters = [c for c in clusters
                        if not args.cluster or args.cluster.lower() in c["name"].lower()]
 
+    # Vault IDs: use those from --url if provided, otherwise fetch per cluster
+    url_vault_ids = []
+    if args.url:
+        url_vault_ids = parse_helios_url(args.url)["vault_ids"]
+        if url_vault_ids:
+            print(f"[*] Using {len(url_vault_ids)} vault ID(s) from --url: {url_vault_ids}")
+
     # Fetch vault IDs once per cluster (reused across all days in trend mode)
     cluster_vault_ids = {}
     for c in target_clusters:
         cname = c["name"]
-        print(f"  [{cname}] fetching vault IDs...")
-        vault_ids = get_fortknox_vault_ids(api_key, c["clusterId"])
+        if url_vault_ids:
+            vault_ids = url_vault_ids
+            print(f"  [{cname}] using vault IDs from --url")
+        else:
+            print(f"  [{cname}] fetching vault IDs...")
+            vault_ids = get_fortknox_vault_ids(api_key, c["clusterId"])
         if not vault_ids:
             print(f"  [{cname}] no FortKnox vaults — skipping")
         else:
