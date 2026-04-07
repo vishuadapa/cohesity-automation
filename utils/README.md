@@ -4,10 +4,10 @@ Shared helper modules imported by scripts in other folders. Keeps auth, formatti
 
 ## Modules
 
-| Module | Description |
-|--------|-------------|
-| `cohesity_auth.py` | Unified auth handler for both direct cluster and Helios API key modes |
-| `formatters.py` | Shared helpers: `usecs_to_datetime`, `bytes_to_gb`, `bytes_to_tb`, `format_duration`, `style_worksheet`, `auto_fit_columns` |
+| Module | README | Description |
+|--------|--------|-------------|
+| `cohesity_auth.py` | [docs](cohesity_auth.md) | Unified auth handler for both direct cluster and Helios API key modes |
+| `formatters.py` | [docs](formatters.md) | Shared helpers: `usecs_to_datetime`, `bytes_to_gb`, `bytes_to_tb`, `format_duration`, `style_worksheet`, `auto_fit_columns` |
 
 ## Usage
 
