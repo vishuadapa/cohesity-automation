@@ -14,6 +14,10 @@ API endpoints used:
   Policies:      GET  https://helios.cohesity.com/v2/data-protect/policies
 
 Version history:
+  1.4 (2026-04-07) — Added Protection Group Names column (col M): semicolon-
+                     separated list of all group names using each policy,
+                     sourced from the same protection-groups API call.
+                     Also fixed stray except clause left over from v1.1.
   1.3 (2026-04-07) — Groups Using Policy (col L) now sourced from
                      GET /v2/data-protect/protection-groups per cluster:
                      counts how many groups reference each policy ID.
@@ -48,7 +52,7 @@ Usage:
   python3 list_policies.py --clear-credentials
 """
 
-__version__ = "1.3"
+__version__ = "1.4"
 
 import argparse
 import getpass
@@ -164,9 +168,9 @@ def get_policies(api_key: str, cluster_id: int) -> list:
         return []
 
 
-def get_policy_group_counts(api_key: str, cluster_id: int) -> dict:
-    """Return {policy_id: group_count} by fetching all protection groups
-    and counting how many reference each policy ID."""
+def get_policy_group_info(api_key: str, cluster_id: int) -> dict:
+    """Return {policy_id: {"count": int, "names": [str, ...]}} by fetching
+    all protection groups and grouping them by policyId."""
     url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
@@ -176,14 +180,17 @@ def get_policy_group_counts(api_key: str, cluster_id: int) -> dict:
         groups = r.json().get("protectionGroups", [])
     except Exception:
         return {}
-    counts = {}
+    info = {}
     for g in groups:
-        pid = g.get("policyId")
+        pid  = g.get("policyId")
+        name = g.get("name", "")
         if pid:
-            counts[pid] = counts.get(pid, 0) + 1
-    return counts
-    except Exception:
-        return []
+            if pid not in info:
+                info[pid] = {"count": 0, "names": []}
+            info[pid]["count"] += 1
+            if name:
+                info[pid]["names"].append(name)
+    return info
 
 
 def schedule_str(sched: dict) -> str:
@@ -307,7 +314,7 @@ def write_excel(rows: list, output_path: str):
         "Full Backup Schedule", "Incremental Schedule",
         "Local Retention", "Log Retention",
         "Replication Targets", "Archival Targets",
-        "Is Active", "Groups Using Policy",
+        "Is Active", "Groups Using Policy", "Protection Group Names",
     ]
     ws.append(headers)
     for row in rows:
@@ -356,11 +363,11 @@ def main():
         cname = c["name"]
         cid   = c["clusterId"]
         print(f"\n[*] Fetching policies: {cname}")
-        policies    = get_policies(api_key, cid)
-        group_counts = get_policy_group_counts(api_key, cid)
+        policies   = get_policies(api_key, cid)
+        group_info = get_policy_group_info(api_key, cid)
         if args.debug:
             print(f"    sample: {policies[:1]}")
-            print(f"    group_counts sample: {dict(list(group_counts.items())[:3])}")
+            print(f"    group_info sample: {dict(list(group_info.items())[:3])}")
 
         for p in policies:
             backup = p.get("backupPolicy") or {}
@@ -388,8 +395,10 @@ def main():
                 "Archival Targets":    archival_summary(
                     remote.get("archivalTargets") or []),
                 "Is Active":           "Yes" if not p.get("isDeleted") else "No",
-                # Count derived from protection-groups endpoint (policyId match)
-                "Groups Using Policy": group_counts.get(p.get("id"), ""),
+                # Count and names derived from protection-groups endpoint
+                "Groups Using Policy": group_info.get(p.get("id"), {}).get("count", ""),
+                "Protection Group Names": "; ".join(
+                    group_info.get(p.get("id"), {}).get("names", [])),
             })
 
         print(f"    {len(policies)} policy/ies")

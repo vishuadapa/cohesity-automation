@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring openpyxl
 ```
 
-**Version:** 1.3
+**Version:** 1.4
 
 ---
 
@@ -17,6 +17,7 @@ pip install requests keyring openpyxl
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4 | 2026-04-07 | Added Protection Group Names column (col M) — semicolon-separated list of all group names using each policy |
 | 1.3 | 2026-04-07 | Groups Using Policy now counted from `GET /v2/data-protect/protection-groups` (groups per `policyId`) — v2 policies API does not return `numProtectionGroups` |
 | 1.2 | 2026-04-07 | Fixed empty columns D, E, H, I, J, L: wrong field names for the v2 API — `policyCategory` → `type`, `fullBackups` → `full`, nested schedule frequency (`daySchedule`/`weekSchedule`/`hourSchedule`), improved replication and archival target name lookup with fallbacks |
 | 1.1 | 2026-04-07 | Fixed `AttributeError` crash when API returns explicit `null` for policy sub-fields |
