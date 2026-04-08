@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.15 (2026-04-08) — feat: include kWarning runs in Success % calculation
+                     throughout — Trends "Success % (incl. Warnings)" col H,
+                     _score_protection() quick mode, _success_stats() quick
+                     mode. Warning runs complete successfully (data protected)
+                     but may have minor issues (skipped objects). They still
+                     appear in the Warning column for visibility. Word doc
+                     Methodology appendix now documents this behaviour.
   1.14 (2026-04-08) — fix: Trends tab inaccurate — switched primary data source
                      from per-group v2 runs to v1 /public/protectionRuns which
                      is the same source powering the Helios reporting page.
@@ -148,7 +155,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.14"
+__version__ = "1.15"
 
 import argparse
 import datetime
@@ -465,7 +472,7 @@ def _score_protection(cd, quick):
         success = sum(
             1 for g in groups
             if (g.get("lastRun") or {}).get("localBackupInfo", {}).get("status", "")
-               in ("kSuccess", "Succeeded")
+               in ("kSuccess", "Succeeded", "kWarning")
         )
     else:
         all_runs = [r for runs in cd["group_runs"].values() for r in runs]
@@ -883,7 +890,7 @@ def _success_stats(cd):
     total = len(groups)
     succ  = sum(1 for g in groups
                 if (g.get("lastRun") or {}).get("localBackupInfo", {})
-                   .get("status", "") in ("kSuccess", "Succeeded"))
+                   .get("status", "") in ("kSuccess", "Succeeded", "kWarning"))
     viols = sum(1 for g in groups
                 if (g.get("lastRun") or {}).get("isSlaViolated", False))
     return (
@@ -1829,7 +1836,7 @@ def _sheet_trends(wb, all_data):
         return
 
     cols = ["Cluster", "Date", "Total Runs", "Successful", "Failed",
-            "Warning", "Canceled", "Success %", "SLA Violations", "Logical (GB)"]
+            "Warning", "Canceled", "Success % (incl. Warnings)", "SLA Violations", "Logical (GB)"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -1890,7 +1897,7 @@ def _sheet_trends(wb, all_data):
         trend_start = ws.max_row + 1
         for day in sorted(daily):
             d   = daily[day]
-            pct = round(d["succ"] / d["total"] * 100, 1) if d["total"] else 0
+            pct = round((d["succ"] + d["warn"]) / d["total"] * 100, 1) if d["total"] else 0
             rn  = ws.max_row + 1
             row = [cd["name"], day, d["total"], d["succ"], d["fail"],
                    d["warn"], d["cancel"], pct, d["viols"],
@@ -2281,7 +2288,11 @@ def write_word(all_data, args):
     _h2("Thresholds")
     notes = [
         f"Capacity: Warning ≥{CAPACITY_WARN_PCT}%, Critical ≥{CAPACITY_CRIT_PCT}%",
-        f"Backup success rate: Warning <{SUCCESS_WARN_PCT}%, Critical <{SUCCESS_CRIT_PCT}%",
+        f"Backup success rate: Warning <{SUCCESS_WARN_PCT}%, Critical <{SUCCESS_CRIT_PCT}% "
+        f"— runs with status 'Warning' (kWarning) are counted as successful in the "
+        f"Success % calculation. They complete with data but may have minor issues "
+        f"(e.g. some objects skipped) and are shown separately in the Warning column "
+        f"for visibility.",
         f"RPO: Warning >{RPO_WARN_HOURS}h, Critical >{RPO_CRIT_HOURS}h since last success",
         (f"Security: 20 pts each for encryption, FIPS, vault, "
          f"replication, FortKnox/immutability"),
