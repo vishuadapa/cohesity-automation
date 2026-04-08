@@ -56,13 +56,18 @@ Requirements
 
 Version history
 ───────────────
+  1.18 (2026-04-08) — fix: Trends tab still truncated after v1.17 — previous
+                     pagination used `len(page) < PAGE_SIZE` to detect last
+                     page, but the actual server cap varies per cluster version
+                     and is often lower than 1000. That check fired immediately
+                     on page 1 for busy clusters, stopping pagination early.
+                     Fix: remove the page-size check entirely; page purely by
+                     timestamp cursor until the response is empty, oldest run
+                     predates the window start, or no progress is made. Safety
+                     limit raised to 200 pages.
   1.17 (2026-04-08) — fix: Trends tab shows fewer than 30 days on clusters with
-                     many protection groups. Root cause: v1 protectionRuns API
-                     caps at 1000 runs per call (newest-first); clusters with
-                     50+ groups hit the cap in ~20 days. Fixed by paginating:
-                     advance endTimeUsecs to just before the oldest run on each
-                     page and repeat until the full window is covered. Safety
-                     limit of 50 pages (50 000 runs). --debug shows page count.
+                     many protection groups — v1 protectionRuns caps per page;
+                     added pagination by advancing endTimeUsecs cursor.
   1.16 (2026-04-08) — feat: Trends chart — visible X/Y axes with tick marks,
                      Y axis fixed 0-100 with "0.0" format, circle data-point
                      markers (size 5, Cohesity green), 2pt line weight, StrRef
@@ -168,7 +173,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.17"
+__version__ = "1.18"
 
 import argparse
 import datetime
@@ -363,20 +368,23 @@ def _group_runs(session, h, group_id, start_usecs, end_usecs, debug):
 def _v1_protection_runs(session, h, start_usecs, end_usecs, debug):
     """Paginated fetch of ALL protection runs in the time window via v1 API.
 
-    The API returns runs newest-first and caps at 1000 per page. Clusters with
-    many groups can easily exceed 1000 runs in 30 days, so a single call would
-    only return the most recent N days. We page by advancing endTimeUsecs to
-    just before the oldest run on each page until the full window is covered.
+    The API returns runs newest-first. The actual per-page cap varies by
+    cluster version; we do NOT rely on comparing len(page) to a constant
+    because that assumption breaks when the server cap is lower than expected.
+    Instead we page purely by timestamp cursor until:
+      - the response is empty, or
+      - the oldest run on the page predates our window start, or
+      - no timestamp progress is made (safety against infinite loop).
+    Safety limit: 200 pages.
     """
     all_runs = []
     page_end  = end_usecs
-    PAGE_SIZE = 1000
 
-    for page_num in range(50):   # safety cap: 50 pages × 1000 = 50 000 runs max
+    for page_num in range(200):
         page = _get(session, h, "/irisservices/api/v1/public/protectionRuns",
                     params={"startTimeUsecs": start_usecs,
                             "endTimeUsecs":   page_end,
-                            "numRuns":        PAGE_SIZE},
+                            "numRuns":        1000},
                     debug=debug) or []
         if not page:
             break
@@ -384,17 +392,19 @@ def _v1_protection_runs(session, h, start_usecs, end_usecs, debug):
         if debug:
             print(f"    DEBUG v1_runs page {page_num + 1}: {len(page)} runs "
                   f"(total so far: {len(all_runs)})")
-        if len(page) < PAGE_SIZE:
-            break   # last page — no more data
-        # Find the start time of the oldest run on this page to use as next cursor
-        oldest_t = page_end
+        # Find the oldest startTimeUsecs on this page to use as the next cursor
+        oldest_t = None
         for r in page:
             t = ((r.get("backupRun") or {}).get("stats") or {}).get("startTimeUsecs") or 0
-            if t and t < oldest_t:
+            if t and (oldest_t is None or t < oldest_t):
                 oldest_t = t
+        if not oldest_t:
+            break   # no timestamps found — can't advance cursor
         if oldest_t <= start_usecs:
-            break   # we have covered the full requested window
-        page_end = oldest_t - 1  # next page ends just before this oldest run
+            break   # full window covered
+        if oldest_t >= page_end:
+            break   # no progress — prevent infinite loop
+        page_end = oldest_t - 1  # advance cursor to just before oldest run seen
 
     return all_runs
 
