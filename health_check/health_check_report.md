@@ -78,11 +78,31 @@ python health_check_report.py --apikey abc123 --days 90 --debug
 
 ## Requirements
 
+### Install all dependencies
+
 ```bash
-pip install requests openpyxl python-docx
+# Recommended — works on macOS/Linux when pip is not in PATH
+python3 -m pip install requests openpyxl python-docx
+
+# Alternative if pip3 is available
+pip3 install requests openpyxl python-docx
 ```
 
-`python-docx` is required only for Word output.  If it is not installed, Excel is still produced; Word is skipped with a warning.
+If you get a "not writeable" warning about site-packages, add `--user`:
+
+```bash
+python3 -m pip install --user requests openpyxl python-docx
+```
+
+### Package notes
+
+| Package | Required for | Install if missing |
+|---------|-------------|-------------------|
+| `requests` | All API calls | `python3 -m pip install requests` |
+| `openpyxl` | Excel output | `python3 -m pip install openpyxl` |
+| `python-docx` | Word output | `python3 -m pip install python-docx` |
+
+`python-docx` is required only for Word output.  If it is not installed, Excel is still produced and Word is skipped with a warning.  `requests` and `openpyxl` are hard requirements — the script will exit with an error if either is missing.
 
 ---
 
