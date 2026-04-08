@@ -55,6 +55,11 @@ Requirements
 
 Version history
 ───────────────
+  1.3 (2026-04-08) — fix: infrastructure disk count now reads diskCount integer
+                     per node (v1 /public/nodes field) instead of looking for
+                     non-existent list fields; NTP servers shows "Not configured"
+                     instead of blank when the cluster has no NTP entries; added
+                     ntpServersList and ntpServerIps fallback paths.
   1.2 (2026-04-08) — fix: correct field names throughout — firstTimestampUsecs,
                      clusterSoftwareVersion, localSnapshotStats, successfulObjectsCount,
                      policyId→name lookup, v2 schedule/target/retention paths,
@@ -64,7 +69,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.2"
+__version__ = "1.3"
 
 import argparse
 import datetime
@@ -783,23 +788,23 @@ def _sheet_infrastructure(wb, all_data):
             if ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
                 or n.get("removalState") in (None, "kDontRemove"))
         )
-        # Disk count — v1 API may use diskVec, disks, or numDisks depending on version
-        def _node_disk_count(n):
-            for field in ("diskVec", "disks", "diskInfo"):
-                v = n.get(field)
-                if isinstance(v, list): return len(v)
-            return n.get("numDisks") or 0
-        disks = sum(_node_disk_count(n) for n in nodes)
+        # Disk count — v1 /public/nodes returns diskCount as an integer per node
+        disks = sum(n.get("diskCount") or 0 for n in nodes)
 
         enc  = bool(info.get("encryptionEnabled") or
                     (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         dns  = ", ".join(info.get("dnsServerIps") or [])
-        # NTP: v1 API returns ntpSettings.ntpServers or ntpServers flat list
-        ntp_list = ((info.get("ntpSettings") or {}).get("ntpServers")
-                    or info.get("ntpServers")
-                    or [])
-        ntp = ", ".join(ntp_list) if isinstance(ntp_list, list) else str(ntp_list)
+        # NTP: v1 API returns ntpSettings.ntpServers or a flat ntpServers list
+        ntp_raw = ((info.get("ntpSettings") or {}).get("ntpServers")
+                   or info.get("ntpSettings", {}).get("ntpServersList")
+                   or info.get("ntpServers")
+                   or info.get("ntpServerIps")
+                   or [])
+        if isinstance(ntp_raw, list):
+            ntp = ", ".join(str(s) for s in ntp_raw) if ntp_raw else "Not configured"
+        else:
+            ntp = str(ntp_raw) if ntp_raw else "Not configured"
         domain = (info.get("domainNames") or [""])[0]
 
         row = [cd["name"], info.get("clusterSoftwareVersion", ""),
