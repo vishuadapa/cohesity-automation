@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.17 (2026-04-08) — fix: Trends tab shows fewer than 30 days on clusters with
+                     many protection groups. Root cause: v1 protectionRuns API
+                     caps at 1000 runs per call (newest-first); clusters with
+                     50+ groups hit the cap in ~20 days. Fixed by paginating:
+                     advance endTimeUsecs to just before the oldest run on each
+                     page and repeat until the full window is covered. Safety
+                     limit of 50 pages (50 000 runs). --debug shows page count.
   1.16 (2026-04-08) — feat: Trends chart — visible X/Y axes with tick marks,
                      Y axis fixed 0-100 with "0.0" format, circle data-point
                      markers (size 5, Cohesity green), 2pt line weight, StrRef
@@ -161,7 +168,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.16"
+__version__ = "1.17"
 
 import argparse
 import datetime
@@ -354,15 +361,42 @@ def _group_runs(session, h, group_id, start_usecs, end_usecs, debug):
     return (d or {}).get("runs") or []
 
 def _v1_protection_runs(session, h, start_usecs, end_usecs, debug):
-    """Single call that returns ALL protection runs in the time window.
-    Used by the Trends sheet — mirrors the data source behind the Helios
-    'protection-group-summary' reporting page."""
-    d = _get(session, h, "/irisservices/api/v1/public/protectionRuns",
-             params={"startTimeUsecs": start_usecs,
-                     "endTimeUsecs":   end_usecs,
-                     "numRuns":        10000},
-             debug=debug)
-    return d or []
+    """Paginated fetch of ALL protection runs in the time window via v1 API.
+
+    The API returns runs newest-first and caps at 1000 per page. Clusters with
+    many groups can easily exceed 1000 runs in 30 days, so a single call would
+    only return the most recent N days. We page by advancing endTimeUsecs to
+    just before the oldest run on each page until the full window is covered.
+    """
+    all_runs = []
+    page_end  = end_usecs
+    PAGE_SIZE = 1000
+
+    for page_num in range(50):   # safety cap: 50 pages × 1000 = 50 000 runs max
+        page = _get(session, h, "/irisservices/api/v1/public/protectionRuns",
+                    params={"startTimeUsecs": start_usecs,
+                            "endTimeUsecs":   page_end,
+                            "numRuns":        PAGE_SIZE},
+                    debug=debug) or []
+        if not page:
+            break
+        all_runs.extend(page)
+        if debug:
+            print(f"    DEBUG v1_runs page {page_num + 1}: {len(page)} runs "
+                  f"(total so far: {len(all_runs)})")
+        if len(page) < PAGE_SIZE:
+            break   # last page — no more data
+        # Find the start time of the oldest run on this page to use as next cursor
+        oldest_t = page_end
+        for r in page:
+            t = ((r.get("backupRun") or {}).get("stats") or {}).get("startTimeUsecs") or 0
+            if t and t < oldest_t:
+                oldest_t = t
+        if oldest_t <= start_usecs:
+            break   # we have covered the full requested window
+        page_end = oldest_t - 1  # next page ends just before this oldest run
+
+    return all_runs
 
 def _policies(session, h, debug):
     d = _get(session, h, "/v2/data-protect/policies",

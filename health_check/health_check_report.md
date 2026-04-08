@@ -180,6 +180,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.17 | 2026-04-08 | fix: Trends tab showed fewer than 30 days on busy clusters — v1 `protectionRuns` caps at 1000 runs/page (newest-first); clusters with 50+ groups hit the cap before reaching 30 days. Fixed by paginating: advance `endTimeUsecs` to just before the oldest run on each page, repeat until full window covered, safety limit 50 pages |
 | 1.16 | 2026-04-08 | feat: Trends chart — visible X/Y axes with tick marks and titles, Y axis fixed 0–100 with `0.0` format, circle data-point markers (size 5, Cohesity green), 2 pt line, StrRef category fix for date labels in Excel, auto tick-density reduction for >14d and >60d ranges |
 | 1.15 | 2026-04-08 | feat: include `kWarning` runs in Success % — Trends col H renamed "Success % (incl. Warnings)"; `_score_protection()` and `_success_stats()` quick mode now count warnings as successful; Word doc Methodology appendix documents that warnings complete successfully but appear separately for visibility |
 | 1.14 | 2026-04-08 | fix: Trends tab inaccurate — switched primary data source from per-group v2 runs to v1 `/public/protectionRuns` (same source as Helios reporting page); single call per cluster; `backupRun.slaViolated` and `backupRun.stats.totalLogicalBackupSizeBytes` are accurate; v2 per-group runs kept as fallback; works in `--quick` mode |
