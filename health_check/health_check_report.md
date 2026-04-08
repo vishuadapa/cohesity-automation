@@ -1,12 +1,12 @@
 # health_check_report.py
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (EBRs) and SE trusted-advisor engagements.  Gathers live data from Cohesity Helios and produces a **12-sheet Excel workbook** and a **Word document**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (EBRs) and SE trusted-advisor engagements.  Gathers live data from Cohesity Helios and produces a **13-sheet Excel workbook** and a **Word document**.
 
 ---
 
 ## Output
 
-### Excel Workbook (12 sheets)
+### Excel Workbook (13 sheets)
 
 | Sheet | Contents |
 |-------|----------|
@@ -14,7 +14,8 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone |
 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes |
 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
-| Policy Audit | Retention schedules, replication targets, archival targets, compliance gaps per policy |
+| Policy Audit | Retention schedules, replication targets, archival targets, compliance gaps per policy, group count |
+| Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
 | Alerts | All open alerts sorted by severity, with age, description, and entity |
 | Security | Six-control checklist per cluster: encryption, FIPS, vault, FortKnox, replication, archival |
 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
@@ -179,6 +180,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.4 | 2026-04-08 | fix: Policy Audit column N (Groups Using) computed from group policyId cross-reference — v2 API has no `numProtectionGroups`; feat: new "Policy → Groups" sheet (sheet 6) mapping every group to its governing policy |
 | 1.3 | 2026-04-08 | fix: infrastructure disk count uses `diskCount` integer per node (v1 API field); NTP servers shows "Not configured" instead of blank; added `ntpServersList`/`ntpServerIps` fallback paths |
 | 1.2 | 2026-04-08 | fix: correct API field names — firstTimestampUsecs, localSnapshotStats, successfulObjectsCount, policyId→name lookup, v2 schedule/target paths, FortKnox detection, N/A capacity fallback; feat: output filename includes customer name + UTC timestamp |
 | 1.1 | 2026-04-08 | fix: show N/A for capacity when cluster stats return null; fix: clusterSoftwareVersion field name; fix: MergedCell crash in auto_fit_columns; fix: deprecated utcfromtimestamp/utcnow |

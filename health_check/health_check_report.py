@@ -19,14 +19,15 @@ engagements.  Gathers live data from Cohesity Helios and produces:
   2  Infrastructure      — versions, nodes, disks, config
   3  Protection Health   — success rates, SLA, RPO gaps
   4  Storage & Capacity  — utilisation, data reduction, runway
-  5  Policy Audit        — retention, replication, archival
-  6  Alerts              — open critical/warning with age
-  7  Security            — encryption, FIPS, immutability, vault
-  8  Replication/Archive — targets, last transfer, FortKnox
-  9  Data Services       — NAS views, quota utilisation
-  10 Coverage Gaps       — groups with no recent successful backup
-  11 Trends (30d)        — daily success rate + storage growth charts
-  12 Recommendations     — prioritised action list
+  5  Policy Audit        — retention, replication, archival (groups count fixed)
+  6  Policy → Groups     — every group with the policy that governs it
+  7  Alerts              — open critical/warning with age
+  8  Security            — encryption, FIPS, immutability, vault
+  9  Replication/Archive — targets, last transfer, FortKnox
+  10 Data Services       — NAS views, quota utilisation
+  11 Coverage Gaps       — groups with no recent successful backup
+  12 Trends (30d)        — daily success rate + storage growth charts
+  13 Recommendations     — prioritised action list
 
   Word document
   ─────────────
@@ -55,6 +56,12 @@ Requirements
 
 Version history
 ───────────────
+  1.4 (2026-04-08) — fix: Policy Audit column N (Groups Using) now computed by
+                     counting groups whose policyId matches each policy — the v2
+                     API does not return numProtectionGroups.
+                     feat: new "Policy → Groups" sheet (sheet 6) listing every
+                     protection group with the policy that governs it, sorted by
+                     policy then group name, paused/failed rows highlighted.
   1.3 (2026-04-08) — fix: infrastructure disk count now reads diskCount integer
                      per node (v1 /public/nodes field) instead of looking for
                      non-existent list fields; NTP servers shows "Not configured"
@@ -69,7 +76,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.3"
+__version__ = "1.4"
 
 import argparse
 import datetime
@@ -1050,6 +1057,13 @@ def _sheet_policies(wb, all_data):
     _hdr(ws, 2, cols)
 
     for cd in all_data:
+        # Count protection groups per policy ID so column N is populated
+        policy_group_count: dict = {}
+        for g in cd["groups"]:
+            pid = g.get("policyId")
+            if pid:
+                policy_group_count[pid] = policy_group_count.get(pid, 0) + 1
+
         for p in cd["policies"]:
             bp  = p.get("backupPolicy") or {}
             rtp = p.get("remoteTargetPolicy") or {}
@@ -1092,7 +1106,7 @@ def _sheet_policies(wb, all_data):
                    _ret_str(local_ret), _ret_str(log_ret),
                    "Yes" if rep_tgts else "No", rep_names, _ret_str(rep_ret),
                    "Yes" if arch_tgts else "No", arch_names, _ret_str(arch_ret),
-                   p.get("numProtectionGroups", ""),
+                   policy_group_count.get(p.get("id"), 0),
                    "; ".join(gaps) if gaps else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
@@ -1102,6 +1116,55 @@ def _sheet_policies(wb, all_data):
             if gaps:
                 gc.fill = _fill(YELLOW)
                 gc.font = _font(bold=True)
+
+    auto_fit_columns(ws)
+
+
+def _sheet_policy_groups(wb, all_data):
+    """Sheet: one row per protection group showing which policy governs it."""
+    ws = wb.create_sheet("Policy → Groups")
+    ws.freeze_panes = "A3"
+    _title(ws, "Policy → Groups — Protection Groups Associated with Each Policy", "G")
+
+    cols = ["Cluster", "Policy Name", "Group Name", "Environment",
+            "Active", "Paused", "Last Run Status"]
+    _hdr(ws, 2, cols)
+
+    for cd in all_data:
+        pm = cd.get("policy_map", {})
+        # Sort by policy name then group name for easy reading
+        sorted_groups = sorted(
+            cd["groups"],
+            key=lambda g: (
+                g.get("policyName") or pm.get(g.get("policyId"), "") or "",
+                g.get("name", "")
+            )
+        )
+        for g in sorted_groups:
+            policy_name = (g.get("policyName")
+                           or pm.get(g.get("policyId"), "")
+                           or g.get("policyId", ""))
+            lb     = (g.get("lastRun") or {}).get("localBackupInfo") or {}
+            status = lb.get("status", "")
+            paused = g.get("isPaused", False)
+
+            row = [cd["name"], policy_name, g.get("name", ""),
+                   g.get("environment", ""),
+                   "Yes" if g.get("isActive", True) else "No",
+                   "Yes" if paused else "No",
+                   status]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            # Highlight paused groups
+            if paused:
+                ws.cell(row=rn, column=6).fill = _fill(YELLOW)
+                ws.cell(row=rn, column=6).font = _font(bold=True)
+            # Highlight failed status
+            if status in ("kFailure", "Failed"):
+                ws.cell(row=rn, column=7).fill = _fill(RED)
+                ws.cell(row=rn, column=7).font = _font(bold=True, color=WHITE)
 
     auto_fit_columns(ws)
 
@@ -1573,6 +1636,7 @@ def write_excel(all_data, args):
     _sheet_protection(wb, all_data)
     _sheet_storage(wb, all_data)
     _sheet_policies(wb, all_data)
+    _sheet_policy_groups(wb, all_data)
     _sheet_alerts(wb, all_data)
     _sheet_security(wb, all_data)
     _sheet_replication(wb, all_data)
