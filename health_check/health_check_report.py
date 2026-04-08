@@ -2429,7 +2429,7 @@ def main():
     # Build output filename: include customer name (if given) + local timestamp
     if args.output == "cohesity_health_check":
         ts    = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        parts = ["cohesity_health_check"]
+        parts = ["cohesity_health_check", f"v{__version__}"]
         if args.customer:
             safe = "".join(c if c.isalnum() or c in "-_" else "_"
                            for c in args.customer).strip("_")

@@ -117,7 +117,7 @@ def clear_stored_credentials():
 def default_output_path() -> str:
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_name = os.path.splitext(os.path.basename(__file__))[0]
-    return os.path.join(os.getcwd(), f"{script_name}_{timestamp}.xlsx")
+    return os.path.join(os.getcwd(), f"{script_name}_v{__version__}_{timestamp}.xlsx")
 
 
 # ---------------------------------------------------------------------------
