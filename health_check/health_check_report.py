@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.7 (2026-04-08) — fix: _fk_status() false-negatives — lastRun.archivalInfo
+                     is only populated when the most recent primary run included
+                     archival; groups with daily local backups + less-frequent
+                     archival showed as idle even when active. Fix: scan full
+                     group_runs history (non-quick mode) for successful FK
+                     archival results matched by target type AND vault name;
+                     lastRun remains the fallback for --quick mode only.
   1.6 (2026-04-08) — feat: detect FortKnox configured-but-idle state. New
                      _fk_status() returns "active"/"idle"/"none" by inspecting
                      group lastRun.archivalInfo (dataTransferToVaults storageConsumed
@@ -86,7 +93,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.6"
+__version__ = "1.7"
 
 import argparse
 import datetime
@@ -470,44 +477,82 @@ def _has_fortknox(vaults, policies):
 def _fk_status(cd):
     """
     Return one of three states for FortKnox immutability:
-      "active"  — FK configured AND at least one group has a successful FK
-                  archival in its lastRun (data is flowing)
-      "idle"    — FK configured in vault/policy but no group shows a recent
-                  successful FK archival (configured but not sending data)
+      "active"  — FK configured AND a successful FK archival run exists within
+                  the collection window (data is flowing)
+      "idle"    — FK configured in vault/policy but no successful FK archival
+                  found in run history (configured but not sending data)
       "none"    — FK not configured at all
 
-    Note: dataTransferToVaults storageConsumed is a cumulative lifetime total,
-    not windowed — it shows non-zero even after transfers stop. We therefore
-    check group lastRun.archivalInfo instead to detect truly idle vaults.
+    Detection strategy
+    ──────────────────
+    We CANNOT rely on lastRun.archivalInfo alone: that field is only populated
+    when the most recent primary run included archival. Groups that run daily
+    local backups but archive on a different schedule (e.g. weekly) will show
+    empty archivalInfo in lastRun even when FK is working correctly.
+
+    Primary source: group_runs (full run history, available in non-quick mode).
+    Every run in the window is scanned for a successful archival result whose
+    target type or name indicates FortKnox/RPaaS.
+
+    Fallback (--quick mode): lastRun.archivalInfo on each group (less reliable
+    — may miss groups whose last run was local-only).
     """
-    vaults   = cd["vaults"]
-    policies = cd["policies"]
-    groups   = cd["groups"]
+    vaults     = cd["vaults"]
+    policies   = cd["policies"]
+    groups     = cd["groups"]
+    group_runs = cd.get("group_runs") or {}
 
     if not _has_fortknox(vaults, policies):
         return "none"
 
     fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+    success_states = {"kSuccess", "Succeeded", "kSuccessWithWarning",
+                      "SucceededWithWarning", "kWarning"}
 
-    # Collect policy IDs whose archival targets point at FK
-    fk_policy_ids = set()
+    # Build set of FK vault names for name-based matching in archival results
+    fk_vault_names = set()
+    for v in vaults:
+        vt = (v.get("vaultType") or "").lower()
+        vn = (v.get("name") or "").lower()
+        if any(t in vt for t in fk_types) or "fortknox" in vn:
+            fk_vault_names.add(vn)
     for p in policies:
         for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
-            cfg = t.get("archivalTargetConfig") or {}
-            tt  = (cfg.get("targetType") or t.get("targetType") or "").lower()
+            cfg  = t.get("archivalTargetConfig") or {}
+            name = (cfg.get("name") or cfg.get("vaultName")
+                    or t.get("targetName") or "").lower()
+            tt   = (cfg.get("targetType") or t.get("targetType") or "").lower()
             if any(x in tt for x in fk_types) or "fortknox" in tt:
-                fk_policy_ids.add(p.get("id"))
-                break
+                if name:
+                    fk_vault_names.add(name)
 
-    # Check whether any FK-targeted group has a successful lastRun archival
-    success_states = {"kSuccess", "Succeeded", "kSuccessWithWarning"}
-    for g in groups:
-        if g.get("policyId") not in fk_policy_ids:
-            continue
-        arch_info = (g.get("lastRun") or {}).get("archivalInfo") or {}
+    def _is_fk_success(run):
+        """Return True if this run dict has a successful archival to an FK target."""
+        arch_info = (run.get("archivalInfo") or {})
         for r in (arch_info.get("archivalTargetResults") or []):
-            if r.get("status") in success_states:
+            if r.get("status") not in success_states:
+                continue
+            # Match by archival target type
+            ttype = (r.get("archivalTargetType")
+                     or r.get("targetType") or "").lower()
+            if any(x in ttype for x in fk_types) or "fortknox" in ttype:
+                return True
+            # Match by target name against known FK vault names
+            tname = (r.get("targetName") or "").lower()
+            if tname and (tname in fk_vault_names or "fortknox" in tname):
+                return True
+        return False
+
+    # Primary: scan full run history (non-quick mode)
+    for runs in group_runs.values():
+        for run in runs:
+            if _is_fk_success(run):
                 return "active"
+
+    # Fallback: check lastRun on each group (quick mode)
+    for g in groups:
+        if _is_fk_success(g.get("lastRun") or {}):
+            return "active"
 
     return "idle"
 
