@@ -56,6 +56,12 @@ Requirements
 
 Version history
 ───────────────
+  1.11 (2026-04-08) — feat: Replication & Archive col E changed from policy
+                     count to protection group count; new col K lists all group
+                     names using each target. Status updated: "Configured" when
+                     groups are assigned, "No groups assigned" when not.
+                     Rewired target discovery through policy→group chain so E
+                     and K reflect actual group assignment, not policy count.
   1.10 (2026-04-08) — fix: Replication & Archive col E (Policies Using) showed
                      0 because _arch_name() returned "" when the v2 policy stores
                      archival targets by vault ID only (no name/targetName field).
@@ -117,7 +123,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.10"
+__version__ = "1.11"
 
 import argparse
 import datetime
@@ -1458,21 +1464,22 @@ def _sheet_security(wb, all_data):
 def _sheet_replication(wb, all_data):
     ws = wb.create_sheet("Replication & Archive")
     ws.freeze_panes = "A3"
-    _title(ws, "Replication & Archival Targets", "J")
+    _title(ws, "Replication & Archival Targets", "K")
 
     cols = ["Cluster", "Target Type", "Target Name", "Vault Type",
-            "Policies Using",
+            "Protection Groups",
             "Vault Storage (TB)",
             "Logical Data Transferred (TB)\n[numLogicalBytesTransferred — cumulative]",
             "Physical Data Transferred (TB)\n[numPhysicalBytesTransferred — cumulative]",
-            "Status", "Notes"]
+            "Status", "Notes",
+            "Protection Group Names"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
-        # ── Vault ID → name map (needed when policies reference vaults by ID only) ──
-        vault_name_by_id = {}   # vault id  → name
-        vault_type_by_name = {} # name      → vaultType
-        vault_id_by_name   = {} # name      → id
+        # ── Vault ID → name / type maps ───────────────────────────────────
+        vault_name_by_id   = {}   # vault id → name
+        vault_type_by_name = {}   # name     → vaultType
+        vault_id_by_name   = {}   # name     → id
         for v in cd["vaults"]:
             vn = v.get("name") or v.get("vaultName") or ""
             vi = v.get("id")
@@ -1482,7 +1489,7 @@ def _sheet_replication(wb, all_data):
                 vault_type_by_name[vn] = vt
                 if vi: vault_id_by_name[vn] = vi
 
-        # ── Policy target name extraction ─────────────────────────────────
+        # ── Target name extractors ────────────────────────────────────────
         def _rep_name(t):
             cfg = t.get("remoteTargetConfig") or {}
             return (t.get("targetName")
@@ -1490,57 +1497,75 @@ def _sheet_replication(wb, all_data):
                     or cfg.get("name") or "")
 
         def _arch_name(t):
-            """Return vault name for an archival target.
-            Cohesity v2 may store the target as name, vaultName, or vault ID only.
-            Falls back to resolving the ID against the cluster's vault list."""
-            cfg = t.get("archivalTargetConfig") or {}
+            cfg  = t.get("archivalTargetConfig") or {}
             name = (t.get("targetName")
                     or cfg.get("name")
-                    or cfg.get("vaultName")
-                    or "")
+                    or cfg.get("vaultName") or "")
             if not name:
-                # Try resolving by vault ID when name fields are absent
                 vid = cfg.get("vaultId") or cfg.get("id")
                 if vid:
                     name = vault_name_by_id.get(vid, f"Vault-{vid}")
             return name
 
-        # Count how many policies reference each target; capture vault type from
-        # the policy archival target config directly — more reliable than a
-        # name-based lookup against the /public/vaults list.
-        rep_use  = {}   # cluster name → policy count
-        arch_use = {}   # vault name   → {"count": int, "targetType": str}
+        # ── Map: policy id → set of vault/replication target names ────────
+        policy_rep_targets  = {}   # policy id → set of replication cluster names
+        policy_arch_targets = {}   # policy id → set of vault names
+        arch_target_type    = {}   # vault name → targetType (from policy)
+
         for p in cd["policies"]:
+            pid = p.get("id")
+            if not pid:
+                continue
             rtp = p.get("remoteTargetPolicy") or {}
             for t in (rtp.get("replicationTargets") or []):
                 n = _rep_name(t)
-                if n: rep_use[n] = rep_use.get(n, 0) + 1
+                if n:
+                    policy_rep_targets.setdefault(pid, set()).add(n)
             for t in (rtp.get("archivalTargets") or []):
                 n = _arch_name(t)
-                if not n:
-                    continue
-                cfg   = t.get("archivalTargetConfig") or {}
-                ttype = (t.get("targetType") or cfg.get("targetType") or "")
-                if n not in arch_use:
-                    arch_use[n] = {"count": 0, "targetType": ttype}
-                arch_use[n]["count"] += 1
+                if n:
+                    policy_arch_targets.setdefault(pid, set()).add(n)
+                    if n not in arch_target_type:
+                        cfg   = t.get("archivalTargetConfig") or {}
+                        arch_target_type[n] = (t.get("targetType")
+                                               or cfg.get("targetType") or "")
 
-        # ── FK transfer stats cross-reference ────────────────────────────
-        fk_by_name = {}   # vaultName (from fk_data) → transfer stats
-        fk_by_id   = {}   # vaultId   (from fk_data) → transfer stats
+        # ── Map: target name → [group names] using it ────────────────────
+        rep_groups  = {}   # replication cluster name → [group names]
+        arch_groups = {}   # vault name               → [group names]
+
+        for g in cd["groups"]:
+            pid  = g.get("policyId")
+            gname = g.get("name", "")
+            if not pid or not gname:
+                continue
+            for tname in (policy_rep_targets.get(pid) or set()):
+                rep_groups.setdefault(tname, []).append(gname)
+            for tname in (policy_arch_targets.get(pid) or set()):
+                arch_groups.setdefault(tname, []).append(gname)
+
+        # All unique replication / archival target names
+        all_rep_targets  = set().union(*policy_rep_targets.values())  \
+                           if policy_rep_targets else set()
+        all_arch_targets = set().union(*policy_arch_targets.values()) \
+                           if policy_arch_targets else set()
+
+        # ── FK transfer stats ─────────────────────────────────────────────
+        fk_by_name = {}
+        fk_by_id   = {}
         for fk in (cd["fk_data"] or []):
             fk_vn  = fk.get("vaultName", "")
             fk_vid = fk.get("vaultId")
             jobs   = fk.get("dataTransferPerProtectionJob") or []
-            consumed = sum((j.get("storageConsumed") or 0) for j in jobs)
-            logical  = sum((j.get("numLogicalBytesTransferred") or 0) for j in jobs)
-            physical = sum((j.get("numPhysicalBytesTransferred") or 0) for j in jobs)
-            data = {"consumed": consumed, "logical": logical, "physical": physical}
+            data   = {
+                "consumed": sum((j.get("storageConsumed") or 0) for j in jobs),
+                "logical":  sum((j.get("numLogicalBytesTransferred") or 0) for j in jobs),
+                "physical": sum((j.get("numPhysicalBytesTransferred") or 0) for j in jobs),
+            }
             if fk_vn:  fk_by_name[fk_vn] = data
             if fk_vid: fk_by_id[fk_vid]   = data
 
         def _fk_stats(vname):
-            """Return FK transfer stats dict for a vault, matching by name then ID."""
             d = fk_by_name.get(vname)
             if not d:
                 vid = vault_id_by_name.get(vname)
@@ -1549,58 +1574,61 @@ def _sheet_replication(wb, all_data):
 
         fk_types = {"rpaas", "fortknox", "kfortknox", "krpaas"}
 
-        def _is_fk_vault(vname, vtype):
-            return (any(x in vtype.lower() for x in fk_types) or
-                    "fortknox" in vname.lower())
+        def _is_fk(vname, vtype):
+            return (any(x in vtype.lower() for x in fk_types)
+                    or "fortknox" in vname.lower())
 
         # ── Replication rows ──────────────────────────────────────────────
-        for name, cnt in rep_use.items():
+        for tname in sorted(all_rep_targets):
+            groups = sorted(rep_groups.get(tname) or [])
+            gcnt   = len(groups)
+            status = "Configured" if gcnt else "No groups assigned"
             rn = ws.max_row + 1
-            for c, val in enumerate(
-                [cd["name"], "Replication", name, "", cnt,
-                 "", "", "", "Configured", ""], 1
-            ):
-                ws.cell(row=rn, column=c, value=val).font = _font()
-
-        # ── Archival / vault rows — driven by policy targets ──────────────
-        # arch_use keys are the canonical target names from policies.
-        # Vault type comes from the policy target itself (most reliable).
-        # FK stats matched by name then ID against fk_data.
-        shown = set()
-        for vname, info in arch_use.items():
-            vcnt  = info["count"]
-            # Primary: type from policy target; fallback: vault list lookup
-            vtype = info["targetType"] or vault_type_by_name.get(vname, "")
-            fkd   = _fk_stats(vname)
-            note  = "FortKnox/RPaaS" if _is_fk_vault(vname, vtype) else ""
-            rn    = ws.max_row + 1
-            row   = [cd["name"], "Archival/Vault", vname, vtype, vcnt,
-                     round(bytes_to_tb(fkd.get("consumed") or 0), 3),
-                     round(bytes_to_tb(fkd.get("logical")  or 0), 3),
-                     round(bytes_to_tb(fkd.get("physical") or 0), 3),
-                     "Configured", note]
+            row = [cd["name"], "Replication", tname, "", gcnt,
+                   "", "", "", status, "",
+                   ", ".join(groups)]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
-            shown.add(vname)
 
-        # Also emit any vault from the vaults API not referenced by a policy
+        # ── Archival / vault rows ─────────────────────────────────────────
+        shown = set()
+        for tname in sorted(all_arch_targets):
+            groups = sorted(arch_groups.get(tname) or [])
+            gcnt   = len(groups)
+            vtype  = arch_target_type.get(tname) or vault_type_by_name.get(tname, "")
+            fkd    = _fk_stats(tname)
+            note   = "FortKnox/RPaaS" if _is_fk(tname, vtype) else ""
+            status = "Configured" if gcnt else "No groups assigned"
+            rn     = ws.max_row + 1
+            row    = [cd["name"], "Archival/Vault", tname, vtype, gcnt,
+                      round(bytes_to_tb(fkd.get("consumed") or 0), 3),
+                      round(bytes_to_tb(fkd.get("logical")  or 0), 3),
+                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
+                      status, note,
+                      ", ".join(groups)]
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+            shown.add(tname)
+
+        # Vaults that exist in the API but are not referenced by any policy
         for v in cd["vaults"]:
             vname = v.get("name") or v.get("vaultName") or ""
             if not vname or vname in shown:
                 continue
             vtype = v.get("vaultType", "")
             fkd   = _fk_stats(vname)
-            note  = "FortKnox/RPaaS" if _is_fk_vault(vname, vtype) else ""
+            note  = "FortKnox/RPaaS" if _is_fk(vname, vtype) else ""
             rn    = ws.max_row + 1
             row   = [cd["name"], "Archival/Vault", vname, vtype, 0,
                      round(bytes_to_tb(fkd.get("consumed") or 0), 3),
                      round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
-                     "Vault exists — not referenced by any policy", note]
+                     "Vault exists — not referenced by any policy", note, ""]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
     auto_fit_columns(ws)
+    ws.column_dimensions["K"].width = 60
 
 
 def _sheet_views(wb, all_data):
