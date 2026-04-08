@@ -55,11 +55,16 @@ Requirements
 
 Version history
 ───────────────
+  1.2 (2026-04-08) — fix: correct field names throughout — firstTimestampUsecs,
+                     clusterSoftwareVersion, localSnapshotStats, successfulObjectsCount,
+                     policyId→name lookup, v2 schedule/target/retention paths,
+                     broadened FortKnox detection, N/A capacity fallback.
+                     feat: output filename includes customer name + UTC timestamp.
   1.0 (2026-04-08) — feat: initial release. 12-sheet Excel + Word document.
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.0"
+__version__ = "1.2"
 
 import argparse
 import datetime
@@ -316,6 +321,9 @@ def collect_cluster(session, api_key, cluster, args):
 
     print(" done.")
 
+    # Build policy ID → name lookup used throughout the report
+    policy_map = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
+
     cd = {
         "name":        name,
         "id":          cid,
@@ -325,6 +333,7 @@ def collect_cluster(session, api_key, cluster, args):
         "groups":      groups,
         "group_runs":  group_runs,
         "policies":    policies,
+        "policy_map":  policy_map,
         "domains":     domains,
         "views":       views,
         "vaults":      vaults,
@@ -439,14 +448,22 @@ def _score_security(cd):
     if any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
            for p in policies):
         score += 20
-    # FortKnox / immutability
-    fk = [v for v in vaults if v.get("vaultType") in ("kFortKnox", "kS3Compatible")]
-    immut = any(
-        any((t.get("archivalTargetSettings") or {}).get("targetType") == "kFortKnox"
-            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []))
-        for p in policies
-    )
-    if fk or immut:
+    # FortKnox / immutability — check vault type or name, and policy archival target type
+    def _has_fortknox(vaults, policies):
+        fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+        for v in vaults:
+            vt = (v.get("vaultType") or "").lower()
+            vn = (v.get("name") or "").lower()
+            if any(t in vt for t in fk_types) or "fortknox" in vn:
+                return True
+        for p in policies:
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+                cfg = (t.get("archivalTargetConfig") or {})
+                tt  = (cfg.get("targetType") or t.get("targetType") or "").lower()
+                if any(x in tt for x in fk_types) or "fortknox" in tt:
+                    return True
+        return False
+    if _has_fortknox(vaults, policies):
         score += 20
     return score
 
@@ -549,14 +566,7 @@ def _build_recommendations(cd):
             "Configure at least one external vault for off-site retention",
             "No off-site copy of data — single point of failure"))
 
-    has_fk = any(v.get("vaultType") in ("kFortKnox", "kS3Compatible")
-                 for v in vaults)
-    has_immut = any(
-        any((t.get("archivalTargetSettings") or {}).get("targetType") == "kFortKnox"
-            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []))
-        for p in policies
-    )
-    if not (has_fk or has_immut):
+    if not _has_fortknox(vaults, policies):
         recs.append(_r("MEDIUM", "Security",
             "No immutable/FortKnox archival target detected",
             "Configure FortKnox or WORM archival to protect against ransomware",
@@ -771,15 +781,23 @@ def _sheet_infrastructure(wb, all_data):
             if ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
                 or n.get("removalState") in (None, "kDontRemove"))
         )
-        disks = sum(len(n.get("diskVec") or n.get("disks") or []) for n in nodes)
+        # Disk count — v1 API may use diskVec, disks, or numDisks depending on version
+        def _node_disk_count(n):
+            for field in ("diskVec", "disks", "diskInfo"):
+                v = n.get(field)
+                if isinstance(v, list): return len(v)
+            return n.get("numDisks") or 0
+        disks = sum(_node_disk_count(n) for n in nodes)
+
         enc  = bool(info.get("encryptionEnabled") or
                     (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         dns  = ", ".join(info.get("dnsServerIps") or [])
-        ntp  = ", ".join(
-            (info.get("ntpSettings") or {}).get("ntpServers", []) or
-            info.get("ntpServers", []) or []
-        )
+        # NTP: v1 API returns ntpSettings.ntpServers or ntpServers flat list
+        ntp_list = ((info.get("ntpSettings") or {}).get("ntpServers")
+                    or info.get("ntpServers")
+                    or [])
+        ntp = ", ".join(ntp_list) if isinstance(ntp_list, list) else str(ntp_list)
         domain = (info.get("domainNames") or [""])[0]
 
         row = [cd["name"], info.get("clusterSoftwareVersion", ""),
@@ -825,11 +843,15 @@ def _sheet_protection(wb, all_data):
     _hdr(ws, 2, cols)
 
     for cd in all_data:
+        pm = cd.get("policy_map", {})
         for g in cd["groups"]:
             lr  = g.get("lastRun") or {}
             lb  = lr.get("localBackupInfo") or {}
-            st  = (lr.get("stats") or lb.get("stats") or {})
-            objs = lb.get("stats") or {}
+
+            # runType and isSlaViolated sit on localBackupInfo (confirmed from runs API)
+            run_type    = lb.get("runType") or lr.get("runType", "")
+            sla_violated = lb.get("isSlaViolated") or lr.get("isSlaViolated") or False
+            status      = lb.get("status", "")
 
             start_u = lb.get("startTimeUsecs") or 0
             end_u   = lb.get("endTimeUsecs") or 0
@@ -841,6 +863,15 @@ def _sheet_protection(wb, all_data):
             rpo_hrs = round((_now_usecs() - start_u) / 3_600_000_000, 1) \
                       if start_u else ""
 
+            # Object counts are directly on localBackupInfo (not nested in stats)
+            objs_ok   = lb.get("successfulObjectsCount", "")
+            objs_fail = lb.get("failedObjectsCount", "")
+            # Sizes are under localSnapshotStats sub-dict
+            snap = lb.get("localSnapshotStats") or {}
+            logical_gb  = round(bytes_to_gb(snap.get("logicalSizeBytes") or 0), 2)
+            physical_gb = round(bytes_to_gb(snap.get("bytesWritten") or 0), 2)
+
+            # Replication / archival status from lastRun (same level as localBackupInfo)
             repl_st = arch_st = ""
             for ri in ((lr.get("replicationInfo") or {})
                        .get("replicationTargetResults") or []):
@@ -849,30 +880,32 @@ def _sheet_protection(wb, all_data):
                        .get("archivalTargetResults") or []):
                 arch_st = ai.get("status", ""); break
 
-            status = lb.get("status", "")
-            flag   = "OK"
+            flag = "OK"
             if g.get("isPaused"):
                 flag = "PAUSED"
             elif status in ("kFailure", "Failed"):
                 flag = "FAILED"
-            elif lr.get("isSlaViolated"):
+            elif sla_violated:
                 flag = "SLA VIOLATED"
             elif isinstance(rpo_hrs, float) and rpo_hrs > RPO_CRIT_HOURS:
                 flag = f"RPO GAP {rpo_hrs:.0f}h"
             elif isinstance(rpo_hrs, float) and rpo_hrs > RPO_WARN_HOURS:
                 flag = f"RPO WARN {rpo_hrs:.0f}h"
 
+            # Policy name: prefer policyName on group; fall back to policy_map lookup
+            policy_name = (g.get("policyName")
+                           or pm.get(g.get("policyId"), "")
+                           or g.get("policyId", ""))
+
             row = [cd["name"], g.get("name", ""),
-                   g.get("policyName") or "",
+                   policy_name,
                    "Yes" if g.get("isActive", True) else "No",
                    "Yes" if g.get("isPaused", False) else "No",
-                   lr.get("runType", ""), status,
-                   "Yes" if lr.get("isSlaViolated") else "No",
+                   run_type, status,
+                   "Yes" if sla_violated else "No",
                    usecs_to_datetime(start_u), usecs_to_datetime(end_u), dur,
-                   objs.get("totalObjectsProtected", ""),
-                   objs.get("totalObjectsFailed", ""),
-                   round(bytes_to_gb(objs.get("logicalSizeBytes") or 0), 2),
-                   round(bytes_to_gb(objs.get("bytesWritten") or 0), 2),
+                   objs_ok, objs_fail,
+                   logical_gb, physical_gb,
                    repl_st, arch_st, rpo_hrs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
@@ -973,11 +1006,28 @@ def _ret_str(r):
     return f"{d} {u}".strip() if d else u
 
 def _sched_str(s):
+    """Convert a v2 schedule dict to a human-readable string."""
     if not s: return ""
+    unit = s.get("unit", "")
+    if unit == "Days":
+        freq = (s.get("daySchedule") or {}).get("frequency", 1)
+        return f"Every {freq} day{'s' if freq != 1 else ''}"
+    if unit == "Weeks":
+        days = (s.get("weekSchedule") or {}).get("dayOfWeek") or []
+        return f"Weekly ({', '.join(days[:2])}{'…' if len(days) > 2 else ''})" if days else "Weekly"
+    if unit == "Hours":
+        freq = (s.get("hourSchedule") or {}).get("frequency", 1)
+        return f"Every {freq}h"
+    if unit == "Minutes":
+        freq = (s.get("minuteSchedule") or {}).get("frequency", 1)
+        return f"Every {freq}m"
+    if unit in ("Months", "Monthly"): return "Monthly"
+    if unit in ("Years", "Yearly"):   return "Yearly"
+    # fallback: flat frequency dict
     for key in ("minutes", "hours", "days", "weeks", "months", "years"):
         if isinstance(s, dict) and key in s:
             return f"Every {s[key]} {key}"
-    return ""
+    return unit or ""
 
 def _sheet_policies(wb, all_data):
     ws = wb.create_sheet("Policy Audit")
@@ -999,19 +1049,28 @@ def _sheet_policies(wb, all_data):
             rep_tgts  = rtp.get("replicationTargets") or []
             arch_tgts = rtp.get("archivalTargets") or []
 
-            rep_names  = ", ".join(
-                (t.get("replicationTargetSettings") or {}).get("clusterName", "")
-                or t.get("targetName", "") for t in rep_tgts)
-            arch_names = ", ".join(
-                (t.get("archivalTargetSettings") or {}).get("targetName", "")
-                or t.get("targetName", "") for t in arch_tgts)
+            # v2 API replication target name: targetName or remoteTargetConfig.clusterName/name
+            def _rep_name(t):
+                return (t.get("targetName")
+                        or (t.get("remoteTargetConfig") or {}).get("clusterName")
+                        or (t.get("remoteTargetConfig") or {}).get("name")
+                        or "")
+            # v2 API archival target name: targetName or archivalTargetConfig.name/vaultName
+            def _arch_name(t):
+                return (t.get("targetName")
+                        or (t.get("archivalTargetConfig") or {}).get("name")
+                        or (t.get("archivalTargetConfig") or {}).get("vaultName")
+                        or "")
 
-            full_sched = (bp.get("full") or bp.get("fullBackups") or {})
-            reg_sched  = (bp.get("regular") or bp.get("incrementalBackups") or {})
-            full_freq  = (full_sched.get("schedule") or full_sched.get("frequency") or {})
-            reg_freq   = (reg_sched.get("schedule") or reg_sched.get("frequency") or {})
+            rep_names  = ", ".join(filter(None, (_rep_name(t)  for t in rep_tgts)))
+            arch_names = ", ".join(filter(None, (_arch_name(t) for t in arch_tgts)))
 
-            local_ret = (bp.get("regular") or {}).get("retention") or bp.get("retention") or {}
+            # v2 schedule: backupPolicy.regular.full.schedule / regular.incremental.schedule
+            regular     = bp.get("regular") or {}
+            full_sched  = (regular.get("full") or bp.get("full") or {}).get("schedule") or {}
+            incr_sched  = (regular.get("incremental") or bp.get("incremental") or {}).get("schedule") or {}
+
+            local_ret = regular.get("retention") or bp.get("retention") or {}
             log_ret   = (bp.get("log") or {}).get("retention") or {}
             rep_ret   = (rep_tgts[0].get("retention") or {}) if rep_tgts else {}
             arch_ret  = (arch_tgts[0].get("retention") or {}) if arch_tgts else {}
@@ -1022,7 +1081,7 @@ def _sheet_policies(wb, all_data):
 
             row = [cd["name"], p.get("name", ""),
                    p.get("type") or p.get("policyCategory") or "",
-                   _sched_str(full_freq), _sched_str(reg_freq),
+                   _sched_str(full_sched), _sched_str(incr_sched),
                    _ret_str(local_ret), _ret_str(log_ret),
                    "Yes" if rep_tgts else "No", rep_names, _ret_str(rep_ret),
                    "Yes" if arch_tgts else "No", arch_names, _ret_str(arch_ret),
@@ -1056,9 +1115,10 @@ def _sheet_alerts(wb, all_data):
     for cd in all_data:
         sorted_a = sorted(cd["alerts"],
                           key=lambda a: (sev_order.get(a.get("severity"), 9),
-                                         a.get("firstOccurrenceTime") or 0))
+                                         a.get("firstTimestampUsecs") or 0))
         for a in sorted_a:
-            first_u = a.get("firstOccurrenceTime") or 0
+            # v1 alerts API uses firstTimestampUsecs (not firstOccurrenceTime)
+            first_u = a.get("firstTimestampUsecs") or 0
             last_u  = a.get("latestTimestampUsecs") or 0
             age = round((_now_usecs() - first_u) / (86400 * 1_000_000), 1) \
                   if first_u else ""
@@ -1101,28 +1161,30 @@ def _sheet_security(wb, all_data):
             "Security Score /100", "Gaps"]
     _hdr(ws, 2, cols)
 
-    def _min_ret_days(policies, key="replicationTargets"):
-        days_list = []
-        for p in policies:
-            for t in ((p.get("remoteTargetPolicy") or {}).get(key) or []):
-                r = t.get("retention") or {}
-                d = r.get("duration") or 0
-                u = r.get("unit", "Days")
-                m = {"Days": 1, "Weeks": 7, "Months": 30, "Years": 365}
-                days_list.append(d * m.get(u, 1))
-        return min(days_list) if days_list else ""
+    _RET_MULT = {"Days": 1, "Weeks": 7, "Months": 30, "Years": 365}
+
+    def _ret_to_days(r):
+        d = (r or {}).get("duration") or 0
+        u = (r or {}).get("unit", "Days")
+        return d * _RET_MULT.get(u, 1) if d else 0
 
     def _min_local_days(policies):
-        days_list = []
+        vals = []
         for p in policies:
-            bp = p.get("backupPolicy") or {}
-            r  = (bp.get("regular") or {}).get("retention") or bp.get("retention") or {}
-            d  = r.get("duration") or 0
-            u  = r.get("unit", "Days")
-            m  = {"Days": 1, "Weeks": 7, "Months": 30, "Years": 365}
-            if d:
-                days_list.append(d * m.get(u, 1))
-        return min(days_list) if days_list else ""
+            bp  = p.get("backupPolicy") or {}
+            reg = bp.get("regular") or {}
+            r   = reg.get("retention") or bp.get("retention") or {}
+            v   = _ret_to_days(r)
+            if v: vals.append(v)
+        return f"{min(vals)} days" if vals else "N/A"
+
+    def _min_arch_days(policies):
+        vals = []
+        for p in policies:
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+                v = _ret_to_days(t.get("retention") or {})
+                if v: vals.append(v)
+        return f"{min(vals)} days" if vals else "N/A"
 
     for cd in all_data:
         info     = cd["info"]
@@ -1134,11 +1196,7 @@ def _sheet_security(wb, all_data):
                     (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         has_vault = bool(vaults)
-        fk_v = [v for v in vaults if v.get("vaultType") in ("kFortKnox", "kS3Compatible")]
-        has_immut = bool(fk_v) or any(
-            any((t.get("archivalTargetSettings") or {}).get("targetType") == "kFortKnox"
-                for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []))
-            for p in policies)
+        has_immut = _has_fortknox(vaults, policies)
         has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                        for p in policies)
         has_arch = any((p.get("remoteTargetPolicy") or {}).get("archivalTargets")
@@ -1155,7 +1213,7 @@ def _sheet_security(wb, all_data):
         yn = lambda v: "Yes" if v else "No"
         row = [cd["name"], yn(enc), yn(fips), yn(has_vault), yn(has_immut),
                yn(has_repl), yn(has_arch),
-               _min_local_days(policies), _min_ret_days(policies, "archivalTargets"),
+               _min_local_days(policies), _min_arch_days(policies),
                scores["security"],
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
@@ -1188,18 +1246,25 @@ def _sheet_replication(wb, all_data):
     _hdr(ws, 2, cols)
 
     for cd in all_data:
-        # Tally policy usage of each target
+        # Tally policy usage per target using consistent name extraction
+        def _rep_name(t):
+            return (t.get("targetName")
+                    or (t.get("remoteTargetConfig") or {}).get("clusterName")
+                    or (t.get("remoteTargetConfig") or {}).get("name") or "")
+        def _arch_name(t):
+            return (t.get("targetName")
+                    or (t.get("archivalTargetConfig") or {}).get("name")
+                    or (t.get("archivalTargetConfig") or {}).get("vaultName") or "")
+
         rep_use  = {}
         arch_use = {}
         for p in cd["policies"]:
             for t in ((p.get("remoteTargetPolicy") or {}).get("replicationTargets") or []):
-                n = (t.get("replicationTargetSettings") or {}).get("clusterName", "") \
-                    or t.get("targetName", "")
-                rep_use[n] = rep_use.get(n, 0) + 1
+                n = _rep_name(t)
+                if n: rep_use[n] = rep_use.get(n, 0) + 1
             for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
-                n = (t.get("archivalTargetSettings") or {}).get("targetName", "") \
-                    or t.get("targetName", "")
-                arch_use[n] = arch_use.get(n, 0) + 1
+                n = _arch_name(t)
+                if n: arch_use[n] = arch_use.get(n, 0) + 1
 
         for name, cnt in rep_use.items():
             rn = ws.max_row + 1
@@ -1208,31 +1273,31 @@ def _sheet_replication(wb, all_data):
             ):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-        # FortKnox / archival vault stats
+        # Vault stats — v1 dataTransferToVaults uses storageConsumed (not storageConsumedBytes)
         fk_by_vault = {}
         for fk in (cd["fk_data"] or []):
-            vn = (fk.get("dataTransferPerProtectionJob") or [{}])[0].get("vaultName", "") \
-                 or fk.get("vaultName", "")
-            consumed = sum((j.get("storageConsumedBytes") or 0)
+            vn = fk.get("vaultName", "")
+            if not vn:
+                jobs = fk.get("dataTransferPerProtectionJob") or []
+                vn   = jobs[0].get("vaultName", "") if jobs else ""
+            consumed = sum((j.get("storageConsumed") or j.get("storageConsumedBytes") or 0)
                            for j in (fk.get("dataTransferPerProtectionJob") or []))
-            logical  = sum((j.get("logicalTransferredBytes") or 0)
-                           for j in (fk.get("dataTransferPerProtectionJob") or []))
-            physical = sum((j.get("physicalTransferredBytes") or 0)
-                           for j in (fk.get("dataTransferPerProtectionJob") or []))
-            fk_by_vault[vn] = {"consumed": consumed, "logical": logical, "physical": physical}
+            fk_by_vault[vn] = {"consumed": consumed}
 
         for v in cd["vaults"]:
             vn  = v.get("name", "")
             vt  = v.get("vaultType", "")
             fkd = fk_by_vault.get(vn, {})
+            note = ("FortKnox/RPaaS"
+                    if any(x in vt.lower() for x in ("rpaas", "fortknox")) or
+                       "fortknox" in vn.lower()
+                    else "")
             rn  = ws.max_row + 1
             row = [cd["name"], "Archival/Vault", vn, vt,
                    arch_use.get(vn, 0),
                    round(bytes_to_tb(fkd.get("consumed") or 0), 3),
-                   round(bytes_to_tb(fkd.get("logical") or 0), 3),
-                   round(bytes_to_tb(fkd.get("physical") or 0), 3),
-                   "Configured",
-                   "FortKnox" if vt == "kFortKnox" else ""]
+                   "", "",
+                   "Configured", note]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
@@ -1314,10 +1379,12 @@ def _sheet_coverage(wb, all_data):
     _hdr(ws, 2, cols)
 
     for cd in all_data:
+        pm = cd.get("policy_map", {})
         for g in cd["groups"]:
             lr  = g.get("lastRun") or {}
             lb  = lr.get("localBackupInfo") or {}
             st  = lb.get("status", "")
+            sla_viol = lb.get("isSlaViolated") or lr.get("isSlaViolated") or False
             su  = lb.get("startTimeUsecs") or 0
             hrs = round((_now_usecs() - su) / 3_600_000_000, 1) if su else 9999
 
@@ -1339,8 +1406,12 @@ def _sheet_coverage(wb, all_data):
             else:
                 sev = "UNKNOWN"
 
+            policy_name = (g.get("policyName")
+                           or pm.get(g.get("policyId"), "")
+                           or g.get("policyId", ""))
+
             row = [cd["name"], g.get("name", ""),
-                   g.get("policyName") or "",
+                   policy_name,
                    "Yes" if g.get("isActive", True) else "No",
                    "Yes" if g.get("isPaused") else "No",
                    usecs_to_datetime(su) if su else "Never",
@@ -1851,6 +1922,17 @@ def main():
     if not DOCX_OK and args.word_only:
         print("ERROR: python-docx is required.  pip install python-docx")
         sys.exit(1)
+
+    # Build output filename: include customer name (if given) + UTC timestamp
+    if args.output == "cohesity_health_check":
+        ts    = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M")
+        parts = ["cohesity_health_check"]
+        if args.customer:
+            safe = "".join(c if c.isalnum() or c in "-_" else "_"
+                           for c in args.customer).strip("_")
+            parts.append(safe)
+        parts.append(ts)
+        args.output = "_".join(parts)
 
     print(f"\nCohesity Health Check Report  v{__version__}")
     print(f"  Customer : {args.customer or '(not specified)'}")
