@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.13 (2026-04-08) — fix: Trends tab cols I and J always blank — col I
+                     (SLA Violations) used run.get("isSlaViolated") but the
+                     field lives inside localBackupInfo, not the top-level run
+                     object; fixed to lb.get("isSlaViolated"). Col J (Logical GB)
+                     used lb.get("stats").get("logicalSizeBytes") but the correct
+                     sub-object is localSnapshotStats; fixed to
+                     lb.get("localSnapshotStats").get("logicalSizeBytes").
   1.12 (2026-04-08) — fix: Replication & Archive col E and col K still empty
                      after v1.11 — policy→group chain produced no rows because
                      _arch_name() returns "" when v2 policies store archival
@@ -134,7 +141,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.12"
+__version__ = "1.13"
 
 import argparse
 import datetime
@@ -1828,8 +1835,8 @@ def _sheet_trends(wb, all_data):
                 elif st in ("kFailure", "Failed"):  d["fail"]   += 1
                 elif st == "kWarning":              d["warn"]   += 1
                 elif "anceл" in st or "Cancel" in st: d["cancel"] += 1
-                if run.get("isSlaViolated"):        d["viols"]  += 1
-                d["logical"] += (lb.get("stats") or {}).get("logicalSizeBytes") or 0
+                if lb.get("isSlaViolated"):         d["viols"]  += 1
+                d["logical"] += (lb.get("localSnapshotStats") or {}).get("logicalSizeBytes") or 0
 
         trend_start = ws.max_row + 1
         for day in sorted(daily):

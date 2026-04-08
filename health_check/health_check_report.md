@@ -180,6 +180,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.13 | 2026-04-08 | fix: Trends tab cols I (SLA Violations) and J (Logical GB) always blank — col I used `run.get("isSlaViolated")` but field lives in `localBackupInfo`; col J used `lb.get("stats").logicalSizeBytes` but correct sub-object is `localSnapshotStats` |
 | 1.12 | 2026-04-08 | fix: Replication & Archive col E and col K still empty after v1.11 — `policy_arch_targets` stayed empty because `_arch_name()` returns `""` for ID-only vault references; supplement `arch_groups` directly from `fk_data.dataTransferPerProtectionJob[].protectionJobName` per vault; build `all_arch_targets` as union of policy chain + fk_data vault names + vault list names |
 | 1.11 | 2026-04-08 | feat: Replication & Archive col E changed from policy count to protection group count; new col K "Protection Group Names" lists every group using each target; Status shows "Configured" / "No groups assigned"; target discovery rewired through policy→group chain |
 | 1.10 | 2026-04-08 | fix: Replication & Archive col E blank — v2 policies may reference archival targets by vault ID only; added `vaultId` → name resolution via `/public/vaults`; cols G/H renamed to include API field names (`numLogicalBytesTransferred`, `numPhysicalBytesTransferred`) and cumulative note; "Vault only — no policy" → "Vault exists — not referenced by any policy" |
