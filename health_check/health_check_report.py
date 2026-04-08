@@ -56,6 +56,12 @@ Requirements
 
 Version history
 ───────────────
+  1.16 (2026-04-08) — feat: Trends chart — visible X/Y axes with tick marks,
+                     Y axis fixed 0-100 with "0.0" format, circle data-point
+                     markers (size 5, Cohesity green), 2pt line weight, StrRef
+                     category fix so date strings render as labels in Excel,
+                     auto tick-density reduction for >14 and >60 day ranges,
+                     chart title updated to note warnings are included.
   1.15 (2026-04-08) — feat: include kWarning runs in Success % calculation
                      throughout — Trends "Success % (incl. Warnings)" col H,
                      _score_protection() quick mode, _success_stats() quick
@@ -155,7 +161,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.15"
+__version__ = "1.16"
 
 import argparse
 import datetime
@@ -180,6 +186,7 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment
     from openpyxl.chart import LineChart, Reference
+    from openpyxl.chart.series import SeriesLabel
     EXCEL_OK = True
 except ImportError:
     EXCEL_OK = False
@@ -1911,22 +1918,59 @@ def _sheet_trends(wb, all_data):
                 sc.fill = _fill(ORANGE); sc.font = _font(bold=True)
 
         trend_end = ws.max_row
-        if trend_end - trend_start > 0:
+        n_days    = trend_end - trend_start + 1
+        if n_days > 1:
             chart = LineChart()
-            chart.title   = f"{cd['name']} — Daily Success Rate"
-            chart.style   = 10
-            chart.y_axis.title = "Success %"
-            chart.x_axis.title = "Date"
-            chart.height  = 12
-            chart.width   = 25
+            chart.title  = f"{cd['name']} — Daily Success Rate (incl. Warnings)"
+            chart.style  = 10
+            chart.height = 14
+            chart.width  = 28
+
+            # ── Y axis: Success %, fixed 0–100, tick marks visible ───────────
+            chart.y_axis.title         = "Success %"
+            chart.y_axis.numFmt        = "0.0"
+            chart.y_axis.majorTickMark = "out"
+            chart.y_axis.tickLblPos    = "nextTo"
+            chart.y_axis.delete        = False
+            chart.y_axis.scaling.min   = 0
+            chart.y_axis.scaling.max   = 100
+
+            # ── X axis: date strings, tick marks visible ──────────────────────
+            chart.x_axis.title         = "Date"
+            chart.x_axis.majorTickMark = "out"
+            chart.x_axis.tickLblPos    = "low"
+            chart.x_axis.delete        = False
+            # Reduce label density so dates don't overlap on long ranges
+            if n_days > 60:
+                chart.x_axis.tickLblSkip = 7
+            elif n_days > 14:
+                chart.x_axis.tickLblSkip = 2
+
             data_ref = Reference(ws, min_col=8, min_row=trend_start,
                                  max_row=trend_end)
             chart.add_data(data_ref)
-            dates_ref = Reference(ws, min_col=2, min_row=trend_start,
-                                  max_row=trend_end)
-            chart.set_categories(dates_ref)
-            chart.series[0].title = None
-            chart.series[0].graphicalProperties.line.solidFill = COH_GREEN
+
+            # ── StrRef forces <c:strRef> so Excel renders date strings ────────
+            try:
+                from openpyxl.chart.data_source import DataSource, StrRef
+                from openpyxl.utils import get_column_letter as _gcl
+                cat_formula = (f"'{ws.title}'!$B${trend_start}:$B${trend_end}")
+                chart.series[0].cat = DataSource(strRef=StrRef(f=cat_formula))
+            except ImportError:
+                dates_ref = Reference(ws, min_col=2, min_row=trend_start,
+                                      max_row=trend_end)
+                chart.set_categories(dates_ref)
+
+            # ── Series styling: Cohesity green line + circle markers ──────────
+            s = chart.series[0]
+            s.title = SeriesLabel(v="Success %")
+            s.graphicalProperties.line.solidFill = COH_GREEN
+            s.graphicalProperties.line.width     = 18000   # 2 pt in EMUs
+            s.marker.symbol  = "circle"
+            s.marker.size    = 5
+            s.marker.graphicalProperties.solidFill   = COH_GREEN
+            s.marker.graphicalProperties.line.solidFill = COH_GREEN
+
             ws.add_chart(chart, f"B{trend_end + 2}")
 
     auto_fit_columns(ws)
