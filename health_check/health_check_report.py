@@ -63,6 +63,35 @@ Requirements
 
 Version history
 ───────────────
+  1.21 (2026-04-08) — feat: Tier 1/2/3 ELF inventory additions. New data
+                     collection: _certificates(), _agents(), _disks(),
+                     _sources(), _users(), _idps(), _tenants(). New Excel
+                     sheets: Disk Health (per-disk status/SSD wear/encryption),
+                     Agent Health (agent version/status/upgradability), Source
+                     Coverage (registered sources with protected/unprotected
+                     ratio), User Security (MFA/locked/roles/last-login).
+                     Security sheet expanded: audit log, NTP auth, remote
+                     tunnel, cluster MFA, SSO/IDP, TLS cert expiry. New
+                     recommendations: cert expiry CRITICAL/HIGH, unhealthy
+                     agents HIGH, failed/missing disks CRITICAL, SSD wear HIGH,
+                     unprotected sources HIGH, users without MFA MEDIUM, no SSO
+                     LOW, audit log not enabled MEDIUM. Sheet count: 14 → 18.
+  1.20 (2026-04-08) — fix: 6.8.1 LTS had EOS November 15 2024 (OOS) — was
+                     incorrectly matched by "6.8" prefix as in-support; split
+                     table so only 6.8.2+ maps to "In Support — LTS Jun 2026".
+                     Hardware EOL table expanded: added C2100, C2200, C2510,
+                     C4500 model variants confirmed in Cohesity EOL doc (Oct 2025).
+  1.19 (2026-04-08) — feat: software and hardware lifecycle tracking. Added
+                     SOFTWARE_EOS and HARDWARE_EOL reference tables from
+                     Cohesity Product Life Cycle Policy (Oct 2025). Infrastructure
+                     sheet gets 3 new columns: SW Lifecycle Status (colour-coded
+                     red/orange/green), SW EOS Date, Days to EOS. New "Node Hardware"
+                     sheet (sheet 3): per-node model, serial, node type, capacity,
+                     storage tiers, HW EOL date, HW EOL status colour-coded.
+                     Recommendations engine updated: CRITICAL for out-of-support
+                     software or past-EOL hardware, HIGH/MEDIUM for upcoming dates.
+                     Word document gains a Software & Hardware Lifecycle section.
+                     Sheet count: 13 → 14.
   1.18 (2026-04-08) — fix: Trends tab still truncated after v1.17 — previous
                      pagination used `len(page) < PAGE_SIZE` to detect last
                      page, but the actual server cap varies per cluster version
@@ -176,35 +205,6 @@ Version history
                      policyId→name lookup, v2 schedule/target/retention paths,
                      broadened FortKnox detection, N/A capacity fallback.
                      feat: output filename includes customer name + local timestamp.
-  1.21 (2026-04-08) — feat: Tier 1/2/3 ELF inventory additions. New data
-                     collection: _certificates(), _agents(), _disks(),
-                     _sources(), _users(), _idps(), _tenants(). New Excel
-                     sheets: Disk Health (per-disk status/SSD wear/encryption),
-                     Agent Health (agent version/status/upgradability), Source
-                     Coverage (registered sources with protected/unprotected
-                     ratio), User Security (MFA/locked/roles/last-login).
-                     Security sheet expanded: audit log, NTP auth, remote
-                     tunnel, cluster MFA, SSO/IDP, TLS cert expiry. New
-                     recommendations: cert expiry CRITICAL/HIGH, unhealthy
-                     agents HIGH, failed/missing disks CRITICAL, SSD wear HIGH,
-                     unprotected sources HIGH, users without MFA MEDIUM, no SSO
-                     LOW, audit log not enabled MEDIUM. Sheet count: 14 → 18.
-  1.20 (2026-04-08) — fix: 6.8.1 LTS had EOS November 15 2024 (OOS) — was
-                     incorrectly matched by "6.8" prefix as in-support; split
-                     table so only 6.8.2+ maps to "In Support — LTS Jun 2026".
-                     Hardware EOL table expanded: added C2100, C2200, C2510,
-                     C4500 model variants confirmed in Cohesity EOL doc (Oct 2025).
-  1.19 (2026-04-08) — feat: software and hardware lifecycle tracking. Added
-                     SOFTWARE_EOS and HARDWARE_EOL reference tables from
-                     Cohesity Product Life Cycle Policy (Oct 2025). Infrastructure
-                     sheet gets 3 new columns: SW Lifecycle Status (colour-coded
-                     red/orange/green), SW EOS Date, Days to EOS. New "Node Hardware"
-                     sheet (sheet 3): per-node model, serial, node type, capacity,
-                     storage tiers, HW EOL date, HW EOL status colour-coded.
-                     Recommendations engine updated: CRITICAL for out-of-support
-                     software or past-EOL hardware, HIGH/MEDIUM for upcoming dates.
-                     Word document gains a Software & Hardware Lifecycle section.
-                     Sheet count: 13 → 14.
   1.0 (2026-04-08) — feat: initial release. 12-sheet Excel + Word document.
                      Health scoring, recommendations engine, trend charts.
 """
