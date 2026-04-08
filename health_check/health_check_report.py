@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.10 (2026-04-08) — fix: Replication & Archive col E (Policies Using) showed
+                     0 because _arch_name() returned "" when the v2 policy stores
+                     archival targets by vault ID only (no name/targetName field).
+                     Added vault ID → name resolution via /public/vaults lookup.
+                     Columns G/H renamed to include API field names and note that
+                     values are cumulative totals. "Vault only — no policy" status
+                     reworded to "Vault exists — not referenced by any policy".
   1.9 (2026-04-08) — fix: Replication & Archive still blank after v1.8.
                      dataTransferToVaults API requires vaultIds filter to
                      return any rows — added vault ID extraction and pass-
@@ -110,7 +117,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.9"
+__version__ = "1.10"
 
 import argparse
 import datetime
@@ -1455,11 +1462,26 @@ def _sheet_replication(wb, all_data):
 
     cols = ["Cluster", "Target Type", "Target Name", "Vault Type",
             "Policies Using",
-            "Vault Storage (TB)", "Logical Transferred (TB)", "Physical Transferred (TB)",
+            "Vault Storage (TB)",
+            "Logical Data Transferred (TB)\n[numLogicalBytesTransferred — cumulative]",
+            "Physical Data Transferred (TB)\n[numPhysicalBytesTransferred — cumulative]",
             "Status", "Notes"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
+        # ── Vault ID → name map (needed when policies reference vaults by ID only) ──
+        vault_name_by_id = {}   # vault id  → name
+        vault_type_by_name = {} # name      → vaultType
+        vault_id_by_name   = {} # name      → id
+        for v in cd["vaults"]:
+            vn = v.get("name") or v.get("vaultName") or ""
+            vi = v.get("id")
+            vt = v.get("vaultType", "")
+            if vi: vault_name_by_id[vi] = vn or f"Vault-{vi}"
+            if vn:
+                vault_type_by_name[vn] = vt
+                if vi: vault_id_by_name[vn] = vi
+
         # ── Policy target name extraction ─────────────────────────────────
         def _rep_name(t):
             cfg = t.get("remoteTargetConfig") or {}
@@ -1468,10 +1490,20 @@ def _sheet_replication(wb, all_data):
                     or cfg.get("name") or "")
 
         def _arch_name(t):
+            """Return vault name for an archival target.
+            Cohesity v2 may store the target as name, vaultName, or vault ID only.
+            Falls back to resolving the ID against the cluster's vault list."""
             cfg = t.get("archivalTargetConfig") or {}
-            return (t.get("targetName")
+            name = (t.get("targetName")
                     or cfg.get("name")
-                    or cfg.get("vaultName") or "")
+                    or cfg.get("vaultName")
+                    or "")
+            if not name:
+                # Try resolving by vault ID when name fields are absent
+                vid = cfg.get("vaultId") or cfg.get("id")
+                if vid:
+                    name = vault_name_by_id.get(vid, f"Vault-{vid}")
+            return name
 
         # Count how many policies reference each target; capture vault type from
         # the policy archival target config directly — more reliable than a
@@ -1493,20 +1525,7 @@ def _sheet_replication(wb, all_data):
                     arch_use[n] = {"count": 0, "targetType": ttype}
                 arch_use[n]["count"] += 1
 
-        # ── FK / vault data cross-reference ───────────────────────────────
-        # Build lookups keyed by BOTH vault name and vault ID.
-        # Vault name from /public/vaults may differ from vaultName in fk_data,
-        # so ID-based lookup is the reliable fallback.
-        vault_type_by_name = {}   # name → vaultType
-        vault_id_by_name   = {}   # name → id
-        for v in cd["vaults"]:
-            vn = v.get("name") or v.get("vaultName") or ""
-            vi = v.get("id")
-            vt = v.get("vaultType", "")
-            if vn:
-                vault_type_by_name[vn] = vt
-                if vi: vault_id_by_name[vn] = vi
-
+        # ── FK transfer stats cross-reference ────────────────────────────
         fk_by_name = {}   # vaultName (from fk_data) → transfer stats
         fk_by_id   = {}   # vaultId   (from fk_data) → transfer stats
         for fk in (cd["fk_data"] or []):
@@ -1577,7 +1596,7 @@ def _sheet_replication(wb, all_data):
                      round(bytes_to_tb(fkd.get("consumed") or 0), 3),
                      round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
-                     "Vault only — no policy", note]
+                     "Vault exists — not referenced by any policy", note]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
