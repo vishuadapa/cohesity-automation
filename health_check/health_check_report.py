@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.0
+health_check_report.py  v1.21
 
-Multi-cluster Cohesity health check — 12-sheet Excel workbook + Word document.
+Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios and produces:
 
@@ -17,22 +17,29 @@ engagements.  Gathers live data from Cohesity Helios and produces:
   ────────────
   1  Executive Summary   — per-cluster health score & grade
   2  Infrastructure      — versions, nodes, disks, config
-  3  Protection Health   — success rates, SLA, RPO gaps
-  4  Storage & Capacity  — utilisation, data reduction, runway
-  5  Policy Audit        — retention, replication, archival (groups count fixed)
-  6  Policy → Groups     — every group with the policy that governs it
-  7  Alerts              — open critical/warning with age
-  8  Security            — encryption, FIPS, immutability, vault
-  9  Replication/Archive — targets, last transfer, FortKnox
-  10 Data Services       — NAS views, quota utilisation
-  11 Coverage Gaps       — groups with no recent successful backup
-  12 Trends (30d)        — daily success rate + storage growth charts
-  13 Recommendations     — prioritised action list
+  3  Node Hardware       — per-node model, serial, EOL status
+  4  Disk Health         — per-disk status, SSD wear %, encryption
+  5  Protection Health   — success rates, SLA, RPO gaps
+  6  Storage & Capacity  — utilisation, data reduction, runway
+  7  Policy Audit        — retention, replication, archival (groups count fixed)
+  8  Policy → Groups     — every group with the policy that governs it
+  9  Alerts              — open critical/warning with age
+  10 Security            — expanded checklist: encryption, FIPS, audit log, MFA,
+                           NTP auth, tunnel, SSO, cert expiry, vault, FK
+  11 Agent Health        — per-host agent version, status, upgradability
+  12 Source Coverage     — registered sources with protected/unprotected counts
+  13 Replication/Archive — targets, last transfer, FortKnox
+  14 Data Services       — NAS views, quota utilisation
+  15 Coverage Gaps       — groups with no recent successful backup
+  16 User Security       — user accounts, MFA, locked status, roles, last login
+  17 Trends (30d)        — daily success rate + storage growth charts
+  18 Recommendations     — prioritised action list
 
   Word document
   ─────────────
   Cover, Executive Summary, Environment, Protection, Storage,
-  Security, Recommendations, Methodology appendix.
+  Security, Agent & Source Coverage, User Security, Recommendations,
+  Methodology appendix.
 
 Usage
 ─────
@@ -169,6 +176,19 @@ Version history
                      policyId→name lookup, v2 schedule/target/retention paths,
                      broadened FortKnox detection, N/A capacity fallback.
                      feat: output filename includes customer name + local timestamp.
+  1.21 (2026-04-08) — feat: Tier 1/2/3 ELF inventory additions. New data
+                     collection: _certificates(), _agents(), _disks(),
+                     _sources(), _users(), _idps(), _tenants(). New Excel
+                     sheets: Disk Health (per-disk status/SSD wear/encryption),
+                     Agent Health (agent version/status/upgradability), Source
+                     Coverage (registered sources with protected/unprotected
+                     ratio), User Security (MFA/locked/roles/last-login).
+                     Security sheet expanded: audit log, NTP auth, remote
+                     tunnel, cluster MFA, SSO/IDP, TLS cert expiry. New
+                     recommendations: cert expiry CRITICAL/HIGH, unhealthy
+                     agents HIGH, failed/missing disks CRITICAL, SSD wear HIGH,
+                     unprotected sources HIGH, users without MFA MEDIUM, no SSO
+                     LOW, audit log not enabled MEDIUM. Sheet count: 14 → 18.
   1.20 (2026-04-08) — fix: 6.8.1 LTS had EOS November 15 2024 (OOS) — was
                      incorrectly matched by "6.8" prefix as in-support; split
                      table so only 6.8.2+ maps to "In Support — LTS Jun 2026".
@@ -189,7 +209,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.20"
+__version__ = "1.21"
 
 import argparse
 import datetime
@@ -240,6 +260,10 @@ ALERT_AGE_CRIT_DAYS  = 7        # open critical alert older than N days = findin
 VIEW_QUOTA_WARN_PCT  = 80       # view at this % of quota = warning
 VIEW_QUOTA_CRIT_PCT  = 90       # view at this % of quota = critical
 VERSION_WARN_PREFIX  = "7."     # clusters below this major version get a flag
+SSD_WEAR_WARN_PCT    = 70       # SSD wear % — warning
+SSD_WEAR_CRIT_PCT    = 80       # SSD wear % — critical
+CERT_WARN_DAYS       = 90       # TLS cert expiry warning threshold (days)
+CERT_CRIT_DAYS       = 30       # TLS cert expiry critical threshold (days)
 
 # ── Software End-of-Support matrix (checked top-to-bottom, first prefix match wins) ──
 # Source: Cohesity Product Life Cycle Policy (updated Oct 2025)
@@ -522,6 +546,70 @@ def _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, debug):
     return (d or {}).get("dataTransferSummary") or []
 
 
+def _certificates(session, h, debug):
+    """Fetch web server TLS certificate(s). Returns list of cert dicts."""
+    d = _get(session, h, "/irisservices/api/v1/public/certificates/webServer",
+             debug=debug)
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict) and d:
+        return [d]
+    return []
+
+
+def _agents(session, h, debug):
+    """Fetch Cohesity agent deployment/health status per registered host."""
+    d = _get(session, h, "/irisservices/api/v1/public/reports/agents",
+             debug=debug)
+    return (d or {}).get("agentDeploymentStatusList") or []
+
+
+def _disks(session, h, nodes, debug):
+    """Fetch per-disk info for each node via the private disks/local API.
+    Returns an empty list gracefully if the endpoint is not proxied."""
+    all_disks = []
+    for n in nodes:
+        nid = n.get("id")
+        if not nid:
+            continue
+        d = _get(session, h, "/irisservices/api/v1/disks/local",
+                 params={"nodeId": nid}, debug=debug)
+        if not d:
+            continue
+        disk_list = d if isinstance(d, list) else (d.get("disks") or [])
+        for disk in disk_list:
+            disk["_nodeId"] = nid
+            disk["_nodeIp"] = n.get("ip", "")
+        all_disks.extend(disk_list)
+    return all_disks
+
+
+def _sources(session, h, debug):
+    """Fetch registered protection sources with coverage stats."""
+    d = _get(session, h, "/v2/data-protect/sources",
+             params={"includeTenants": "true"}, debug=debug)
+    return (d or {}).get("sources") or []
+
+
+def _users(session, h, debug):
+    """Fetch local and domain user accounts."""
+    d = _get(session, h, "/irisservices/api/v1/public/users",
+             params={"allUnderHierarchy": "true"}, debug=debug)
+    return d or []
+
+
+def _idps(session, h, debug):
+    """Fetch configured SSO / IDP providers."""
+    d = _get(session, h, "/irisservices/api/v1/public/idps", debug=debug)
+    return d or []
+
+
+def _tenants(session, h, debug):
+    """Fetch tenant / organisation list (multi-tenancy inventory)."""
+    d = _get(session, h, "/irisservices/api/v1/public/tenants", debug=debug)
+    return d or []
+
+
 def collect_cluster(session, api_key, cluster, args):
     """Collect all health-check data for one cluster. Returns a dict."""
     name = cluster.get("name", "Unknown")
@@ -550,6 +638,17 @@ def collect_cluster(session, api_key, cluster, args):
     fk_data   = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
     print(" run-summary...", end="", flush=True)
     v1_runs   = _v1_protection_runs(session, h, start_usecs, end_usecs, dbg)
+    print(" certs/agents...", end="", flush=True)
+    certs    = _certificates(session, h, dbg)
+    agents   = _agents(session, h, dbg)
+    print(" disks...", end="", flush=True)
+    disks    = _disks(session, h, nodes, dbg)
+    print(" sources...", end="", flush=True)
+    sources  = _sources(session, h, dbg)
+    print(" users/idps...", end="", flush=True)
+    users    = _users(session, h, dbg)
+    idps     = _idps(session, h, dbg)
+    tenants  = _tenants(session, h, dbg)
 
     group_runs = {}
     if not args.quick:
@@ -581,6 +680,13 @@ def collect_cluster(session, api_key, cluster, args):
         "vaults":      vaults,
         "fk_data":     fk_data,
         "v1_runs":     v1_runs,
+        "certs":       certs,
+        "agents":      agents,
+        "disks":       disks,
+        "sources":     sources,
+        "users":       users,
+        "idps":        idps,
+        "tenants":     tenants,
         "start_usecs": start_usecs,
         "end_usecs":   end_usecs,
     }
@@ -1037,6 +1143,134 @@ def _build_recommendations(cd):
             f"{len(near_quota)} view(s) at ≥{VIEW_QUOTA_CRIT_PCT}% of quota",
             f"Expand quota or clean up: {', '.join(near_quota[:3])}",
             "Views at quota block all new writes to that share"))
+
+    # ── TLS Certificate expiry ────────────────────────────────────────────────
+    for cert in (cd.get("certs") or []):
+        exp_usecs = (cert.get("expiryUsecs")
+                     or cert.get("expiryTimeMsecs")
+                     or cert.get("notAfter"))
+        if not exp_usecs:
+            continue
+        # Handle usecs (>1e15) vs msecs (>1e12) vs seconds
+        if exp_usecs > 1_000_000_000_000_000:
+            exp_dt = _dt.date.fromtimestamp(exp_usecs / 1_000_000)
+        elif exp_usecs > 1_000_000_000_000:
+            exp_dt = _dt.date.fromtimestamp(exp_usecs / 1_000)
+        else:
+            exp_dt = _dt.date.fromtimestamp(exp_usecs)
+        days_left = (exp_dt - today).days
+        cn = (cert.get("commonName") or cert.get("subject")
+              or cert.get("certName") or "cluster TLS certificate")
+        if days_left < 0:
+            recs.append(_r("CRITICAL", "Certificate",
+                f"TLS certificate '{cn}' expired {abs(days_left)} days ago",
+                "Replace the expired certificate immediately to avoid browser/API errors",
+                "Expired certificates break HTTPS access and API connectivity"))
+        elif days_left < CERT_CRIT_DAYS:
+            recs.append(_r("CRITICAL", "Certificate",
+                f"TLS certificate '{cn}' expires in {days_left} days ({exp_dt})",
+                "Renew or replace the certificate before expiry to prevent service disruption",
+                "Expired certificates break HTTPS access and API connectivity"))
+        elif days_left < CERT_WARN_DAYS:
+            recs.append(_r("HIGH", "Certificate",
+                f"TLS certificate '{cn}' expires in {days_left} days ({exp_dt})",
+                "Plan certificate renewal now — lead time for CA-signed certs can be 2–4 weeks",
+                "Certificate expiry causes browser warnings and may break automated API calls"))
+
+    # ── Agent health ──────────────────────────────────────────────────────────
+    unhealthy_agents = []
+    for agent in (cd.get("agents") or []):
+        st = ((agent.get("healthStatus") or {}).get("status")
+              or agent.get("agentStatus") or agent.get("status") or "")
+        if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
+            host = (agent.get("hostName") or agent.get("host")
+                    or agent.get("hostIp") or "unknown")
+            unhealthy_agents.append(host)
+    if unhealthy_agents:
+        examples = ", ".join(unhealthy_agents[:3])
+        recs.append(_r("HIGH", "Agent Health",
+            f"{len(unhealthy_agents)} agent(s) unhealthy or unreachable: {examples}"
+            + (" and more" if len(unhealthy_agents) > 3 else ""),
+            "Check agent connectivity, firewall rules, and reinstall if necessary",
+            "Unhealthy agents silently prevent backups from running on affected hosts"))
+
+    # ── Disk health and SSD wear ──────────────────────────────────────────────
+    failed_disks = [d for d in (cd.get("disks") or [])
+                    if (d.get("diskStatus") or d.get("status") or "").lower()
+                    in ("kfailed", "failed", "kmissing", "missing")]
+    if failed_disks:
+        recs.append(_r("CRITICAL", "Disk Health",
+            f"{len(failed_disks)} disk(s) in failed or missing state",
+            "Replace failed disks immediately and verify cluster redundancy",
+            "Failed disks reduce storage redundancy and risk data loss"))
+
+    high_wear = [(d.get("_nodeIp", "?"),
+                  d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+                 for d in (cd.get("disks") or [])
+                 if (d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+                 >= SSD_WEAR_CRIT_PCT]
+    if high_wear:
+        examples = ", ".join(f"{ip} ({w}%)" for ip, w in high_wear[:3])
+        recs.append(_r("HIGH", "Disk Health",
+            f"{len(high_wear)} SSD(s) with ≥{SSD_WEAR_CRIT_PCT}% wear: {examples}",
+            "Plan SSD replacement before wear reaches 100% to avoid sudden failure",
+            "Worn SSDs have elevated failure risk and may degrade cluster performance"))
+
+    # ── Source coverage ───────────────────────────────────────────────────────
+    low_coverage = []
+    for src in (cd.get("sources") or []):
+        si = src.get("sourceInfo") or src
+        name = si.get("name") or si.get("sourceName") or ""
+        prot   = (src.get("protectedObjectsCount")
+                  or src.get("numProtectedObjects")
+                  or (src.get("stats") or {}).get("protectedObjectsCount") or 0)
+        unprot = (src.get("unprotectedObjectsCount")
+                  or src.get("numUnprotectedObjects")
+                  or (src.get("stats") or {}).get("unprotectedObjectsCount") or 0)
+        total  = prot + unprot
+        if total > 0 and unprot > 0 and (unprot / total * 100) >= 25:
+            low_coverage.append(f"{name} ({unprot}/{total} unprotected)")
+    if low_coverage:
+        examples = ", ".join(low_coverage[:3])
+        recs.append(_r("HIGH", "Coverage",
+            f"{len(low_coverage)} source(s) have ≥25% unprotected objects: {examples}"
+            + (" and more" if len(low_coverage) > 3 else ""),
+            "Review unprotected objects in each source and add them to a protection group",
+            "Unprotected objects are unrecoverable in the event of loss or corruption"))
+
+    # ── User security ─────────────────────────────────────────────────────────
+    admin_roles = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
+    users_no_mfa = [
+        u.get("username", "?") for u in (cd.get("users") or [])
+        if not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+        and bool(set(u.get("roles") or []) & admin_roles)
+    ]
+    if users_no_mfa:
+        examples = ", ".join(users_no_mfa[:3])
+        recs.append(_r("MEDIUM", "Security",
+            f"{len(users_no_mfa)} admin user(s) without MFA: {examples}"
+            + (" and more" if len(users_no_mfa) > 3 else ""),
+            "Enable MFA for all administrator accounts in Helios → Access Management",
+            "Admin accounts without MFA are vulnerable to credential theft attacks"))
+
+    # ── Audit log ─────────────────────────────────────────────────────────────
+    info_local = cd["info"]
+    audit_enabled = (info_local.get("auditLogEnabled")
+                     or (info_local.get("auditLogConfig") or {}).get("enabled")
+                     or (info_local.get("clusterAuditConfig") or {}).get("enabled")
+                     or False)
+    if not audit_enabled:
+        recs.append(_r("MEDIUM", "Security",
+            "Cluster audit logging is not enabled",
+            "Enable audit logging in cluster security settings to capture all admin actions",
+            "Without audit logs, unauthorized changes cannot be detected or investigated"))
+
+    # ── SSO / IDP ─────────────────────────────────────────────────────────────
+    if not cd.get("idps"):
+        recs.append(_r("LOW", "Security",
+            "No SSO / IDP is configured",
+            "Configure SAML or LDAP-based SSO for centralized identity management",
+            "Without SSO, local accounts with individual passwords increase credential risk"))
 
     recs.sort(key=lambda x: _PRIORITY_ORDER.get(x["priority"], 99))
     return recs
@@ -1681,15 +1915,20 @@ def _sheet_alerts(wb, all_data):
 
 
 def _sheet_security(wb, all_data):
+    import datetime as _dt
     ws = wb.create_sheet("Security")
     ws.freeze_panes = "A3"
-    _title(ws, "Security Posture — Checklist vs Best Practices", "K")
+    _title(ws, "Security Posture — Checklist vs Best Practices", "Q")
 
     cols = ["Cluster", "Encryption at Rest", "FIPS Mode",
             "Vault Configured", "FortKnox / Immutable",
             "Replication", "Archival",
             "Min Local Retention", "Min Archival Retention",
-            "Security Score /100", "Gaps"]
+            "Security Score /100",
+            "Audit Log", "NTP Auth", "Remote Tunnel",
+            "Cluster MFA", "SSO / IDP",
+            "Soonest Cert Expiry",
+            "Gaps"]
     _hdr(ws, 2, cols)
 
     _RET_MULT = {"Days": 1, "Weeks": 7, "Months": 30, "Years": 365}
@@ -1717,6 +1956,8 @@ def _sheet_security(wb, all_data):
                 if v: vals.append(v)
         return f"{min(vals)} days" if vals else "N/A"
 
+    today = _dt.date.today()
+
     for cd in all_data:
         info     = cd["info"]
         vaults   = cd["vaults"]
@@ -1733,14 +1974,61 @@ def _sheet_security(wb, all_data):
         has_arch = any((p.get("remoteTargetPolicy") or {}).get("archivalTargets")
                        for p in policies)
 
+        # ── Extended security controls ─────────────────────────────────────
+        audit_on = bool(
+            info.get("auditLogEnabled")
+            or (info.get("auditLogConfig") or {}).get("enabled")
+            or (info.get("clusterAuditConfig") or {}).get("enabled")
+        )
+        ntp_auth = bool(
+            (info.get("ntpSettings") or {}).get("ntpAuthenticationEnabled")
+            or (info.get("ntpSettings") or {}).get("authEnabled")
+        )
+        tunnel_on = bool(
+            info.get("enableRemoteSupport")
+            or (info.get("remoteSupportConfig") or {}).get("enabled")
+            or info.get("remoteSupportEnabled")
+        )
+        cluster_mfa = bool(
+            info.get("clusterMfaEnabled")
+            or info.get("mfaEnabled")
+            or (info.get("mfaConfig") or {}).get("enabled")
+        )
+        has_sso = bool(cd.get("idps"))
+
+        # Soonest TLS cert expiry
+        cert_expiry_str = ""
+        soonest_days    = None
+        for cert in (cd.get("certs") or []):
+            exp_raw = (cert.get("expiryUsecs")
+                       or cert.get("expiryTimeMsecs")
+                       or cert.get("notAfter"))
+            if not exp_raw:
+                continue
+            if exp_raw > 1_000_000_000_000_000:
+                exp_dt = _dt.date.fromtimestamp(exp_raw / 1_000_000)
+            elif exp_raw > 1_000_000_000_000:
+                exp_dt = _dt.date.fromtimestamp(exp_raw / 1_000)
+            else:
+                exp_dt = _dt.date.fromtimestamp(exp_raw)
+            d = (exp_dt - today).days
+            if soonest_days is None or d < soonest_days:
+                soonest_days    = d
+                cert_expiry_str = f"{exp_dt.isoformat()} ({d}d)"
+
         gaps = []
-        if not enc:       gaps.append("No encryption")
-        if not fips:      gaps.append("FIPS off")
-        if not has_vault: gaps.append("No vault")
+        if not enc:         gaps.append("No encryption")
+        if not fips:        gaps.append("FIPS off")
+        if not has_vault:   gaps.append("No vault")
         if fk_st == "none": gaps.append("No immutability")
         if fk_st == "idle": gaps.append("FK configured — not sending data")
-        if not has_repl:  gaps.append("No replication")
-        if not has_arch:  gaps.append("No archival")
+        if not has_repl:    gaps.append("No replication")
+        if not has_arch:    gaps.append("No archival")
+        if not audit_on:    gaps.append("Audit log off")
+        if not cluster_mfa: gaps.append("No cluster MFA")
+        if not has_sso:     gaps.append("No SSO")
+        if soonest_days is not None and soonest_days < CERT_WARN_DAYS:
+            gaps.append(f"Cert expires {soonest_days}d")
 
         fk_label = {"active": "Active", "idle": "Configured — Idle", "none": "No"}[fk_st]
         yn = lambda v: "Yes" if v else "No"
@@ -1748,6 +2036,9 @@ def _sheet_security(wb, all_data):
                yn(has_repl), yn(has_arch),
                _min_local_days(policies), _min_arch_days(policies),
                scores["security"],
+               yn(audit_on), yn(ntp_auth), yn(tunnel_on),
+               yn(cluster_mfa), yn(has_sso),
+               cert_expiry_str or "—",
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
@@ -1761,21 +2052,47 @@ def _sheet_security(wb, all_data):
         # FK column 5: three-state colouring
         fk_cell = ws.cell(row=rn, column=5)
         if fk_st == "active":
-            fk_cell.fill = _fill(LT_GREEN)
-            fk_cell.font = _font(bold=True)
+            fk_cell.fill = _fill(LT_GREEN); fk_cell.font = _font(bold=True)
         elif fk_st == "idle":
-            fk_cell.fill = _fill(ORANGE)
-            fk_cell.font = _font(bold=True)
+            fk_cell.fill = _fill(ORANGE);   fk_cell.font = _font(bold=True)
         else:
-            fk_cell.fill = _fill(RED)
-            fk_cell.font = _font(bold=True, color=WHITE)
+            fk_cell.fill = _fill(RED);      fk_cell.font = _font(bold=True, color=WHITE)
 
+        # Score col 10
         sc = ws.cell(row=rn, column=10)
         sc.fill = _rag_fill(scores["security"])
         sc.font = _font(bold=True)
 
+        # Extended controls: audit(11), NTP auth(12), tunnel(13), MFA(14), SSO(15)
+        for col, flag, warn_if_off in [
+            (11, audit_on,    True),
+            (12, ntp_auth,    False),   # NTP auth yellow warning, not red
+            (13, tunnel_on,   False),   # tunnel: yellow if on (reduce attack surface)
+            (14, cluster_mfa, True),
+            (15, has_sso,     False),
+        ]:
+            cell = ws.cell(row=rn, column=col)
+            if col == 13:
+                # Tunnel ON is acceptable but yellow; OFF is green
+                cell.fill = _fill(YELLOW) if flag else _fill(LT_GREEN)
+                cell.font = _font(bold=True)
+            elif warn_if_off:
+                cell.fill = _fill(LT_GREEN) if flag else _fill(RED)
+                cell.font = _font(bold=True, color=WHITE if not flag else "000000")
+            else:
+                cell.fill = _fill(LT_GREEN) if flag else _fill(YELLOW)
+                cell.font = _font(bold=True)
+
+        # Cert expiry col 16
+        if soonest_days is not None:
+            cc = ws.cell(row=rn, column=16)
+            if soonest_days < CERT_CRIT_DAYS:
+                cc.fill = _fill(RED);    cc.font = _font(bold=True, color=WHITE)
+            elif soonest_days < CERT_WARN_DAYS:
+                cc.fill = _fill(ORANGE); cc.font = _font(bold=True)
+
     auto_fit_columns(ws)
-    ws.column_dimensions["K"].width = 55
+    ws.column_dimensions["Q"].width = 60
 
 
 def _sheet_replication(wb, all_data):
@@ -2275,6 +2592,284 @@ def _sheet_recommendations(wb, all_data):
         ws.column_dimensions[col_letter].width = 55
 
 
+def _sheet_disk_health(wb, all_data):
+    ws = wb.create_sheet("Disk Health")
+    ws.freeze_panes = "A3"
+    _title(ws, "Disk Health — Per-Disk Status, SSD Wear & Encryption", "L")
+
+    cols = ["Cluster", "Node ID", "Node IP", "Disk ID", "Disk Type",
+            "Model", "Serial", "Status", "SSD Wear %",
+            "Capacity (GB)", "Encrypted", "Storage Tier"]
+    _hdr(ws, 2, cols)
+
+    any_data = False
+    for cd in all_data:
+        disks = cd.get("disks") or []
+        if not disks:
+            continue
+        any_data = True
+        for disk in disks:
+            status = disk.get("diskStatus") or disk.get("status") or "Unknown"
+            wear   = (disk.get("ssdWearLevelPct") or disk.get("wearLevel")
+                      or disk.get("lifeUsedPct"))
+            cap_b  = ((disk.get("usageStats") or {}).get("totalPhysicalCapacityBytes")
+                      or disk.get("capacityBytes") or 0)
+            enc    = bool(disk.get("encryptionEnabled") or disk.get("encrypted"))
+            tier   = disk.get("storageTier") or disk.get("diskTier") or ""
+            dtype  = disk.get("diskType") or disk.get("type") or ""
+
+            row = [cd["name"],
+                   disk.get("_nodeId", ""), disk.get("_nodeIp", ""),
+                   disk.get("diskId") or disk.get("id") or "",
+                   dtype,
+                   disk.get("diskModel") or disk.get("model") or "",
+                   disk.get("diskSerial") or disk.get("serialNumber") or "",
+                   status,
+                   wear if wear is not None else "",
+                   round(bytes_to_gb(cap_b), 2) if cap_b else "",
+                   "Yes" if enc else "No",
+                   tier]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            # Colour Status cell (col 8)
+            sc = ws.cell(row=rn, column=8)
+            if status.lower() in ("kfailed", "failed", "kmissing", "missing"):
+                sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
+            elif status.lower() in ("kdegraded", "degraded", "kmarkedforremoval",
+                                    "marked_for_removal"):
+                sc.fill = _fill(ORANGE); sc.font = _font(bold=True)
+            elif status.lower() in ("khealthy", "healthy", "kgood", "good"):
+                sc.fill = _fill(LT_GREEN)
+
+            # Colour SSD Wear cell (col 9)
+            if wear is not None:
+                wc = ws.cell(row=rn, column=9)
+                if wear >= SSD_WEAR_CRIT_PCT:
+                    wc.fill = _fill(RED);    wc.font = _font(bold=True, color=WHITE)
+                elif wear >= SSD_WEAR_WARN_PCT:
+                    wc.fill = _fill(ORANGE); wc.font = _font(bold=True)
+
+    if not any_data:
+        ws.cell(row=3, column=1,
+                value="Disk detail not available via this API path (private endpoint).") \
+           .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+
+
+def _sheet_agent_health(wb, all_data):
+    import datetime as _dt
+    ws = wb.create_sheet("Agent Health")
+    ws.freeze_panes = "A3"
+    _title(ws, "Agent Health — Registered Host Agent Status & Versions", "I")
+
+    cols = ["Cluster", "Host", "IP Address", "OS Type",
+            "Agent Version", "Status", "Upgradable", "Cert Expiry", "Notes"]
+    _hdr(ws, 2, cols)
+
+    today    = _dt.date.today()
+    any_data = False
+    for cd in all_data:
+        agents = cd.get("agents") or []
+        if not agents:
+            continue
+        any_data = True
+        for agent in agents:
+            status = ((agent.get("healthStatus") or {}).get("status")
+                      or agent.get("agentStatus") or agent.get("status") or "")
+            upg    = (agent.get("upgradability") or agent.get("upgradable") or "")
+
+            # Certificate expiry (try usecs, then msecs)
+            cert_exp = ""
+            exp_raw  = (agent.get("certExpiryUsecs")
+                        or agent.get("certExpiryTimeMsecs"))
+            if exp_raw:
+                if exp_raw > 1_000_000_000_000_000:
+                    exp_dt = _dt.date.fromtimestamp(exp_raw / 1_000_000)
+                elif exp_raw > 1_000_000_000_000:
+                    exp_dt = _dt.date.fromtimestamp(exp_raw / 1_000)
+                else:
+                    exp_dt = _dt.date.fromtimestamp(exp_raw)
+                days_left = (exp_dt - today).days
+                cert_exp  = f"{exp_dt.isoformat()} ({days_left}d)"
+
+            notes = ""
+            err   = agent.get("lastUpgradeError")
+            if err:
+                notes = f"Upgrade error: {str(err)[:80]}"
+
+            row = [cd["name"],
+                   agent.get("hostName") or agent.get("host") or "",
+                   agent.get("hostIp") or "",
+                   agent.get("hostOsType") or agent.get("osType") or "",
+                   agent.get("agentVersion") or "",
+                   status, upg, cert_exp, notes]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            sc = ws.cell(row=rn, column=6)
+            if status.lower() in ("kunhealthy", "unhealthy", "unreachable",
+                                  "kfailed", "failed"):
+                sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
+            elif status.lower() in ("kwarning", "warning", "kdegraded",
+                                    "degraded"):
+                sc.fill = _fill(ORANGE); sc.font = _font(bold=True)
+            elif status.lower() in ("khealthy", "healthy", "krunning",
+                                    "running"):
+                sc.fill = _fill(LT_GREEN)
+
+            # Upgradable flag
+            uc = ws.cell(row=rn, column=7)
+            if "upgradable" in upg.lower():
+                uc.fill = _fill(YELLOW); uc.font = _font(bold=True)
+
+    if not any_data:
+        ws.cell(row=3, column=1,
+                value="No agent data returned from /public/reports/agents.") \
+           .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["B"].width = 35
+
+
+def _sheet_source_coverage(wb, all_data):
+    ws = wb.create_sheet("Source Coverage")
+    ws.freeze_panes = "A3"
+    _title(ws, "Source Coverage — Registered Sources & Protection Coverage", "H")
+
+    cols = ["Cluster", "Source Name", "Environment", "Total Objects",
+            "Protected", "Unprotected", "Coverage %", "Status"]
+    _hdr(ws, 2, cols)
+
+    for cd in all_data:
+        sources = cd.get("sources") or []
+        if not sources:
+            continue
+        for src in sources:
+            si   = src.get("sourceInfo") or src
+            name = si.get("name") or si.get("sourceName") or ""
+            env  = (si.get("environment") or si.get("sourceEnvironment")
+                    or src.get("environment") or "")
+
+            prot   = (src.get("protectedObjectsCount")
+                      or src.get("numProtectedObjects")
+                      or (src.get("stats") or {}).get("protectedObjectsCount")
+                      or (src.get("objectCount") or {}).get("protectedCount") or 0)
+            unprot = (src.get("unprotectedObjectsCount")
+                      or src.get("numUnprotectedObjects")
+                      or (src.get("stats") or {}).get("unprotectedObjectsCount")
+                      or (src.get("objectCount") or {}).get("unprotectedCount") or 0)
+            total  = prot + unprot
+            pct    = round(prot / total * 100, 1) if total else ""
+
+            if isinstance(pct, float):
+                if pct >= 95:    flag = "Good"
+                elif pct >= 75:  flag = f"Partial ({pct:.0f}%)"
+                else:            flag = f"Low ({pct:.0f}%)"
+            else:
+                flag = "Unknown"
+
+            row = [cd["name"], name, env,
+                   total if total else "",
+                   prot or "", unprot or "", pct, flag]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            fc = ws.cell(row=rn, column=8)
+            if isinstance(pct, float) and pct < 75:
+                fc.fill = _fill(RED);    fc.font = _font(bold=True, color=WHITE)
+            elif isinstance(pct, float) and pct < 95:
+                fc.fill = _fill(ORANGE); fc.font = _font(bold=True)
+            elif isinstance(pct, float):
+                fc.fill = _fill(LT_GREEN)
+
+    auto_fit_columns(ws)
+
+
+def _sheet_user_security(wb, all_data):
+    import datetime as _dt
+    ws = wb.create_sheet("User Security")
+    ws.freeze_panes = "A3"
+    _title(ws, "User Security — Accounts, MFA Status & Access Control", "J")
+
+    cols = ["Cluster", "Username", "Domain", "Type",
+            "Roles", "Active", "Locked", "MFA Enabled",
+            "Last Login", "Notes"]
+    _hdr(ws, 2, cols)
+
+    _ADMIN_ROLES = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin",
+                    "super_admin", "admin"}
+    any_data = False
+    for cd in all_data:
+        users = cd.get("users") or []
+        if not users:
+            continue
+        any_data = True
+        for user in users:
+            roles  = ", ".join(user.get("roles") or [])
+            locked = bool(user.get("locked") or user.get("isLocked"))
+            active = not bool(user.get("isDeleted") or user.get("isSuspended"))
+            mfa    = bool(user.get("mfaEnabled") or user.get("isMfaEnabled"))
+
+            last_ms = (user.get("lastLoginTimeMsecs")
+                       or user.get("lastLoginTime") or 0)
+            if last_ms:
+                if last_ms > 1_000_000_000_000_000:  # usecs
+                    last_ms = last_ms // 1000
+                last_login = _dt.datetime.fromtimestamp(
+                    last_ms / 1000, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+            else:
+                last_login = "Never"
+
+            is_admin = bool(
+                {r.lower() for r in (user.get("roles") or [])} &
+                {r.lower() for r in _ADMIN_ROLES}
+            )
+            domain = user.get("domain") or ""
+            utype  = (user.get("userType")
+                      or ("Local" if domain.lower() in ("local", "")
+                          else "AD/LDAP"))
+
+            notes = []
+            if locked:      notes.append("LOCKED")
+            if not mfa:     notes.append("No MFA")
+
+            row = [cd["name"], user.get("username", ""), domain, utype,
+                   roles,
+                   "Yes" if active else "No",
+                   "Yes" if locked else "No",
+                   "Yes" if mfa else "No",
+                   last_login,
+                   "; ".join(notes) if notes else "OK"]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            if locked:
+                ws.cell(row=rn, column=7).fill = _fill(RED)
+                ws.cell(row=rn, column=7).font = _font(bold=True, color=WHITE)
+
+            # MFA colour: red for admins, yellow for non-admins without MFA
+            if not mfa and is_admin:
+                ws.cell(row=rn, column=8).fill = _fill(RED)
+                ws.cell(row=rn, column=8).font = _font(bold=True, color=WHITE)
+            elif not mfa:
+                ws.cell(row=rn, column=8).fill = _fill(YELLOW)
+                ws.cell(row=rn, column=8).font = _font(bold=True)
+
+    if not any_data:
+        ws.cell(row=3, column=1,
+                value="No user data returned from /public/users.") \
+           .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["E"].width = 30
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # EXCEL ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2289,20 +2884,24 @@ def write_excel(all_data, args):
     wb.remove(wb.active)
 
     print("  Writing Excel sheets...")
-    _sheet_summary(wb, all_data)
-    _sheet_infrastructure(wb, all_data)
-    _sheet_hardware(wb, all_data)
-    _sheet_protection(wb, all_data)
-    _sheet_storage(wb, all_data)
-    _sheet_policies(wb, all_data)
-    _sheet_policy_groups(wb, all_data)
-    _sheet_alerts(wb, all_data)
-    _sheet_security(wb, all_data)
-    _sheet_replication(wb, all_data)
-    _sheet_views(wb, all_data)
-    _sheet_coverage(wb, all_data)
-    _sheet_trends(wb, all_data)
-    _sheet_recommendations(wb, all_data)
+    _sheet_summary(wb, all_data)           # 1
+    _sheet_infrastructure(wb, all_data)    # 2
+    _sheet_hardware(wb, all_data)          # 3
+    _sheet_disk_health(wb, all_data)       # 4  NEW
+    _sheet_protection(wb, all_data)        # 5
+    _sheet_storage(wb, all_data)           # 6
+    _sheet_policies(wb, all_data)          # 7
+    _sheet_policy_groups(wb, all_data)     # 8
+    _sheet_alerts(wb, all_data)            # 9
+    _sheet_security(wb, all_data)          # 10
+    _sheet_agent_health(wb, all_data)      # 11 NEW
+    _sheet_source_coverage(wb, all_data)   # 12 NEW
+    _sheet_replication(wb, all_data)       # 13
+    _sheet_views(wb, all_data)             # 14
+    _sheet_coverage(wb, all_data)          # 15
+    _sheet_user_security(wb, all_data)     # 16 NEW
+    _sheet_trends(wb, all_data)            # 17
+    _sheet_recommendations(wb, all_data)   # 18
 
     out = f"{args.output}.xlsx"
     wb.save(out)
@@ -2593,8 +3192,91 @@ def write_word(all_data, args):
             row[i].text = str(val)
     doc.add_page_break()
 
-    # ── 6. Recommendations ─────────────────────────────────────────────────
-    _h1("6. Prioritised Recommendations")
+    # ── 6. Agent Health & Source Coverage ────────────────────────────────────
+    _h1("6. Agent Health & Source Coverage")
+
+    total_agents    = sum(len(cd.get("agents") or []) for cd in all_data)
+    unhealthy_ag    = sum(
+        sum(1 for a in (cd.get("agents") or [])
+            if ((a.get("healthStatus") or {}).get("status")
+                or a.get("agentStatus") or a.get("status") or "").lower()
+            in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"))
+        for cd in all_data)
+    upgradable_ag   = sum(
+        sum(1 for a in (cd.get("agents") or [])
+            if "upgradable" in (a.get("upgradability") or "").lower())
+        for cd in all_data)
+
+    doc.add_paragraph(
+        f"The environment has {total_agents} registered host agent(s) across all clusters. "
+        f"{unhealthy_ag} agent(s) are unhealthy or unreachable. "
+        f"{upgradable_ag} agent(s) are eligible for upgrade. "
+        "Unhealthy or outdated agents silently prevent backups from running. "
+        "Refer to the Agent Health sheet in the Excel workbook for per-host detail."
+    )
+
+    total_sources = sum(len(cd.get("sources") or []) for cd in all_data)
+    low_cov_src   = sum(
+        sum(1 for s in (cd.get("sources") or [])
+            if (lambda p, u: p + u > 0 and (u / (p + u)) >= 0.25)(
+                (s.get("protectedObjectsCount") or s.get("numProtectedObjects")
+                 or (s.get("stats") or {}).get("protectedObjectsCount") or 0),
+                (s.get("unprotectedObjectsCount") or s.get("numUnprotectedObjects")
+                 or (s.get("stats") or {}).get("unprotectedObjectsCount") or 0)))
+        for cd in all_data)
+    doc.add_paragraph(
+        f"There are {total_sources} registered source(s). "
+        f"{low_cov_src} source(s) have ≥25% unprotected objects — "
+        "these objects will be unrecoverable in the event of data loss. "
+        "Review the Source Coverage sheet in the Excel workbook for per-source breakdown."
+    )
+    doc.add_page_break()
+
+    # ── 7. User Security ───────────────────────────────────────────────────────
+    _h1("7. User Security")
+
+    total_users  = sum(len(cd.get("users") or []) for cd in all_data)
+    _ADMIN_SET   = {"cohesity_admin", "admin", "kadmin", "ksuperadmin", "super_admin"}
+    admins_no_mfa = sum(
+        sum(1 for u in (cd.get("users") or [])
+            if not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+            and bool({r.lower() for r in (u.get("roles") or [])} & _ADMIN_SET))
+        for cd in all_data)
+    locked_users = sum(
+        sum(1 for u in (cd.get("users") or [])
+            if u.get("locked") or u.get("isLocked"))
+        for cd in all_data)
+    has_sso_any  = any(cd.get("idps") for cd in all_data)
+
+    doc.add_paragraph(
+        f"The environment has {total_users} user account(s) across all clusters. "
+        f"{admins_no_mfa} admin account(s) do not have MFA enabled — these are at "
+        "elevated risk from credential theft. "
+        f"{locked_users} account(s) are currently locked. "
+        f"SSO / IDP: {'Configured' if has_sso_any else 'Not configured — local credentials only'}. "
+        "Refer to the User Security sheet in the Excel workbook for per-user detail."
+    )
+
+    t_usr = doc.add_table(rows=1, cols=5)
+    t_usr.style = "Table Grid"
+    _tbl_header(t_usr, ["Cluster", "Total Users", "Admins w/o MFA",
+                         "Locked Accounts", "SSO Configured"])
+    for cd in all_data:
+        _A = {"cohesity_admin", "admin", "kadmin", "ksuperadmin", "super_admin"}
+        ano_mfa = sum(1 for u in (cd.get("users") or [])
+                      if not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+                      and bool({r.lower() for r in (u.get("roles") or [])} & _A))
+        locked  = sum(1 for u in (cd.get("users") or [])
+                      if u.get("locked") or u.get("isLocked"))
+        row = t_usr.add_row().cells
+        for i, val in enumerate([cd["name"], len(cd.get("users") or []),
+                                  ano_mfa, locked,
+                                  "Yes" if cd.get("idps") else "No"]):
+            row[i].text = str(val)
+    doc.add_page_break()
+
+    # ── 8. Recommendations ─────────────────────────────────────────────────
+    _h1("8. Prioritised Recommendations")
     doc.add_paragraph(
         "The recommendations below are ranked by priority. Critical items should "
         "be addressed immediately; High-priority items within 30 days; Medium within "

@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-08] feat(health_check): ELF inventory additions — disk health, agent health, source coverage, user security, expanded security controls (v1.21)
+
+### Added — `health_check/health_check_report.py`
+- **New data collection**: `_certificates()`, `_agents()`, `_disks()`, `_sources()`, `_users()`, `_idps()`, `_tenants()` — 7 new API calls per cluster.
+- **Disk Health sheet** (sheet 4) — per-disk status, type, model, serial, SSD wear %, capacity, encryption, storage tier. CRITICAL on failed/missing disks, HIGH on SSD wear ≥80%.
+- **Agent Health sheet** (sheet 11) — per-host agent version, health status, upgradability, cert expiry, last upgrade error.
+- **Source Coverage sheet** (sheet 12) — registered sources with protected/unprotected object counts and coverage %. RED < 75%, ORANGE < 95%.
+- **User Security sheet** (sheet 16) — user accounts, domain, roles, active/locked, MFA status, last login. RED for admin accounts without MFA.
+- **Security sheet expanded** from 11 to 17 columns: added Audit Log, NTP Authentication, Remote Support Tunnel, Cluster MFA, SSO/IDP, Soonest TLS Cert Expiry.
+- **New threshold constants**: `SSD_WEAR_WARN_PCT=70`, `SSD_WEAR_CRIT_PCT=80`, `CERT_WARN_DAYS=90`, `CERT_CRIT_DAYS=30`.
+- **Recommendations engine** — new findings: TLS cert expiry (CRITICAL/HIGH), unhealthy agents (HIGH), failed disks (CRITICAL), SSD wear (HIGH), unprotected sources (HIGH), admins without MFA (MEDIUM), audit log disabled (MEDIUM), no SSO (LOW).
+- **Word document** — new sections 6 (Agent Health & Source Coverage) and 7 (User Security) with narrative and tables.
+- Sheet count: 14 → 18.
+
+---
+
 ## [2026-04-08] fix(health_check): correct 6.8.1 EOS classification and expand hardware EOL table (v1.20)
 
 ### Fixed — `health_check/health_check_report.py`

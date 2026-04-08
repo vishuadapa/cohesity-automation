@@ -9,14 +9,14 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **14-sheet Excel workbook** and a **Word document**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | 14 sheets covering infrastructure, **node hardware inventory with EOL status**, protection health, storage capacity, policy audit, alerts, security posture, FortKnox/replication, data services, coverage gaps, 30-day trends with charts, and a prioritised recommendations list |
-| Word document | Narrative report with cover page, executive scorecard, environment overview, **software & hardware lifecycle section**, protection health, storage, security posture, recommendations, and scoring methodology appendix — ready to share with customers |
+| Excel workbook | **18 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit, alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, and a prioritised recommendations list |
+| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, security posture, **agent health & source coverage**, **user security table**, recommendations, and scoring methodology appendix — ready to share with customers |
 
 ### Requirements
 
@@ -85,8 +85,8 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.18_AcmeCorp_20260408_1430.xlsx
-cohesity_health_check_v1.18_AcmeCorp_20260408_1430.docx
+cohesity_health_check_v1.21_AcmeCorp_20260408_1430.xlsx
+cohesity_health_check_v1.21_AcmeCorp_20260408_1430.docx
 ```
 
 See [health_check/health_check_report.md](health_check/health_check_report.md) for the full sheet reference, scoring model, and version history.
@@ -97,7 +97,7 @@ See [health_check/health_check_report.md](health_check/health_check_report.md) f
 
 | Folder | Purpose |
 |--------|---------|
-| [health_check/](health_check/) | **Multi-cluster health check** — 13-sheet Excel + Word report for CBRs and SE engagements |
+| [health_check/](health_check/) | **Multi-cluster health check** — 18-sheet Excel + Word report for CBRs and SE engagements |
 | [reporting/](reporting/) | Protection group run reports and FortKnox vault data transfer reports |
 | [protection/](protection/) | Protection group management — run, pause, clone jobs |
 | [recovery/](recovery/) | Restore automation — VMs, files, file/folder recovery |
