@@ -681,6 +681,31 @@ def _success_stats(cd):
     )
 
 
+def _cap_stats(cd):
+    """
+    Return (usable_bytes, used_bytes, cap_pct_or_NA) for a cluster.
+    Primary source: usagePerfStats from /v1/public/cluster?fetchStats=true.
+    Falls back to summing storageConsumedBytes across storage domains when the
+    cluster-level stats field comes back null (happens on some versions/configs).
+    Returns cap_pct as a float, or the string "N/A" when capacity is unknown.
+    """
+    info   = cd["info"]
+    usage  = ((info.get("stats") or {}).get("usagePerfStats") or {})
+    usable = usage.get("physicalCapacityBytes") or 0
+    used   = usage.get("totalPhysicalUsageBytes") or 0
+
+    if not usable:
+        # Fallback: sum physical used across domains (no usable total available)
+        domain_used = sum(
+            (d.get("stats") or {}).get("storageConsumedBytes") or 0
+            for d in cd.get("domains", [])
+        )
+        return 0, domain_used, "N/A"
+
+    pct = round(used / usable * 100, 1)
+    return usable, used, pct
+
+
 def _sheet_summary(wb, all_data):
     ws = wb.create_sheet("Executive Summary")
     ws.freeze_panes = "A3"
@@ -697,10 +722,7 @@ def _sheet_summary(wb, all_data):
         info   = cd["info"]
         scores = cd["scores"]
         alerts = cd["alerts"]
-        usage  = ((info.get("stats") or {}).get("usagePerfStats") or {})
-        usable = usage.get("physicalCapacityBytes") or 0
-        used   = usage.get("totalPhysicalUsageBytes") or 0
-        cap_pct = round(used / usable * 100, 1) if usable else ""
+        _, _, cap_pct = _cap_stats(cd)
         crits  = sum(1 for a in alerts if a.get("severity") == "kCritical")
         warns  = sum(1 for a in alerts if a.get("severity") == "kWarning")
         succ_pct, sla_pct = _success_stats(cd)
@@ -886,8 +908,7 @@ def _sheet_storage(wb, all_data):
         usage  = (stats.get("usagePerfStats") or {})
         data   = (stats.get("dataUsageStats") or {})
 
-        usable      = usage.get("physicalCapacityBytes") or 0
-        used        = usage.get("totalPhysicalUsageBytes") or 0
+        usable, used, cap_pct = _cap_stats(cd)
         logical     = usage.get("dataInBytes") or 0
         physical    = usage.get("dataInBytesAfterReduction") or 0
         dedup_after = data.get("dataInBytesAfterDedup") or 0
@@ -895,7 +916,6 @@ def _sheet_storage(wb, all_data):
         dedup_ratio = round(logical / dedup_after, 2) if dedup_after else 0
         comp_ratio  = round(dedup_after / physical, 2) if physical else 0
         free        = usable - used
-        cap_pct     = round(used / usable * 100, 1) if usable else ""
         savings     = round(bytes_to_tb(logical - physical), 2) \
                       if logical > physical else 0
 
@@ -903,10 +923,14 @@ def _sheet_storage(wb, all_data):
         if isinstance(cap_pct, float):
             flag = ("CRITICAL" if cap_pct >= CAPACITY_CRIT_PCT
                     else "WARN" if cap_pct >= CAPACITY_WARN_PCT else "OK")
+        elif cap_pct == "N/A":
+            flag = "N/A"
 
         row = [cd["name"], "(Cluster Total)",
-               round(bytes_to_tb(usable), 2), round(bytes_to_tb(used), 2),
-               round(bytes_to_tb(free), 2), cap_pct,
+               round(bytes_to_tb(usable), 2) or "",
+               round(bytes_to_tb(used), 2) or "",
+               round(bytes_to_tb(free), 2) or "",
+               cap_pct,
                round(bytes_to_tb(logical), 2),
                dr_ratio, dedup_ratio, comp_ratio, savings, flag]
         rn = ws.max_row + 1
@@ -1681,21 +1705,20 @@ def write_word(all_data, args):
     _tbl_header(t4, ["Cluster", "Usable (TB)", "Used (TB)", "Free (TB)",
                       "Used %", "Data Reduction", "Status"])
     for cd in all_data:
-        info  = cd["info"]
-        usage = ((info.get("stats") or {}).get("usagePerfStats") or {})
-        usable = usage.get("physicalCapacityBytes") or 0
-        used   = usage.get("totalPhysicalUsageBytes") or 0
+        info   = cd["info"]
+        usable, used, cap_pct = _cap_stats(cd)
         free   = usable - used
-        pct    = round(used / usable * 100, 1) if usable else 0
         dr     = round((info.get("stats") or {}).get("dataReductionRatio") or 0, 2)
-        status = ("CRITICAL" if pct >= CAPACITY_CRIT_PCT
-                  else "WARNING" if pct >= CAPACITY_WARN_PCT else "OK")
+        pct_str = f"{cap_pct}%" if isinstance(cap_pct, float) else "N/A"
+        status = ("N/A" if cap_pct == "N/A"
+                  else "CRITICAL" if cap_pct >= CAPACITY_CRIT_PCT
+                  else "WARNING" if cap_pct >= CAPACITY_WARN_PCT else "OK")
         row = t4.add_row().cells
         for i, val in enumerate([cd["name"],
-                                  round(bytes_to_tb(usable), 2),
-                                  round(bytes_to_tb(used), 2),
-                                  round(bytes_to_tb(free), 2),
-                                  f"{pct}%", f"{dr}x", status]):
+                                  round(bytes_to_tb(usable), 2) or "N/A",
+                                  round(bytes_to_tb(used), 2) or "N/A",
+                                  round(bytes_to_tb(free), 2) or "N/A",
+                                  pct_str, f"{dr}x", status]):
             row[i].text = str(val)
     doc.add_page_break()
 
