@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.6 (2026-04-08) — feat: detect FortKnox configured-but-idle state. New
+                     _fk_status() returns "active"/"idle"/"none" by inspecting
+                     group lastRun.archivalInfo (dataTransferToVaults storageConsumed
+                     is cumulative and not reliable for recency). Security sheet
+                     column 5 shows "Active" (green) / "Configured — Idle" (orange) /
+                     "No" (red). Idle triggers a HIGH recommendation and scores
+                     10/20 points instead of the full 20.
   1.5 (2026-04-08) — fix: drop Alerts columns K (Node ID) and L (Entity) —
                      sparse propertyList fields only present on hardware alerts;
                      description + alert code already capture the context.
@@ -79,7 +86,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.5"
+__version__ = "1.6"
 
 import argparse
 import datetime
@@ -460,6 +467,51 @@ def _has_fortknox(vaults, policies):
     return False
 
 
+def _fk_status(cd):
+    """
+    Return one of three states for FortKnox immutability:
+      "active"  — FK configured AND at least one group has a successful FK
+                  archival in its lastRun (data is flowing)
+      "idle"    — FK configured in vault/policy but no group shows a recent
+                  successful FK archival (configured but not sending data)
+      "none"    — FK not configured at all
+
+    Note: dataTransferToVaults storageConsumed is a cumulative lifetime total,
+    not windowed — it shows non-zero even after transfers stop. We therefore
+    check group lastRun.archivalInfo instead to detect truly idle vaults.
+    """
+    vaults   = cd["vaults"]
+    policies = cd["policies"]
+    groups   = cd["groups"]
+
+    if not _has_fortknox(vaults, policies):
+        return "none"
+
+    fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+
+    # Collect policy IDs whose archival targets point at FK
+    fk_policy_ids = set()
+    for p in policies:
+        for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+            cfg = t.get("archivalTargetConfig") or {}
+            tt  = (cfg.get("targetType") or t.get("targetType") or "").lower()
+            if any(x in tt for x in fk_types) or "fortknox" in tt:
+                fk_policy_ids.add(p.get("id"))
+                break
+
+    # Check whether any FK-targeted group has a successful lastRun archival
+    success_states = {"kSuccess", "Succeeded", "kSuccessWithWarning"}
+    for g in groups:
+        if g.get("policyId") not in fk_policy_ids:
+            continue
+        arch_info = (g.get("lastRun") or {}).get("archivalInfo") or {}
+        for r in (arch_info.get("archivalTargetResults") or []):
+            if r.get("status") in success_states:
+                return "active"
+
+    return "idle"
+
+
 def _score_security(cd):
     """0-100: 20 pts each for encryption, FIPS, vault, replication, immutability."""
     info     = cd["info"]
@@ -480,8 +532,11 @@ def _score_security(cd):
     if any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
            for p in policies):
         score += 20
-    if _has_fortknox(vaults, policies):
+    fk = _fk_status({"vaults": vaults, "policies": policies, "groups": cd["groups"]})
+    if fk == "active":
         score += 20
+    elif fk == "idle":
+        score += 10   # Configured but not sending — partial credit
     return score
 
 
@@ -583,11 +638,19 @@ def _build_recommendations(cd):
             "Configure at least one external vault for off-site retention",
             "No off-site copy of data — single point of failure"))
 
-    if not _has_fortknox(vaults, policies):
+    fk_st = _fk_status(cd)
+    if fk_st == "none":
         recs.append(_r("MEDIUM", "Security",
             "No immutable/FortKnox archival target detected",
             "Configure FortKnox or WORM archival to protect against ransomware",
             "Without immutability, backups can be deleted or encrypted by attackers"))
+    elif fk_st == "idle":
+        recs.append(_r("HIGH", "Security",
+            "FortKnox configured but no recent successful archival detected",
+            "Verify protection group policies and schedules targeting FortKnox; "
+            "check for failed archival runs and resolve blocking issues",
+            "Immutable copy is configured but data is not flowing — "
+            "ransomware protection gap despite vault being present"))
 
     has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
@@ -1265,22 +1328,24 @@ def _sheet_security(wb, all_data):
                     (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         has_vault = bool(vaults)
-        has_immut = _has_fortknox(vaults, policies)
+        fk_st    = _fk_status(cd)
         has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                        for p in policies)
         has_arch = any((p.get("remoteTargetPolicy") or {}).get("archivalTargets")
                        for p in policies)
 
         gaps = []
-        if not enc:      gaps.append("No encryption")
-        if not fips:     gaps.append("FIPS off")
+        if not enc:       gaps.append("No encryption")
+        if not fips:      gaps.append("FIPS off")
         if not has_vault: gaps.append("No vault")
-        if not has_immut: gaps.append("No immutability")
-        if not has_repl: gaps.append("No replication")
-        if not has_arch: gaps.append("No archival")
+        if fk_st == "none": gaps.append("No immutability")
+        if fk_st == "idle": gaps.append("FK configured — not sending data")
+        if not has_repl:  gaps.append("No replication")
+        if not has_arch:  gaps.append("No archival")
 
+        fk_label = {"active": "Active", "idle": "Configured — Idle", "none": "No"}[fk_st]
         yn = lambda v: "Yes" if v else "No"
-        row = [cd["name"], yn(enc), yn(fips), yn(has_vault), yn(has_immut),
+        row = [cd["name"], yn(enc), yn(fips), yn(has_vault), fk_label,
                yn(has_repl), yn(has_arch),
                _min_local_days(policies), _min_arch_days(policies),
                scores["security"],
@@ -1289,11 +1354,22 @@ def _sheet_security(wb, all_data):
         for c, val in enumerate(row, 1):
             ws.cell(row=rn, column=c, value=val).font = _font()
 
-        for col, flag in [(2, enc), (3, fips), (4, has_vault),
-                          (5, has_immut), (6, has_repl), (7, has_arch)]:
+        for col, flag in [(2, enc), (3, fips), (4, has_vault), (6, has_repl), (7, has_arch)]:
             cell = ws.cell(row=rn, column=col)
             cell.fill = _fill(LT_GREEN) if flag else _fill(RED)
             cell.font = _font(bold=True, color=WHITE if not flag else "000000")
+
+        # FK column 5: three-state colouring
+        fk_cell = ws.cell(row=rn, column=5)
+        if fk_st == "active":
+            fk_cell.fill = _fill(LT_GREEN)
+            fk_cell.font = _font(bold=True)
+        elif fk_st == "idle":
+            fk_cell.fill = _fill(ORANGE)
+            fk_cell.font = _font(bold=True)
+        else:
+            fk_cell.fill = _fill(RED)
+            fk_cell.font = _font(bold=True, color=WHITE)
 
         sc = ws.cell(row=rn, column=10)
         sc.fill = _rag_fill(scores["security"])
