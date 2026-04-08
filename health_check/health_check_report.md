@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.18**
+**Current version: 1.20**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **13-sheet Excel workbook** and a **Word document**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **14-sheet Excel workbook** and a **Word document**.
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,12 +10,13 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (13 sheets)
+### Excel Workbook (14 sheets)
 
 | Sheet | Contents |
 |-------|----------|
 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, top finding |
-| Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone |
+| Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS |
+| Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status |
 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes |
 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
 | Policy Audit | Retention schedules, replication targets, archival targets, compliance gaps per policy, group count |
@@ -185,6 +186,8 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.20 | 2026-04-08 | fix: 6.8.1 LTS EOS was November 15 2024 (already OOS) — old `"6.8"` prefix catch-all incorrectly reported it as in-support; split table so only 6.8.2+ maps to In Support — LTS. Hardware EOL table expanded: added C2100, C2200, C2510, C4500 model variants (Cohesity EOL doc Oct 2025) |
+| 1.19 | 2026-04-08 | feat: software and hardware lifecycle tracking — `SOFTWARE_EOS` and `HARDWARE_EOL` tables; `_sw_eos()` / `_hw_eol()` helpers; Infrastructure sheet gains SW Lifecycle Status (colour-coded), SW EOS Date, Days to EOS; new "Node Hardware" sheet (14th sheet) with per-node model/serial/type/capacity/tiers/EOL; recommendations engine updated with CRITICAL/HIGH/MEDIUM lifecycle findings; Word doc gains Software & Hardware Lifecycle section |
 | 1.18 | 2026-04-08 | fix: Trends pagination still broken after v1.17 — `len(page) < PAGE_SIZE` assumed server cap == 1000, but actual cap varies by cluster version and is often lower; check fired on page 1 and stopped early. Fix: removed page-size check; page purely by timestamp cursor until empty response, window start reached, or no progress. Safety limit 200 pages |
 | 1.17 | 2026-04-08 | fix: Trends tab showed fewer than 30 days on busy clusters — added pagination by advancing `endTimeUsecs` cursor |
 | 1.16 | 2026-04-08 | feat: Trends chart — visible X/Y axes with tick marks and titles, Y axis fixed 0–100 with `0.0` format, circle data-point markers (size 5, Cohesity green), 2 pt line, StrRef category fix for date labels in Excel, auto tick-density reduction for >14d and >60d ranges |

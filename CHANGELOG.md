@@ -7,6 +7,29 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-08] fix(health_check): correct 6.8.1 EOS classification and expand hardware EOL table (v1.20)
+
+### Fixed — `health_check/health_check_report.py`
+- `6.8.1` LTS reached EOS **November 15, 2024** and is already out of support. The old `"6.8"` prefix catch-all incorrectly matched it as "In Support — LTS (Jun 2026)". Table now maps `6.8.2` → In Support and `6.8.0`/`6.8.1` → Out of Support.
+- Hardware EOL table expanded with model variants confirmed in the official Cohesity Products EOL document (Oct 2025): **C2100**, **C2200** (C2xx0 series), **C2510** (C2xx5 series), **C4500** (C4xx0 series).
+
+---
+
+## [2026-04-08] feat(health_check): software and hardware lifecycle tracking (v1.19)
+
+### Added — `health_check/health_check_report.py`
+- **`SOFTWARE_EOS` table** — version prefix → lifecycle status, EOS date, label. Covers 7.3+ (Current), 7.2.x / 7.1.2 / 6.8.2 (In Support — EOS Jun 8 2026), 7.1.0 / 7.1.1 / 7.0 / 6.8.1 / 6.8.0 (Out of Support).
+- **`HARDWARE_EOL` table** — model substring → EOL date. Covers C2xx0 (Jan 2023), C2xx5 (May 2024), C3500 (Feb 2025), C4xx0/CN (Feb 2027). Source: Cohesity Products EOL document, Oct 2025.
+- **`_sw_eos(version)`** helper — returns `(status, eos_date, label)` via prefix matching.
+- **`_hw_eol(model)`** helper — returns `eol_date` or `None` via substring matching.
+- **Infrastructure sheet** — 3 new columns: `SW Lifecycle Status` (RED = Out of Support, ORANGE = <90 days, green = current), `SW EOS Date`, `Days to EOS`.
+- **New "Node Hardware" sheet** (sheet 3, 14 sheets total) — per-node inventory: model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status (colour-coded).
+- **Recommendations engine** — CRITICAL for OOS software or past-EOL hardware; HIGH for hardware EOL within 180 days or software EOS within 90 days; MEDIUM for software EOS within 180 days.
+- **Word document** — new "Software & Hardware Lifecycle" section with SW EOS table per cluster and hardware EOL narrative.
+- Sheet count: 13 → 14.
+
+---
+
 ## [2026-04-08] docs: update README, add health check quick-start; CHANGELOG updated
 
 ### Changed

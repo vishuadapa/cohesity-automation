@@ -9,14 +9,14 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **13-sheet Excel workbook** and a **Word document**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **14-sheet Excel workbook** and a **Word document**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | 13 sheets covering infrastructure, protection health, storage capacity, policy audit, alerts, security posture, FortKnox/replication, data services, coverage gaps, 30-day trends with charts, and a prioritised recommendations list |
-| Word document | Narrative report with cover page, executive scorecard, environment overview, protection health, storage, security posture, recommendations, and scoring methodology appendix — ready to share with customers |
+| Excel workbook | 14 sheets covering infrastructure, **node hardware inventory with EOL status**, protection health, storage capacity, policy audit, alerts, security posture, FortKnox/replication, data services, coverage gaps, 30-day trends with charts, and a prioritised recommendations list |
+| Word document | Narrative report with cover page, executive scorecard, environment overview, **software & hardware lifecycle section**, protection health, storage, security posture, recommendations, and scoring methodology appendix — ready to share with customers |
 
 ### Requirements
 
