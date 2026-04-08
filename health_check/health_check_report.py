@@ -169,6 +169,11 @@ Version history
                      policyId→name lookup, v2 schedule/target/retention paths,
                      broadened FortKnox detection, N/A capacity fallback.
                      feat: output filename includes customer name + local timestamp.
+  1.20 (2026-04-08) — fix: 6.8.1 LTS had EOS November 15 2024 (OOS) — was
+                     incorrectly matched by "6.8" prefix as in-support; split
+                     table so only 6.8.2+ maps to "In Support — LTS Jun 2026".
+                     Hardware EOL table expanded: added C2100, C2200, C2510,
+                     C4500 model variants confirmed in Cohesity EOL doc (Oct 2025).
   1.19 (2026-04-08) — feat: software and hardware lifecycle tracking. Added
                      SOFTWARE_EOS and HARDWARE_EOL reference tables from
                      Cohesity Product Life Cycle Policy (Oct 2025). Infrastructure
@@ -184,7 +189,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.19"
+__version__ = "1.20"
 
 import argparse
 import datetime
@@ -240,12 +245,14 @@ VERSION_WARN_PREFIX  = "7."     # clusters below this major version get a flag
 # Source: Cohesity Product Life Cycle Policy (updated Oct 2025)
 SOFTWARE_EOS = [
     # (version_prefix, status, eos_date_str_or_None, display_label)
+    # Evaluated in order — first prefix match wins; put longer/more-specific prefixes first.
     ("7.3",   "current",     None,         "Current"),
     ("7.2",   "in_support",  "2026-06-08", "In Support — Feature Release"),
     ("7.1.2", "in_support",  "2026-06-08", "In Support — LTS"),
-    ("7.1",   "eol",         None,         "Out of Support"),
+    ("7.1",   "eol",         None,         "Out of Support"),   # 7.1.0 and 7.1.1
     ("7.0",   "eol",         None,         "Out of Support"),
-    ("6.8",   "in_support",  "2026-06-08", "In Support — LTS"),
+    ("6.8.2", "in_support",  "2026-06-08", "In Support — LTS"),
+    ("6.8",   "eol",         None,         "Out of Support"),   # 6.8.0 / 6.8.1 EOS Nov 2024
     # anything older falls through to the default → eol
 ]
 
@@ -253,11 +260,18 @@ SOFTWARE_EOS = [
 # Source: Cohesity Platforms EOL Terms and Service Express EOL database
 HARDWARE_EOL = [
     # (model_substring, eol_date_str)
-    ("C2300", "2023-01-31"), ("C2000", "2023-01-31"),
-    ("C2505", "2024-05-13"), ("C2500", "2024-05-13"),
+    # Source: Cohesity Products End of Support and End of Life Dates (Oct 2025)
+    # C2xx0 series — EOL Jan 31, 2023
+    ("C2000", "2023-01-31"), ("C2100", "2023-01-31"),
+    ("C2200", "2023-01-31"), ("C2300", "2023-01-31"),
+    # C2xx5 series — EOL May 13, 2024
+    ("C2500", "2024-05-13"), ("C2505", "2024-05-13"), ("C2510", "2024-05-13"),
+    # C3500 — EOL Feb 18, 2025
     ("C3500", "2025-02-18"),
-    ("C4300", "2027-02-22"), ("C4000", "2027-02-22"),
+    # C4xx0 / CN series — EOL Feb 22, 2027
+    ("C4000", "2027-02-22"), ("C4300", "2027-02-22"), ("C4500", "2027-02-22"),
     ("CN3",   "2027-02-22"), ("CN4",   "2027-02-22"),
+    # C60x5 — no EOL date announced as of Oct 2025 (omitted intentionally)
 ]
 HW_EOL_WARN_DAYS = 180    # flag hardware EOL within this many days
 SW_EOS_WARN_DAYS = 90     # flag software EOS within this many days
