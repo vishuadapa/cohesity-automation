@@ -56,6 +56,17 @@ Requirements
 
 Version history
 ───────────────
+  1.12 (2026-04-08) — fix: Replication & Archive col E and col K still empty
+                     after v1.11 — policy→group chain produced no rows because
+                     _arch_name() returns "" when v2 policies store archival
+                     targets by vault ID only (no name/targetName field), so
+                     policy_arch_targets stayed empty and all_arch_targets was
+                     empty. Fix: supplement arch_groups directly from
+                     fk_data.dataTransferPerProtectionJob[].protectionJobName
+                     per vault (reliable even without policy resolution); build
+                     all_arch_targets as union of policy chain + fk_data vault
+                     names + vault list names so at least one source always
+                     produces rows and E/K are populated.
   1.11 (2026-04-08) — feat: Replication & Archive col E changed from policy
                      count to protection group count; new col K lists all group
                      names using each target. Status updated: "Configured" when
@@ -123,7 +134,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.11"
+__version__ = "1.12"
 
 import argparse
 import datetime
@@ -1507,10 +1518,10 @@ def _sheet_replication(wb, all_data):
                     name = vault_name_by_id.get(vid, f"Vault-{vid}")
             return name
 
-        # ── Map: policy id → set of vault/replication target names ────────
+        # ── Policy chain: policy id → target names ───────────────────────
         policy_rep_targets  = {}   # policy id → set of replication cluster names
         policy_arch_targets = {}   # policy id → set of vault names
-        arch_target_type    = {}   # vault name → targetType (from policy)
+        arch_target_type    = {}   # vault name → targetType
 
         for p in cd["policies"]:
             pid = p.get("id")
@@ -1526,16 +1537,16 @@ def _sheet_replication(wb, all_data):
                 if n:
                     policy_arch_targets.setdefault(pid, set()).add(n)
                     if n not in arch_target_type:
-                        cfg   = t.get("archivalTargetConfig") or {}
+                        cfg = t.get("archivalTargetConfig") or {}
                         arch_target_type[n] = (t.get("targetType")
                                                or cfg.get("targetType") or "")
 
-        # ── Map: target name → [group names] using it ────────────────────
+        # ── Group → target mapping (policy chain) ────────────────────────
         rep_groups  = {}   # replication cluster name → [group names]
         arch_groups = {}   # vault name               → [group names]
 
         for g in cd["groups"]:
-            pid  = g.get("policyId")
+            pid   = g.get("policyId")
             gname = g.get("name", "")
             if not pid or not gname:
                 continue
@@ -1544,11 +1555,30 @@ def _sheet_replication(wb, all_data):
             for tname in (policy_arch_targets.get(pid) or set()):
                 arch_groups.setdefault(tname, []).append(gname)
 
-        # All unique replication / archival target names
-        all_rep_targets  = set().union(*policy_rep_targets.values())  \
+        # ── Supplement arch_groups from fk_data (direct transfer records) ─
+        # fk_data lists protectionJobName per vault — reliable even when the
+        # policy chain fails to extract vault names (e.g. ID-only references).
+        for fk in (cd["fk_data"] or []):
+            fk_vn = fk.get("vaultName", "")
+            if not fk_vn:
+                continue
+            for job in (fk.get("dataTransferPerProtectionJob") or []):
+                jname = job.get("protectionJobName", "")
+                if jname and jname not in (arch_groups.get(fk_vn) or []):
+                    arch_groups.setdefault(fk_vn, []).append(jname)
+
+        # All unique target names — union of policy chain + fk_data + vault list
+        all_rep_targets  = set().union(*policy_rep_targets.values()) \
                            if policy_rep_targets else set()
-        all_arch_targets = set().union(*policy_arch_targets.values()) \
-                           if policy_arch_targets else set()
+        fk_vault_names   = {fk.get("vaultName") for fk in (cd["fk_data"] or [])
+                            if fk.get("vaultName")}
+        vault_list_names = {v.get("name") or v.get("vaultName") or ""
+                            for v in cd["vaults"]} - {""}
+        all_arch_targets = (
+            (set().union(*policy_arch_targets.values()) if policy_arch_targets else set())
+            | fk_vault_names
+            | vault_list_names
+        )
 
         # ── FK transfer stats ─────────────────────────────────────────────
         fk_by_name = {}
