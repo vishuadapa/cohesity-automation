@@ -428,6 +428,23 @@ def _score_capacity(cd):
     return max(0, int(40 - (pct - CAPACITY_CRIT_PCT) * 2))
 
 
+def _has_fortknox(vaults, policies):
+    """Return True if FortKnox / RPaaS immutability is configured on this cluster."""
+    fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+    for v in vaults:
+        vt = (v.get("vaultType") or "").lower()
+        vn = (v.get("name") or "").lower()
+        if any(t in vt for t in fk_types) or "fortknox" in vn:
+            return True
+    for p in policies:
+        for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+            cfg = (t.get("archivalTargetConfig") or {})
+            tt  = (cfg.get("targetType") or t.get("targetType") or "").lower()
+            if any(x in tt for x in fk_types) or "fortknox" in tt:
+                return True
+    return False
+
+
 def _score_security(cd):
     """0-100: 20 pts each for encryption, FIPS, vault, replication, immutability."""
     info     = cd["info"]
@@ -448,21 +465,6 @@ def _score_security(cd):
     if any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
            for p in policies):
         score += 20
-    # FortKnox / immutability — check vault type or name, and policy archival target type
-    def _has_fortknox(vaults, policies):
-        fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
-        for v in vaults:
-            vt = (v.get("vaultType") or "").lower()
-            vn = (v.get("name") or "").lower()
-            if any(t in vt for t in fk_types) or "fortknox" in vn:
-                return True
-        for p in policies:
-            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
-                cfg = (t.get("archivalTargetConfig") or {})
-                tt  = (cfg.get("targetType") or t.get("targetType") or "").lower()
-                if any(x in tt for x in fk_types) or "fortknox" in tt:
-                    return True
-        return False
     if _has_fortknox(vaults, policies):
         score += 20
     return score
