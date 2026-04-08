@@ -32,7 +32,7 @@ __version__ = "1.0"
 from datetime import datetime, timezone
 
 # Cohesity brand green — used for header rows in all reports
-COHESITY_GREEN = "00B388"
+COHESITY_GREEN = "70AD47"
 
 
 def usecs_to_datetime(usecs: int, tz=None) -> str:

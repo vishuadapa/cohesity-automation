@@ -224,9 +224,9 @@ _W = {
 }
 
 # ── Excel palette ─────────────────────────────────────────────────────────────
-COH_GREEN   = "00B388"
-DARK_GREEN  = "007A5E"
-LT_GREEN    = "C6EFCE"
+COH_GREEN   = "70AD47"
+DARK_GREEN  = "4E7A2E"
+LT_GREEN    = "E2EFDA"
 RED         = "FF4C4C"
 ORANGE      = "FF8C00"
 YELLOW      = "FFD700"

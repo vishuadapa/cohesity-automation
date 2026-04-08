@@ -53,7 +53,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
-COHESITY_GREEN  = "00B388"
+COHESITY_GREEN  = "70AD47"
 
 
 # ---------------------------------------------------------------------------

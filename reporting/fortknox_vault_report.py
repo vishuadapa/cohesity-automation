@@ -769,7 +769,7 @@ def write_excel(rows: list, output_file: str, mode: str):
 
     # Header row styling — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="00B388")
+    header_fill = PatternFill(fill_type="solid", fgColor="70AD47")
     ws.append(headers)
     for cell in ws[1]:
         cell.font      = header_font

@@ -1086,7 +1086,7 @@ def write_excel(rows: list, output_file: str, mode: str = "summary"):
 
     # Styled header row — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="00B388")
+    header_fill = PatternFill(fill_type="solid", fgColor="70AD47")
 
     if mode == "trend":
         # --- Trend mode: fixed TREND_COLUMNS, sorted for contiguous chart series ---
