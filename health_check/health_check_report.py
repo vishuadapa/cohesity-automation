@@ -496,7 +496,7 @@ def _build_recommendations(cd):
     usage    = ((info.get("stats") or {}).get("usagePerfStats") or {})
 
     # ── Infrastructure ────────────────────────────────────────────────────────
-    version = info.get("softwareVersion", "")
+    version = info.get("clusterSoftwareVersion", "")
     if version and version < VERSION_WARN_PREFIX:
         recs.append(_r("HIGH", "Infrastructure",
             f"Software version {version} may be out of date",
@@ -707,7 +707,7 @@ def _sheet_summary(wb, all_data):
         top = cd["recommendations"][0]["finding"] if cd["recommendations"] else "None identified"
 
         row = [cd["name"],
-               info.get("softwareVersion", ""), len(cd["nodes"]),
+               info.get("clusterSoftwareVersion", ""), len(cd["nodes"]),
                scores["overall"], scores["grade"],
                succ_pct, sla_pct, cap_pct,
                crits, warns,
@@ -760,7 +760,7 @@ def _sheet_infrastructure(wb, all_data):
         )
         domain = (info.get("domainNames") or [""])[0]
 
-        row = [cd["name"], info.get("softwareVersion", ""),
+        row = [cd["name"], info.get("clusterSoftwareVersion", ""),
                info.get("clusterType", ""), str(info.get("id", "")),
                len(nodes), healthy, disks if disks else "",
                domain, dns, ntp, info.get("timezone", ""),
@@ -1629,7 +1629,7 @@ def write_word(all_data, args):
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         status = "OK" if healthy == len(nodes) else f"WARN: {len(nodes)-healthy} node(s)"
         row = t2.add_row().cells
-        for i, val in enumerate([cd["name"], info.get("softwareVersion", ""),
+        for i, val in enumerate([cd["name"], info.get("clusterSoftwareVersion", ""),
                                   len(nodes), healthy,
                                   "Yes" if enc else "No",
                                   "Yes" if fips else "No", status]):
