@@ -56,6 +56,16 @@ Requirements
 
 Version history
 ───────────────
+  1.8 (2026-04-08) — fix: Replication & Archive sheet columns D-H blank.
+                     Root causes: (1) _fortknox_data used startTimeUsecs/
+                     endTimeUsecs — API expects startTimeMsecs/endTimeMsecs,
+                     so fk_data was always empty; (2) archival rows driven by
+                     cd["vaults"] list whose name may differ from policy target
+                     names — flipped to drive rows from arch_use (policy targets)
+                     and enrich vault type/FK stats via name-then-ID lookup;
+                     (3) G/H (Logical/Physical Transferred) hardcoded "" — now
+                     populated from numLogicalBytesTransferred/numPhysical.
+                     Orphaned vaults (in API but not in any policy) still shown.
   1.7 (2026-04-08) — fix: _fk_status() false-negatives — lastRun.archivalInfo
                      is only populated when the most recent primary run included
                      archival; groups with daily local backups + less-frequent
@@ -93,7 +103,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.7"
+__version__ = "1.8"
 
 import argparse
 import datetime
@@ -305,9 +315,11 @@ def _vaults(session, h, debug):
     return d or []
 
 def _fortknox_data(session, h, start_usecs, end_usecs, debug):
+    # API expects milliseconds, not microseconds
     d = _get(session, h,
              "/irisservices/api/v1/public/reports/dataTransferToVaults",
-             params={"startTimeUsecs": start_usecs, "endTimeUsecs": end_usecs},
+             params={"startTimeMsecs": start_usecs // 1000,
+                     "endTimeMsecs":   end_usecs   // 1000},
              debug=debug)
     return (d or {}).get("dataTransferSummary") or []
 
@@ -1431,63 +1443,118 @@ def _sheet_replication(wb, all_data):
 
     cols = ["Cluster", "Target Type", "Target Name", "Vault Type",
             "Policies Using",
-            "FK Storage Consumed (TB)", "FK Logical (TB)", "FK Physical (TB)",
+            "Vault Storage (TB)", "Logical Transferred (TB)", "Physical Transferred (TB)",
             "Status", "Notes"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
-        # Tally policy usage per target using consistent name extraction
+        # ── Policy target name extraction ─────────────────────────────────
         def _rep_name(t):
+            cfg = t.get("remoteTargetConfig") or {}
             return (t.get("targetName")
-                    or (t.get("remoteTargetConfig") or {}).get("clusterName")
-                    or (t.get("remoteTargetConfig") or {}).get("name") or "")
-        def _arch_name(t):
-            return (t.get("targetName")
-                    or (t.get("archivalTargetConfig") or {}).get("name")
-                    or (t.get("archivalTargetConfig") or {}).get("vaultName") or "")
+                    or cfg.get("clusterName")
+                    or cfg.get("name") or "")
 
-        rep_use  = {}
-        arch_use = {}
+        def _arch_name(t):
+            cfg = t.get("archivalTargetConfig") or {}
+            return (t.get("targetName")
+                    or cfg.get("name")
+                    or cfg.get("vaultName") or "")
+
+        # Count how many policies reference each replication / archival target
+        rep_use  = {}   # cluster name → policy count
+        arch_use = {}   # vault name   → policy count
         for p in cd["policies"]:
-            for t in ((p.get("remoteTargetPolicy") or {}).get("replicationTargets") or []):
+            rtp = p.get("remoteTargetPolicy") or {}
+            for t in (rtp.get("replicationTargets") or []):
                 n = _rep_name(t)
                 if n: rep_use[n] = rep_use.get(n, 0) + 1
-            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+            for t in (rtp.get("archivalTargets") or []):
                 n = _arch_name(t)
                 if n: arch_use[n] = arch_use.get(n, 0) + 1
 
+        # ── FK / vault data cross-reference ───────────────────────────────
+        # Build lookups keyed by BOTH vault name and vault ID.
+        # Vault name from /public/vaults may differ from vaultName in fk_data,
+        # so ID-based lookup is the reliable fallback.
+        vault_type_by_name = {}   # name → vaultType
+        vault_id_by_name   = {}   # name → id
+        for v in cd["vaults"]:
+            vn = v.get("name") or v.get("vaultName") or ""
+            vi = v.get("id")
+            vt = v.get("vaultType", "")
+            if vn:
+                vault_type_by_name[vn] = vt
+                if vi: vault_id_by_name[vn] = vi
+
+        fk_by_name = {}   # vaultName (from fk_data) → transfer stats
+        fk_by_id   = {}   # vaultId   (from fk_data) → transfer stats
+        for fk in (cd["fk_data"] or []):
+            fk_vn  = fk.get("vaultName", "")
+            fk_vid = fk.get("vaultId")
+            jobs   = fk.get("dataTransferPerProtectionJob") or []
+            consumed = sum((j.get("storageConsumed") or 0) for j in jobs)
+            logical  = sum((j.get("numLogicalBytesTransferred") or 0) for j in jobs)
+            physical = sum((j.get("numPhysicalBytesTransferred") or 0) for j in jobs)
+            data = {"consumed": consumed, "logical": logical, "physical": physical}
+            if fk_vn:  fk_by_name[fk_vn] = data
+            if fk_vid: fk_by_id[fk_vid]   = data
+
+        def _fk_stats(vname):
+            """Return FK transfer stats dict for a vault, matching by name then ID."""
+            d = fk_by_name.get(vname)
+            if not d:
+                vid = vault_id_by_name.get(vname)
+                if vid: d = fk_by_id.get(vid)
+            return d or {}
+
+        fk_types = {"rpaas", "fortknox", "kfortknox", "krpaas"}
+
+        def _is_fk_vault(vname, vtype):
+            return (any(x in vtype.lower() for x in fk_types) or
+                    "fortknox" in vname.lower())
+
+        # ── Replication rows ──────────────────────────────────────────────
         for name, cnt in rep_use.items():
             rn = ws.max_row + 1
             for c, val in enumerate(
-                [cd["name"], "Replication", name, "", cnt, "", "", "", "Configured", ""], 1
+                [cd["name"], "Replication", name, "", cnt,
+                 "", "", "", "Configured", ""], 1
             ):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-        # Vault stats — v1 dataTransferToVaults uses storageConsumed (not storageConsumedBytes)
-        fk_by_vault = {}
-        for fk in (cd["fk_data"] or []):
-            vn = fk.get("vaultName", "")
-            if not vn:
-                jobs = fk.get("dataTransferPerProtectionJob") or []
-                vn   = jobs[0].get("vaultName", "") if jobs else ""
-            consumed = sum((j.get("storageConsumed") or j.get("storageConsumedBytes") or 0)
-                           for j in (fk.get("dataTransferPerProtectionJob") or []))
-            fk_by_vault[vn] = {"consumed": consumed}
+        # ── Archival / vault rows — driven by policy targets ──────────────
+        # Use arch_use (from policies) as the primary source so target names
+        # always match. Supplement vault type and FK stats via the lookups above.
+        shown = set()
+        for vname, vcnt in arch_use.items():
+            vtype = vault_type_by_name.get(vname, "")
+            fkd   = _fk_stats(vname)
+            note  = "FortKnox/RPaaS" if _is_fk_vault(vname, vtype) else ""
+            rn    = ws.max_row + 1
+            row   = [cd["name"], "Archival/Vault", vname, vtype, vcnt,
+                     round(bytes_to_tb(fkd.get("consumed") or 0), 3),
+                     round(bytes_to_tb(fkd.get("logical")  or 0), 3),
+                     round(bytes_to_tb(fkd.get("physical") or 0), 3),
+                     "Configured", note]
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+            shown.add(vname)
 
+        # Also emit any vault from the vaults API not referenced by a policy
         for v in cd["vaults"]:
-            vn  = v.get("name", "")
-            vt  = v.get("vaultType", "")
-            fkd = fk_by_vault.get(vn, {})
-            note = ("FortKnox/RPaaS"
-                    if any(x in vt.lower() for x in ("rpaas", "fortknox")) or
-                       "fortknox" in vn.lower()
-                    else "")
-            rn  = ws.max_row + 1
-            row = [cd["name"], "Archival/Vault", vn, vt,
-                   arch_use.get(vn, 0),
-                   round(bytes_to_tb(fkd.get("consumed") or 0), 3),
-                   "", "",
-                   "Configured", note]
+            vname = v.get("name") or v.get("vaultName") or ""
+            if not vname or vname in shown:
+                continue
+            vtype = v.get("vaultType", "")
+            fkd   = _fk_stats(vname)
+            note  = "FortKnox/RPaaS" if _is_fk_vault(vname, vtype) else ""
+            rn    = ws.max_row + 1
+            row   = [cd["name"], "Archival/Vault", vname, vtype, 0,
+                     round(bytes_to_tb(fkd.get("consumed") or 0), 3),
+                     round(bytes_to_tb(fkd.get("logical")  or 0), 3),
+                     round(bytes_to_tb(fkd.get("physical") or 0), 3),
+                     "Vault only — no policy", note]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
