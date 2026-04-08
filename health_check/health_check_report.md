@@ -1,6 +1,10 @@
 # health_check_report.py
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (EBRs) and SE trusted-advisor engagements.  Gathers live data from Cohesity Helios and produces a **13-sheet Excel workbook** and a **Word document**.
+**Current version: 1.18**
+
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **13-sheet Excel workbook** and a **Word document**.
+
+> See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
 ---
 
@@ -159,6 +163,7 @@ The engine evaluates all collected data and generates a prioritised finding list
 | `GET /v2/storage-domains?includeStats=true` | Per-domain capacity and reduction stats |
 | `GET /v2/file-services/views?includeStats=true` | NAS views, quotas, usage |
 | `GET /irisservices/api/v1/public/vaults` | Vault / archival target inventory |
+| `GET /irisservices/api/v1/public/protectionRuns` | All protection run history — primary source for Trends tab (paginated) |
 | `GET /irisservices/api/v1/public/reports/dataTransferToVaults` | FortKnox transfer data |
 
 ---
