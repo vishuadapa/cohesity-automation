@@ -1245,7 +1245,8 @@ def _sheet_views(wb, all_data):
             smb = ", ".join(v.get("smbMountPaths") or [])
             nfs = ", ".join(v.get("nfsMountPaths") or [])
             created_ms = v.get("createTimeMsecs") or 0
-            created = (datetime.datetime.utcfromtimestamp(created_ms / 1000)
+            created = (datetime.datetime.fromtimestamp(created_ms / 1000,
+                                                        tz=datetime.timezone.utc)
                        .strftime("%Y-%m-%d") if created_ms else "")
 
             flag = "OK"
@@ -1362,7 +1363,8 @@ def _sheet_trends(wb, all_data):
                 su = lb.get("startTimeUsecs") or 0
                 if not su:
                     continue
-                day = datetime.datetime.utcfromtimestamp(su / 1_000_000) \
+                day = datetime.datetime.fromtimestamp(su / 1_000_000,
+                                                       tz=datetime.timezone.utc) \
                               .strftime("%Y-%m-%d")
                 if day not in daily:
                     daily[day] = dict(total=0, succ=0, fail=0,
@@ -1778,7 +1780,7 @@ def write_word(all_data, args):
         f"Alert penalty: −10 pts per open critical, −2 pts per open warning",
         f"View quota: Warning ≥{VIEW_QUOTA_WARN_PCT}%, Critical ≥{VIEW_QUOTA_CRIT_PCT}%",
         f"Lookback period used for this report: {args.days} days",
-        f"Report generated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        f"Report generated: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
     ]
     for note in notes:
         p = doc.add_paragraph(note, style="List Bullet")
