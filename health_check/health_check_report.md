@@ -1,0 +1,162 @@
+# health_check_report.py
+
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (EBRs) and SE trusted-advisor engagements.  Gathers live data from Cohesity Helios and produces a **12-sheet Excel workbook** and a **Word document**.
+
+---
+
+## Output
+
+### Excel Workbook (12 sheets)
+
+| Sheet | Contents |
+|-------|----------|
+| Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, top finding |
+| Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone |
+| Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes |
+| Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
+| Policy Audit | Retention schedules, replication targets, archival targets, compliance gaps per policy |
+| Alerts | All open alerts sorted by severity, with age, description, and entity |
+| Security | Six-control checklist per cluster: encryption, FIPS, vault, FortKnox, replication, archival |
+| Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
+| Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
+| Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
+| Trends (30d) | Daily backup success rate aggregated per cluster with embedded line chart |
+| Recommendations | Prioritised action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+
+### Word Document
+
+Narrative report suitable for printing or sharing with customers:
+
+- Cover page (customer name, date, confidential notice)
+- Executive Summary with per-cluster scorecard table
+- Environment Overview (infrastructure table)
+- Protection & Recovery Health
+- Storage & Capacity
+- Security Posture
+- Prioritised Recommendations table
+- Appendix: scoring methodology and thresholds
+
+---
+
+## Usage
+
+```bash
+python health_check_report.py --apikey <key> [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--apikey KEY` | env / keychain | Helios API key |
+| `--cluster NAME` | all | Limit to one cluster (partial name match) |
+| `--days N` | 30 | Lookback window for alerts and run history |
+| `--customer NAME` | *(blank)* | Customer name printed on Word cover page |
+| `--output PATH` | `cohesity_health_check` | Base path for output files (no extension) |
+| `--quick` | off | Use last-run only; skip per-group run history (faster for large installs) |
+| `--excel-only` | off | Skip Word document generation |
+| `--word-only` | off | Skip Excel generation |
+| `--debug` | off | Print HTTP status for every API call |
+
+### Examples
+
+```bash
+# Full report — all clusters, 30-day window
+python health_check_report.py --apikey abc123 --customer "Acme Corp"
+
+# Quick scan of a single cluster
+python health_check_report.py --apikey abc123 --cluster prod-east --quick
+
+# Excel only, custom output path and filename
+python health_check_report.py --apikey abc123 --output /reports/q2_review --excel-only
+
+# 90-day lookback with debug logging
+python health_check_report.py --apikey abc123 --days 90 --debug
+```
+
+---
+
+## Requirements
+
+```bash
+pip install requests openpyxl python-docx
+```
+
+`python-docx` is required only for Word output.  If it is not installed, Excel is still produced; Word is skipped with a warning.
+
+---
+
+## Health Scoring
+
+Each cluster receives a score from 0 to 100 and a grade:
+
+| Score | Grade |
+|-------|-------|
+| 90–100 | Excellent |
+| 75–89 | Good |
+| 60–74 | Fair |
+| 40–59 | At Risk |
+| < 40 | Critical |
+
+**Score components:**
+
+| Dimension | Weight | Measure |
+|-----------|--------|---------|
+| Protection success rate | 25% | % of runs in the lookback window that succeeded |
+| SLA compliance | 20% | % of runs that did not violate SLA |
+| Infrastructure health | 15% | % of nodes in healthy state |
+| Storage capacity | 15% | Penalised above 70% used; critical above 85% |
+| Security posture | 15% | 20 pts each: encryption, FIPS, vault, replication, immutability |
+| Alert health | 10% | −10 pts per open critical alert, −2 pts per warning |
+
+---
+
+## Recommendations
+
+The engine evaluates all collected data and generates a prioritised finding list:
+
+| Priority | Meaning | Expected response |
+|----------|---------|-------------------|
+| CRITICAL | Active risk — data loss, capacity exhaustion, or node failure | Immediate |
+| HIGH | Significant gap — unprotected data, no replication, high capacity | Within 30 days |
+| MEDIUM | Best-practice gap — FIPS, archival, quota governance | Within 90 days |
+| LOW | Housekeeping — quota hygiene, minor policy improvements | Next review cycle |
+
+---
+
+## APIs Used
+
+| Endpoint | Data |
+|----------|------|
+| `GET /mcm/clusters/connectionStatus` | Cluster list |
+| `GET /irisservices/api/v1/public/cluster?fetchStats=true` | Version, config, capacity stats |
+| `GET /irisservices/api/v1/public/nodes` | Node health, disk inventory |
+| `GET /irisservices/api/v1/public/alerts` | Open alerts with severity and age |
+| `GET /v2/data-protect/protection-groups` | Groups with last-run info |
+| `GET /v2/data-protect/protection-groups/{id}/runs` | Run history (full mode) |
+| `GET /v2/data-protect/policies` | Policy retention and targets |
+| `GET /v2/storage-domains?includeStats=true` | Per-domain capacity and reduction stats |
+| `GET /v2/file-services/views?includeStats=true` | NAS views, quotas, usage |
+| `GET /irisservices/api/v1/public/vaults` | Vault / archival target inventory |
+| `GET /irisservices/api/v1/public/reports/dataTransferToVaults` | FortKnox transfer data |
+
+---
+
+## Performance Notes
+
+For large installs (many clusters, many groups) the full mode can be slow because it fetches run history for every protection group individually.  Use `--quick` for a fast scan that uses only the last-run status embedded in the protection-group response.
+
+Typical runtimes:
+
+| Mode | 5 clusters / 50 groups each | 10 clusters / 200 groups each |
+|------|----------------------------|-------------------------------|
+| `--quick` | ~30 seconds | ~60 seconds |
+| Full | ~5–10 minutes | ~20–30 minutes |
+
+---
+
+## Version History
+
+| Version | Date | Change |
+|---------|------|--------|
+| 1.0 | 2026-04-08 | feat: initial release — 12-sheet Excel, Word doc, scoring engine, recommendations |
