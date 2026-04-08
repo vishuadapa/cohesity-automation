@@ -112,11 +112,29 @@ def auto_fit_columns(ws, min_width: int = 10, max_width: int = 60):
     """
     Auto-fit column widths in an openpyxl worksheet based on cell content.
     Caps width between min_width and max_width.
+
+    Handles merged cells gracefully — MergedCell objects have no column_letter,
+    so we fall back to get_column_letter(cell.column) and skip their content
+    when measuring width.
     """
+    try:
+        from openpyxl.cell.cell import MergedCell
+        from openpyxl.utils import get_column_letter as _gcl
+    except ImportError:
+        return
+
     for col in ws.columns:
-        col_letter = col[0].column_letter
+        if not col:
+            continue
+        first = col[0]
+        # MergedCell lacks column_letter; derive it from the column index instead
+        col_letter = (first.column_letter
+                      if hasattr(first, "column_letter")
+                      else _gcl(first.column))
         best = min_width
         for cell in col:
+            if isinstance(cell, MergedCell):
+                continue
             if cell.value is not None:
                 best = max(best, len(str(cell.value)) + 2)
         ws.column_dimensions[col_letter].width = min(best, max_width)
