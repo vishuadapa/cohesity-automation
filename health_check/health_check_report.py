@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.14 (2026-04-08) — fix: Trends tab inaccurate — switched primary data source
+                     from per-group v2 runs to v1 /public/protectionRuns which
+                     is the same source powering the Helios reporting page.
+                     Single call per cluster; backupRun.slaViolated (col I) and
+                     backupRun.stats.totalLogicalBackupSizeBytes (col J) are
+                     accurate. v2 per-group runs retained as fallback. Works in
+                     --quick mode (v1 call not gated behind the per-group loop).
   1.13 (2026-04-08) — fix: Trends tab cols I and J always blank — col I
                      (SLA Violations) used run.get("isSlaViolated") but the
                      field lives inside localBackupInfo, not the top-level run
@@ -141,7 +148,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.13"
+__version__ = "1.14"
 
 import argparse
 import datetime
@@ -332,6 +339,17 @@ def _group_runs(session, h, group_id, start_usecs, end_usecs, debug):
              }, debug=debug)
     return (d or {}).get("runs") or []
 
+def _v1_protection_runs(session, h, start_usecs, end_usecs, debug):
+    """Single call that returns ALL protection runs in the time window.
+    Used by the Trends sheet — mirrors the data source behind the Helios
+    'protection-group-summary' reporting page."""
+    d = _get(session, h, "/irisservices/api/v1/public/protectionRuns",
+             params={"startTimeUsecs": start_usecs,
+                     "endTimeUsecs":   end_usecs,
+                     "numRuns":        10000},
+             debug=debug)
+    return d or []
+
 def _policies(session, h, debug):
     d = _get(session, h, "/v2/data-protect/policies",
              params={"includeTenants": "true"}, debug=debug)
@@ -392,6 +410,8 @@ def collect_cluster(session, api_key, cluster, args):
     vaults    = _vaults(session, h, dbg)
     vault_ids = [v["id"] for v in vaults if "id" in v]
     fk_data   = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
+    print(" run-summary...", end="", flush=True)
+    v1_runs   = _v1_protection_runs(session, h, start_usecs, end_usecs, dbg)
 
     group_runs = {}
     if not args.quick:
@@ -422,6 +442,7 @@ def collect_cluster(session, api_key, cluster, args):
         "views":       views,
         "vaults":      vaults,
         "fk_data":     fk_data,
+        "v1_runs":     v1_runs,
         "start_usecs": start_usecs,
         "end_usecs":   end_usecs,
     }
@@ -1801,10 +1822,9 @@ def _sheet_trends(wb, all_data):
     ws.freeze_panes = "A3"
     _title(ws, "30-Day Trends — Daily Backup Success Rate & Volume", "J")
 
-    has_runs = any(cd["group_runs"] for cd in all_data)
-    if not has_runs:
-        ws["A3"] = ("No run history available. Re-run without --quick to populate "
-                    "trend data and charts.")
+    has_data = any(cd.get("v1_runs") or cd["group_runs"] for cd in all_data)
+    if not has_data:
+        ws["A3"] = "No run history available."
         ws["A3"].font = _font(bold=False, color="595959")
         return
 
@@ -1813,30 +1833,59 @@ def _sheet_trends(wb, all_data):
     _hdr(ws, 2, cols)
 
     for cd in all_data:
-        if not cd["group_runs"]:
-            continue
         daily = {}
-        for runs in cd["group_runs"].values():
-            for run in runs:
-                lb = run.get("localBackupInfo") or {}
-                su = lb.get("startTimeUsecs") or 0
-                if not su:
-                    continue
-                day = datetime.datetime.fromtimestamp(su / 1_000_000,
-                                                       tz=datetime.timezone.utc) \
-                              .strftime("%Y-%m-%d")
-                if day not in daily:
-                    daily[day] = dict(total=0, succ=0, fail=0,
-                                      warn=0, cancel=0, viols=0, logical=0)
-                d   = daily[day]
-                st  = lb.get("status", "")
-                d["total"] += 1
-                if st in ("kSuccess", "Succeeded"): d["succ"]   += 1
-                elif st in ("kFailure", "Failed"):  d["fail"]   += 1
-                elif st == "kWarning":              d["warn"]   += 1
-                elif "anceл" in st or "Cancel" in st: d["cancel"] += 1
-                if lb.get("isSlaViolated"):         d["viols"]  += 1
-                d["logical"] += (lb.get("localSnapshotStats") or {}).get("logicalSizeBytes") or 0
+
+        # ── Primary: v1 protectionRuns — mirrors the Helios reporting page source ──
+        # Single call per cluster; backupRun.slaViolated and
+        # backupRun.stats.totalLogicalBackupSizeBytes are accurate.
+        for run in (cd.get("v1_runs") or []):
+            br    = run.get("backupRun") or {}
+            stats = br.get("stats") or {}
+            su    = stats.get("startTimeUsecs") or 0
+            if not su:
+                continue
+            day = datetime.datetime.fromtimestamp(su / 1_000_000,
+                                                   tz=datetime.timezone.utc) \
+                          .strftime("%Y-%m-%d")
+            if day not in daily:
+                daily[day] = dict(total=0, succ=0, fail=0,
+                                  warn=0, cancel=0, viols=0, logical=0)
+            d  = daily[day]
+            st = br.get("status", "")
+            d["total"] += 1
+            if st == "kSuccess":                d["succ"]   += 1
+            elif st == "kFailure":              d["fail"]   += 1
+            elif st == "kWarning":              d["warn"]   += 1
+            elif "Cancel" in st:                d["cancel"] += 1
+            if br.get("slaViolated"):           d["viols"]  += 1
+            d["logical"] += stats.get("totalLogicalBackupSizeBytes") or 0
+
+        # ── Fallback: v2 per-group runs (used when v1 unavailable) ──────────────
+        if not daily:
+            for runs in cd["group_runs"].values():
+                for run in runs:
+                    lb = run.get("localBackupInfo") or {}
+                    su = lb.get("startTimeUsecs") or 0
+                    if not su:
+                        continue
+                    day = datetime.datetime.fromtimestamp(su / 1_000_000,
+                                                           tz=datetime.timezone.utc) \
+                                  .strftime("%Y-%m-%d")
+                    if day not in daily:
+                        daily[day] = dict(total=0, succ=0, fail=0,
+                                          warn=0, cancel=0, viols=0, logical=0)
+                    d  = daily[day]
+                    st = lb.get("status", "")
+                    d["total"] += 1
+                    if st in ("kSuccess", "Succeeded"): d["succ"]   += 1
+                    elif st in ("kFailure", "Failed"):  d["fail"]   += 1
+                    elif st == "kWarning":              d["warn"]   += 1
+                    elif "Cancel" in st:                d["cancel"] += 1
+                    if lb.get("isSlaViolated"):         d["viols"]  += 1
+                    d["logical"] += (lb.get("localSnapshotStats") or {}).get("logicalSizeBytes") or 0
+
+        if not daily:
+            continue
 
         trend_start = ws.max_row + 1
         for day in sorted(daily):
