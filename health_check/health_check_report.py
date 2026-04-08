@@ -105,7 +105,7 @@ Version history
                      clusterSoftwareVersion, localSnapshotStats, successfulObjectsCount,
                      policyId→name lookup, v2 schedule/target/retention paths,
                      broadened FortKnox detection, N/A capacity fallback.
-                     feat: output filename includes customer name + UTC timestamp.
+                     feat: output filename includes customer name + local timestamp.
   1.0 (2026-04-08) — feat: initial release. 12-sheet Excel + Word document.
                      Health scoring, recommendations engine, trend charts.
 """
@@ -2155,7 +2155,7 @@ def write_word(all_data, args):
         f"Alert penalty: −10 pts per open critical, −2 pts per open warning",
         f"View quota: Warning ≥{VIEW_QUOTA_WARN_PCT}%, Critical ≥{VIEW_QUOTA_CRIT_PCT}%",
         f"Lookback period used for this report: {args.days} days",
-        f"Report generated: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        f"Report generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (local time)",
     ]
     for note in notes:
         p = doc.add_paragraph(note, style="List Bullet")
@@ -2204,9 +2204,9 @@ def main():
         print("ERROR: python-docx is required.  pip install python-docx")
         sys.exit(1)
 
-    # Build output filename: include customer name (if given) + UTC timestamp
+    # Build output filename: include customer name (if given) + local timestamp
     if args.output == "cohesity_health_check":
-        ts    = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M")
+        ts    = datetime.datetime.now().strftime("%Y%m%d_%H%M")
         parts = ["cohesity_health_check"]
         if args.customer:
             safe = "".join(c if c.isalnum() or c in "-_" else "_"
