@@ -169,11 +169,22 @@ Version history
                      policyId→name lookup, v2 schedule/target/retention paths,
                      broadened FortKnox detection, N/A capacity fallback.
                      feat: output filename includes customer name + local timestamp.
+  1.19 (2026-04-08) — feat: software and hardware lifecycle tracking. Added
+                     SOFTWARE_EOS and HARDWARE_EOL reference tables from
+                     Cohesity Product Life Cycle Policy (Oct 2025). Infrastructure
+                     sheet gets 3 new columns: SW Lifecycle Status (colour-coded
+                     red/orange/green), SW EOS Date, Days to EOS. New "Node Hardware"
+                     sheet (sheet 3): per-node model, serial, node type, capacity,
+                     storage tiers, HW EOL date, HW EOL status colour-coded.
+                     Recommendations engine updated: CRITICAL for out-of-support
+                     software or past-EOL hardware, HIGH/MEDIUM for upcoming dates.
+                     Word document gains a Software & Hardware Lifecycle section.
+                     Sheet count: 13 → 14.
   1.0 (2026-04-08) — feat: initial release. 12-sheet Excel + Word document.
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.18"
+__version__ = "1.19"
 
 import argparse
 import datetime
@@ -224,6 +235,32 @@ ALERT_AGE_CRIT_DAYS  = 7        # open critical alert older than N days = findin
 VIEW_QUOTA_WARN_PCT  = 80       # view at this % of quota = warning
 VIEW_QUOTA_CRIT_PCT  = 90       # view at this % of quota = critical
 VERSION_WARN_PREFIX  = "7."     # clusters below this major version get a flag
+
+# ── Software End-of-Support matrix (checked top-to-bottom, first prefix match wins) ──
+# Source: Cohesity Product Life Cycle Policy (updated Oct 2025)
+SOFTWARE_EOS = [
+    # (version_prefix, status, eos_date_str_or_None, display_label)
+    ("7.3",   "current",     None,         "Current"),
+    ("7.2",   "in_support",  "2026-06-08", "In Support — Feature Release"),
+    ("7.1.2", "in_support",  "2026-06-08", "In Support — LTS"),
+    ("7.1",   "eol",         None,         "Out of Support"),
+    ("7.0",   "eol",         None,         "Out of Support"),
+    ("6.8",   "in_support",  "2026-06-08", "In Support — LTS"),
+    # anything older falls through to the default → eol
+]
+
+# ── Hardware End-of-Life matrix (case-insensitive substring match on model string) ──
+# Source: Cohesity Platforms EOL Terms and Service Express EOL database
+HARDWARE_EOL = [
+    # (model_substring, eol_date_str)
+    ("C2300", "2023-01-31"), ("C2000", "2023-01-31"),
+    ("C2505", "2024-05-13"), ("C2500", "2024-05-13"),
+    ("C3500", "2025-02-18"),
+    ("C4300", "2027-02-22"), ("C4000", "2027-02-22"),
+    ("CN3",   "2027-02-22"), ("CN4",   "2027-02-22"),
+]
+HW_EOL_WARN_DAYS = 180    # flag hardware EOL within this many days
+SW_EOS_WARN_DAYS = 90     # flag software EOS within this many days
 
 # Scoring weights — must sum to 1.0
 _W = {
@@ -291,6 +328,35 @@ def grade(score):
     if score >= 60: return "Fair"
     if score >= 40: return "At Risk"
     return "Critical"
+
+
+def _sw_eos(version: str):
+    """Return (status, eos_date_or_None, label) for a cluster software version string.
+    status: 'current' | 'in_support' | 'eol' | 'unknown'
+    """
+    import datetime as _dt
+    if not version:
+        return ("unknown", None, "Unknown")
+    v = version.strip().lower()
+    for prefix, status, eos_str, label in SOFTWARE_EOS:
+        if v.startswith(prefix.lower()):
+            eos = _dt.date.fromisoformat(eos_str) if eos_str else None
+            return (status, eos, label)
+    # No match — treat anything pre-6.8 as out of support
+    return ("eol", None, "Out of Support")
+
+
+def _hw_eol(model: str):
+    """Return eol_date (datetime.date) or None if model not in EOL matrix."""
+    import datetime as _dt
+    if not model:
+        return None
+    m = model.upper()
+    for substr, eol_str in HARDWARE_EOL:
+        if substr.upper() in m:
+            return _dt.date.fromisoformat(eol_str)
+    return None
+
 
 # ── Time helpers ──────────────────────────────────────────────────────────────
 def _now_usecs():
@@ -764,12 +830,57 @@ def _build_recommendations(cd):
     usage    = ((info.get("stats") or {}).get("usagePerfStats") or {})
 
     # ── Infrastructure ────────────────────────────────────────────────────────
-    version = info.get("clusterSoftwareVersion", "")
-    if version and version < VERSION_WARN_PREFIX:
-        recs.append(_r("HIGH", "Infrastructure",
-            f"Software version {version} may be out of date",
-            "Review EOL schedule and plan upgrade path",
-            "Older versions miss security patches and new features"))
+
+    # ── Software lifecycle ────────────────────────────────────────────────────
+    import datetime as _dt
+    today = _dt.date.today()
+    sw_ver = (cd["info"].get("clusterSoftwareVersion") or "").strip()
+    sw_status, sw_eos_date, sw_label = _sw_eos(sw_ver)
+    if sw_status == "eol":
+        recs.append(_r("CRITICAL", "Software Lifecycle",
+             f"Software version {sw_ver or '(unknown)'} is out of support — "
+             "security patches and bug fixes are no longer available",
+             "Upgrade to a supported release (7.1.2_u2 LTS, 7.2.x, or later) immediately",
+             "Running unsupported software exposes the cluster to unpatched vulnerabilities"))
+    elif sw_status == "in_support" and sw_eos_date:
+        days_left = (sw_eos_date - today).days
+        if days_left < SW_EOS_WARN_DAYS:
+            recs.append(_r("HIGH", "Software Lifecycle",
+                 f"Software version {sw_ver} reaches end of support in {days_left} days ({sw_eos_date})",
+                 "Plan and schedule upgrade before EOS date to maintain support eligibility",
+                 "Post-EOS clusters are ineligible for Cohesity technical support"))
+        elif days_left < 365:
+            recs.append(_r("MEDIUM", "Software Lifecycle",
+                 f"Software version {sw_ver} EOS in {days_left} days ({sw_eos_date})",
+                 "Begin upgrade planning — schedule upgrade within next quarter",
+                 "Proactive planning avoids rushed upgrades near the EOS deadline"))
+
+    # ── Hardware lifecycle ────────────────────────────────────────────────────
+    hw_eol_past   = []
+    hw_eol_soon   = []
+    for n in cd["nodes"]:
+        model = n.get("hardwareModel") or n.get("productModel") or ""
+        eol   = _hw_eol(model)
+        if not eol:
+            continue
+        days_left = (eol - today).days
+        if days_left < 0 and model not in hw_eol_past:
+            hw_eol_past.append(model)
+        elif days_left <= HW_EOL_WARN_DAYS and model not in hw_eol_soon:
+            hw_eol_soon.append(model)
+
+    if hw_eol_past:
+        models = ", ".join(sorted(set(hw_eol_past)))
+        recs.append(_r("CRITICAL", "Hardware Lifecycle",
+             f"Hardware model(s) {models} are past EOL — no longer eligible for manufacturer support",
+             "Initiate hardware refresh or extended support contract immediately",
+             "EOL hardware cannot be replaced under standard support; failure risk increases"))
+    if hw_eol_soon:
+        models = ", ".join(sorted(set(hw_eol_soon)))
+        recs.append(_r("HIGH", "Hardware Lifecycle",
+             f"Hardware model(s) {models} reaching EOL within {HW_EOL_WARN_DAYS} days",
+             "Begin hardware refresh planning — lead times for Cohesity hardware can be 8–16 weeks",
+             "Planning ahead avoids gaps in hardware support coverage"))
 
     unhealthy = [n for n in nodes
                  if not ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
@@ -1024,11 +1135,11 @@ def _sheet_summary(wb, all_data):
 def _sheet_infrastructure(wb, all_data):
     ws = wb.create_sheet("Infrastructure")
     ws.freeze_panes = "A3"
-    _title(ws, "Infrastructure — Cluster & Node Health", "N")
+    _title(ws, "Infrastructure — Cluster & Node Health", "Q")
 
-    cols = ["Cluster", "Software Version", "Cluster Type", "Cluster ID",
-            "Node Count", "Healthy Nodes", "Disk Count",
-            "Domain Name", "DNS Servers", "NTP Servers", "Timezone",
+    cols = ["Cluster", "Software Version", "SW Lifecycle Status", "SW EOS Date", "Days to EOS",
+            "Cluster Type", "Cluster ID", "Node Count", "Healthy Nodes", "Disk Count",
+            "Domain", "DNS Servers", "NTP Servers", "Timezone",
             "Encryption", "FIPS", "Helios Status"]
     _hdr(ws, 2, cols)
 
@@ -1042,6 +1153,13 @@ def _sheet_infrastructure(wb, all_data):
         )
         # Disk count — v1 /public/nodes returns diskCount as an integer per node
         disks = sum(n.get("diskCount") or 0 for n in nodes)
+
+        sw_ver = info.get("clusterSoftwareVersion", "")
+        import datetime as _dt_mod
+        sw_status, sw_eos_date, sw_label = _sw_eos(sw_ver)
+        today = _dt_mod.date.today()
+        days_to_eos = (sw_eos_date - today).days if sw_eos_date else ""
+        eos_date_str = sw_eos_date.isoformat() if sw_eos_date else ("—" if sw_status == "current" else "Unknown")
 
         enc  = bool(info.get("encryptionEnabled") or
                     (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
@@ -1059,31 +1177,119 @@ def _sheet_infrastructure(wb, all_data):
             ntp = str(ntp_raw) if ntp_raw else "Not configured"
         domain = (info.get("domainNames") or [""])[0]
 
-        row = [cd["name"], info.get("clusterSoftwareVersion", ""),
+        row = [cd["name"], sw_ver,
+               sw_label, eos_date_str, days_to_eos,
                info.get("clusterType", ""), str(info.get("id", "")),
                len(nodes), healthy, disks if disks else "",
                domain, dns, ntp, info.get("timezone", ""),
                "Yes" if enc else "No",
                "Yes" if fips else "No",
                "Connected"]
-        r = ws.max_row + 1
+        rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=r, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _font()
 
-        # Colour encryption / FIPS
-        enc_cell = ws.cell(row=r, column=12)
+        # Colour SW Lifecycle Status cell (col 3)
+        sw_cell = ws.cell(row=rn, column=3)
+        if sw_status == "eol":
+            sw_cell.fill = _fill(RED);    sw_cell.font = _font(bold=True, color=WHITE)
+        elif sw_status == "in_support" and isinstance(days_to_eos, int) and days_to_eos < SW_EOS_WARN_DAYS:
+            sw_cell.fill = _fill(ORANGE); sw_cell.font = _font(bold=True)
+        elif sw_status == "current":
+            sw_cell.fill = _fill(LT_GREEN)
+
+        # Colour Days to EOS cell (col 5)
+        eos_cell = ws.cell(row=rn, column=5)
+        if isinstance(days_to_eos, int):
+            if days_to_eos < 0:
+                eos_cell.fill = _fill(RED);    eos_cell.font = _font(bold=True, color=WHITE)
+            elif days_to_eos < SW_EOS_WARN_DAYS:
+                eos_cell.fill = _fill(ORANGE); eos_cell.font = _font(bold=True)
+
+        # Colour encryption / FIPS — now cols 15 and 16
+        enc_cell = ws.cell(row=rn, column=15)
         enc_cell.fill = _fill(LT_GREEN) if enc else _fill(RED)
         enc_cell.font = _font(bold=True, color=WHITE if not enc else "000000")
-        fips_cell = ws.cell(row=r, column=13)
+        fips_cell = ws.cell(row=rn, column=16)
         fips_cell.fill = _fill(LT_GREEN) if fips else _fill(YELLOW)
         fips_cell.font = _font(bold=True)
 
-        # Node health
+        # Node health — now col 9
         if healthy < len(nodes):
-            ws.cell(row=r, column=6).fill = _fill(ORANGE)
-            ws.cell(row=r, column=6).font = _font(bold=True)
+            ws.cell(row=rn, column=9).fill = _fill(ORANGE)
+            ws.cell(row=rn, column=9).font = _font(bold=True)
 
     auto_fit_columns(ws)
+
+
+def _sheet_hardware(wb, all_data):
+    import datetime as _dt
+    ws = wb.create_sheet("Node Hardware")
+    ws.freeze_panes = "A3"
+    _title(ws, "Node Hardware Inventory — Models, Capacity & End-of-Life Status", "L")
+
+    cols = ["Cluster", "Node ID", "IP Address", "Node Type", "Model",
+            "Serial Number", "Node SW Version",
+            "Raw Capacity (TB)", "Disk Count", "Storage Tiers",
+            "HW EOL Date", "HW EOL Status"]
+    _hdr(ws, 2, cols)
+
+    today = _dt.date.today()
+
+    for cd in all_data:
+        for n in cd["nodes"]:
+            model   = n.get("hardwareModel") or n.get("productModel") or ""
+            serial  = n.get("cohesityNodeSerial") or ""
+            ntype   = n.get("nodeType") or ""
+            nsw     = n.get("nodeSoftwareVersion") or ""
+            cap_tb  = round((n.get("maxPhysicalCapacityBytes") or 0) / 1e12, 2)
+            disks   = n.get("diskCount") or 0
+
+            # Storage tiers summary e.g. "SSD:4, HDD:8"
+            tiers = []
+            for t in (n.get("diskCountByTier") or []):
+                tier_name = t.get("storageTier", "")
+                tier_cnt  = t.get("diskCount", 0)
+                if tier_name and tier_cnt:
+                    tiers.append(f"{tier_name}:{tier_cnt}")
+            tier_str = ", ".join(tiers) or str(disks)
+
+            eol_date = _hw_eol(model)
+            if eol_date:
+                days_left = (eol_date - today).days
+                if days_left < 0:
+                    hw_status = f"PAST EOL ({abs(days_left)}d ago)"
+                elif days_left <= HW_EOL_WARN_DAYS:
+                    hw_status = f"EOL in {days_left}d"
+                else:
+                    hw_status = f"In Service ({days_left}d remaining)"
+                eol_str = eol_date.isoformat()
+            else:
+                hw_status = "In Service" if model else "Unknown"
+                eol_str   = "—"
+
+            row = [cd["name"],
+                   n.get("id", ""), n.get("ip", ""),
+                   ntype, model, serial, nsw,
+                   cap_tb, disks, tier_str,
+                   eol_str, hw_status]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _font()
+
+            # Colour HW EOL Status cell (col 12)
+            eol_cell = ws.cell(row=rn, column=12)
+            if eol_date:
+                days_left = (eol_date - today).days
+                if days_left < 0:
+                    eol_cell.fill = _fill(RED);    eol_cell.font = _font(bold=True, color=WHITE)
+                elif days_left <= HW_EOL_WARN_DAYS:
+                    eol_cell.fill = _fill(ORANGE); eol_cell.font = _font(bold=True)
+                elif days_left <= 365:
+                    eol_cell.fill = _fill(YELLOW); eol_cell.font = _font(bold=True)
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["E"].width = 30  # Model
 
 
 def _sheet_protection(wb, all_data):
@@ -2071,6 +2277,7 @@ def write_excel(all_data, args):
     print("  Writing Excel sheets...")
     _sheet_summary(wb, all_data)
     _sheet_infrastructure(wb, all_data)
+    _sheet_hardware(wb, all_data)
     _sheet_protection(wb, all_data)
     _sheet_storage(wb, all_data)
     _sheet_policies(wb, all_data)
@@ -2238,6 +2445,41 @@ def write_word(all_data, args):
                                   "Yes" if enc else "No",
                                   "Yes" if fips else "No", status]):
             row[i].text = str(val)
+
+    _h2("Software & Hardware Lifecycle")
+    doc.add_paragraph(
+        "The table below summarises the software lifecycle status for each cluster. "
+        "Cohesity software versions follow a feature-release (9-month support) and "
+        "LTS (12+ month support) model. All current in-support versions (6.8.2 LTS, "
+        "7.1.2_u2 LTS, and 7.2.x feature releases) reach end of support on "
+        "June 8, 2026. Version 7.3 and later follow a new lifecycle policy."
+    )
+    # SW lifecycle table
+    tbl = doc.add_table(rows=1, cols=4)
+    tbl.style = "Table Grid"
+    hdr = tbl.rows[0].cells
+    for i, h in enumerate(["Cluster", "Version", "Lifecycle Status", "EOS Date"]):
+        hdr[i].text = h
+        for run in hdr[i].paragraphs[0].runs:
+            run.font.bold = True
+    for cd in all_data:
+        sw_ver = (cd["info"].get("clusterSoftwareVersion") or "").strip()
+        _, sw_eos_date, sw_label = _sw_eos(sw_ver)
+        row = tbl.add_row().cells
+        row[0].text = cd["name"]
+        row[1].text = sw_ver
+        row[2].text = sw_label
+        row[3].text = sw_eos_date.isoformat() if sw_eos_date else "—"
+    doc.add_paragraph("")
+
+    doc.add_paragraph(
+        "Hardware end-of-life (EOL) dates are provided by Cohesity's Platform EOL Terms. "
+        "EOL hardware is no longer eligible for manufacturer support or standard replacement. "
+        "Note: Cohesity C2000, C2500, and C3500 platform nodes reached EOL and are no longer "
+        "eligible for support under the standard agreement. C4000/CN series hardware is in "
+        "service until February 2027. See the Node Hardware sheet in the Excel workbook for "
+        "per-node EOL status."
+    )
     doc.add_page_break()
 
     # ── 3. Protection & Recovery ───────────────────────────────────────────
