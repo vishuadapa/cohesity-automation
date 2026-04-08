@@ -56,6 +56,13 @@ Requirements
 
 Version history
 ───────────────
+  1.9 (2026-04-08) — fix: Replication & Archive still blank after v1.8.
+                     dataTransferToVaults API requires vaultIds filter to
+                     return any rows — added vault ID extraction and pass-
+                     through from _vaults() to _fortknox_data(). Vault type
+                     column D now read from archivalTargetConfig.targetType
+                     inside the policy target (previously name-based lookup
+                     against vault list failed on every mismatch).
   1.8 (2026-04-08) — fix: Replication & Archive sheet columns D-H blank.
                      Root causes: (1) _fortknox_data used startTimeUsecs/
                      endTimeUsecs — API expects startTimeMsecs/endTimeMsecs,
@@ -103,7 +110,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.8"
+__version__ = "1.9"
 
 import argparse
 import datetime
@@ -314,13 +321,17 @@ def _vaults(session, h, debug):
              params={"includeFortKnoxVault": "true"}, debug=debug)
     return d or []
 
-def _fortknox_data(session, h, start_usecs, end_usecs, debug):
-    # API expects milliseconds, not microseconds
+def _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, debug):
+    # API expects milliseconds; also requires vaultIds filter to return results
+    params = {"startTimeMsecs": start_usecs // 1000,
+              "endTimeMsecs":   end_usecs   // 1000}
+    if vault_ids:
+        params["vaultIds"] = vault_ids  # requests repeats list values correctly
+    elif not vault_ids:
+        return []   # no vaults — nothing to query
     d = _get(session, h,
              "/irisservices/api/v1/public/reports/dataTransferToVaults",
-             params={"startTimeMsecs": start_usecs // 1000,
-                     "endTimeMsecs":   end_usecs   // 1000},
-             debug=debug)
+             params=params, debug=debug)
     return (d or {}).get("dataTransferSummary") or []
 
 
@@ -347,8 +358,9 @@ def collect_cluster(session, api_key, cluster, args):
     domains = _storage_domains(session, h, dbg)
     views   = _views(session, h, dbg)
     print(" vaults...", end="", flush=True)
-    vaults  = _vaults(session, h, dbg)
-    fk_data = _fortknox_data(session, h, start_usecs, end_usecs, dbg)
+    vaults    = _vaults(session, h, dbg)
+    vault_ids = [v["id"] for v in vaults if "id" in v]
+    fk_data   = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
 
     group_runs = {}
     if not args.quick:
@@ -1461,9 +1473,11 @@ def _sheet_replication(wb, all_data):
                     or cfg.get("name")
                     or cfg.get("vaultName") or "")
 
-        # Count how many policies reference each replication / archival target
+        # Count how many policies reference each target; capture vault type from
+        # the policy archival target config directly — more reliable than a
+        # name-based lookup against the /public/vaults list.
         rep_use  = {}   # cluster name → policy count
-        arch_use = {}   # vault name   → policy count
+        arch_use = {}   # vault name   → {"count": int, "targetType": str}
         for p in cd["policies"]:
             rtp = p.get("remoteTargetPolicy") or {}
             for t in (rtp.get("replicationTargets") or []):
@@ -1471,7 +1485,13 @@ def _sheet_replication(wb, all_data):
                 if n: rep_use[n] = rep_use.get(n, 0) + 1
             for t in (rtp.get("archivalTargets") or []):
                 n = _arch_name(t)
-                if n: arch_use[n] = arch_use.get(n, 0) + 1
+                if not n:
+                    continue
+                cfg   = t.get("archivalTargetConfig") or {}
+                ttype = (t.get("targetType") or cfg.get("targetType") or "")
+                if n not in arch_use:
+                    arch_use[n] = {"count": 0, "targetType": ttype}
+                arch_use[n]["count"] += 1
 
         # ── FK / vault data cross-reference ───────────────────────────────
         # Build lookups keyed by BOTH vault name and vault ID.
@@ -1524,11 +1544,14 @@ def _sheet_replication(wb, all_data):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
         # ── Archival / vault rows — driven by policy targets ──────────────
-        # Use arch_use (from policies) as the primary source so target names
-        # always match. Supplement vault type and FK stats via the lookups above.
+        # arch_use keys are the canonical target names from policies.
+        # Vault type comes from the policy target itself (most reliable).
+        # FK stats matched by name then ID against fk_data.
         shown = set()
-        for vname, vcnt in arch_use.items():
-            vtype = vault_type_by_name.get(vname, "")
+        for vname, info in arch_use.items():
+            vcnt  = info["count"]
+            # Primary: type from policy target; fallback: vault list lookup
+            vtype = info["targetType"] or vault_type_by_name.get(vname, "")
             fkd   = _fk_stats(vname)
             note  = "FortKnox/RPaaS" if _is_fk_vault(vname, vtype) else ""
             rn    = ws.max_row + 1
