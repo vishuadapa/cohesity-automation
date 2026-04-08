@@ -561,6 +561,8 @@ def _agents(session, h, debug):
     """Fetch Cohesity agent deployment/health status per registered host."""
     d = _get(session, h, "/irisservices/api/v1/public/reports/agents",
              debug=debug)
+    if isinstance(d, list):
+        return d
     return (d or {}).get("agentDeploymentStatusList") or []
 
 
@@ -588,6 +590,8 @@ def _sources(session, h, debug):
     """Fetch registered protection sources with coverage stats."""
     d = _get(session, h, "/v2/data-protect/sources",
              params={"includeTenants": "true"}, debug=debug)
+    if isinstance(d, list):
+        return d
     return (d or {}).get("sources") or []
 
 
