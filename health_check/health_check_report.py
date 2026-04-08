@@ -56,6 +56,9 @@ Requirements
 
 Version history
 ───────────────
+  1.5 (2026-04-08) — fix: drop Alerts columns K (Node ID) and L (Entity) —
+                     sparse propertyList fields only present on hardware alerts;
+                     description + alert code already capture the context.
   1.4 (2026-04-08) — fix: Policy Audit column N (Groups Using) now computed by
                      counting groups whose policyId matches each policy — the v2
                      API does not return numProtectionGroups.
@@ -76,7 +79,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.4"
+__version__ = "1.5"
 
 import argparse
 import datetime
@@ -1172,12 +1175,12 @@ def _sheet_policy_groups(wb, all_data):
 def _sheet_alerts(wb, all_data):
     ws = wb.create_sheet("Alerts")
     ws.freeze_panes = "A3"
-    _title(ws, "Open Alerts — Severity, Age & Description", "L")
+    _title(ws, "Open Alerts — Severity, Age & Description", "J")
 
     cols = ["Cluster", "Severity", "Category", "Alert Code",
             "Alert Name", "Description",
             "First Occurred", "Age (Days)", "Last Updated",
-            "Acknowledged", "Node ID", "Entity"]
+            "Acknowledged"]
     _hdr(ws, 2, cols)
 
     sev_order = {"kCritical": 0, "kWarning": 1, "kInfo": 2}
@@ -1192,19 +1195,15 @@ def _sheet_alerts(wb, all_data):
             last_u  = a.get("latestTimestampUsecs") or 0
             age = round((_now_usecs() - first_u) / (86400 * 1_000_000), 1) \
                   if first_u else ""
-            doc   = a.get("alertDocument") or {}
-            props = {p["key"]: p["value"]
-                     for p in (a.get("propertyList") or []) if "key" in p}
-            desc  = doc.get("alertDescription") or ""
+            doc  = a.get("alertDocument") or {}
+            desc = doc.get("alertDescription") or ""
 
             row = [cd["name"], a.get("severity", ""),
                    a.get("alertCategory", ""), a.get("alertCode", ""),
                    doc.get("alertName", ""),
                    desc[:120] + ("…" if len(desc) > 120 else ""),
                    usecs_to_datetime(first_u), age, usecs_to_datetime(last_u),
-                   "Yes" if a.get("acknowledgeTimestampUsecs") else "No",
-                   props.get("nodeId", ""),
-                   props.get("entityName") or props.get("jobName", "")]
+                   "Yes" if a.get("acknowledgeTimestampUsecs") else "No"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
