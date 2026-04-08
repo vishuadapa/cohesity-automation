@@ -7,6 +7,162 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-08] docs: update README, add health check quick-start; CHANGELOG updated
+
+### Changed
+- `README.md` — Health check report promoted to top-level featured section with full quick-start: blurb, requirements, where to run from, common usage examples, all options table, and output filename format. `health_check/` added to the repository structure table. `python-docx` added to global requirements.
+- `health_check/health_check_report.md` — Version banner (`v1.18`), EBRs → CBRs, cross-reference link to root README, `GET /public/protectionRuns` added to APIs Used table.
+- `CHANGELOG.md` — Health check script history added.
+
+---
+
+## [2026-04-08] feat: add version number to auto-generated output filenames across all scripts
+
+### Changed
+All 14 scripts that auto-generate output filenames now embed the script version:
+
+```
+health_check_report_v1.18_AcmeCorp_20260408_1430.xlsx
+fortknox_vault_report_v4.10_20260408_1430.xlsx
+protection_group_report_v4.5_20260408_1430.xlsx
+alert_to_csv_v1.0_20260408_143022.csv
+```
+
+Scripts affected: `health_check_report.py`, `alert_summary_report.py`, `alert_to_csv.py`, `cluster_info_report.py`, `node_status.py`, `upgrade_readiness.py`, `list_policies.py`, `policy_compliance_report.py`, `list_snapshots.py`, `fortknox_vault_report.py`, `protection_group_report.py`, `capacity_report.py`, `list_views.py`, `storage_domain_report.py`. Scripts that accept an explicit `--output` path are unaffected.
+
+---
+
+## [2026-04-08] style: update all green to #70AD47 (RGB 112, 173, 71) across every script output
+
+### Changed
+Replaced `#00B388` with `#70AD47` in every Excel header fill, chart line/marker color, and cell background fill across all 14 scripts. Light green cell fills (`#C6EFCE`) updated to `#E2EFDA` (lighter derivative of `#70AD47`).
+
+---
+
+## [2026-04-08] fix(health_check): Trends tab pagination — remove page-size assumption (v1.18)
+
+### Fixed
+- `health_check/health_check_report.py` — Trends tab still showed fewer than 30 days on busy clusters after v1.17. Root cause: `if len(page) < PAGE_SIZE: break` assumed the server caps at exactly 1000 runs per response. The actual server-side cap varies by cluster version (often 100–200); the check fired on the first page and stopped pagination immediately. Fix: removed the page-size check entirely. Pagination now advances purely by timestamp cursor and stops when the response is empty, the oldest run predates the window start, or no progress is made. Safety limit raised to 200 pages.
+
+---
+
+## [2026-04-08] fix(health_check): Trends tab — paginate v1 protectionRuns to cover full 30-day window (v1.17)
+
+### Fixed
+- `health_check/health_check_report.py` — Trends tab showed only 10–20 days on clusters with many protection groups. Root cause: the v1 `protectionRuns` API returns runs newest-first and caps per page; a single call would only return the most recent N days. Fixed by paginating: advance `endTimeUsecs` to just before the oldest run on each page and repeat until the full window is covered.
+
+---
+
+## [2026-04-08] feat(health_check): Trends chart — visible axes, data-point markers (v1.16)
+
+### Changed
+- `health_check/health_check_report.py` — Trends sheet line chart now has visible X and Y axes with tick marks, axis titles, and data-point circle markers on every day. Y axis fixed to 0–100 scale with `0.0` format. Date labels use StrRef to force string rendering in Excel. Auto tick-density reduction for ranges >14 days and >60 days.
+
+---
+
+## [2026-04-08] feat(health_check): include kWarning in Success % calculation (v1.15)
+
+### Changed
+- `health_check/health_check_report.py` — `kWarning` runs (complete with data protected, minor issues) now count toward Success %. Trends col H renamed "Success % (incl. Warnings)". `_score_protection()` and `_success_stats()` quick mode updated to match non-quick mode. Word doc Methodology appendix documents this behaviour.
+
+---
+
+## [2026-04-08] fix(health_check): Trends tab — switch to v1 protectionRuns API for accurate data (v1.14)
+
+### Changed
+- `health_check/health_check_report.py` — Trends tab primary data source switched from per-group v2 runs to the v1 `GET /public/protectionRuns` endpoint — the same source powering the Helios protection-group-summary reporting page. Single call per cluster; `backupRun.slaViolated` (col I) and `backupRun.stats.totalLogicalBackupSizeBytes` (col J) are accurate. v2 per-group runs retained as fallback. Works in `--quick` mode.
+
+---
+
+## [2026-04-08] fix(health_check): Trends tab cols I and J always blank (v1.13)
+
+### Fixed
+- `health_check/health_check_report.py` — Col I (SLA Violations): used `run.get("isSlaViolated")` but the field lives inside `localBackupInfo`; fixed to `lb.get("isSlaViolated")`. Col J (Logical GB): used `lb.get("stats").get("logicalSizeBytes")` but the correct sub-object is `localSnapshotStats`; fixed to `lb.get("localSnapshotStats").get("logicalSizeBytes")`.
+
+---
+
+## [2026-04-08] fix(health_check): Replication & Archive col E and K empty (v1.12)
+
+### Fixed
+- `health_check/health_check_report.py` — `policy_arch_targets` stayed empty because `_arch_name()` returns `""` when v2 policies store archival targets by vault ID only (no `targetName`/`name` field). With no policy-chain rows, `all_arch_targets` was empty and both col E (protection group count) and col K (group names) were blank for all rows. Fixed by supplementing `arch_groups` directly from `fk_data.dataTransferPerProtectionJob[].protectionJobName` per vault, and building `all_arch_targets` as the union of three independent sources: policy chain + fk_data vault names + vault list names.
+
+---
+
+## [2026-04-08] feat(health_check): Replication & Archive — protection group count and group names (v1.11)
+
+### Changed
+- `health_check/health_check_report.py` — Col E changed from policy count to protection group count using each archival target. New col K "Protection Group Names" lists every group name associated with each vault target, comma-separated. Status shows "Configured" (groups present) or "No groups assigned". Target discovery rewired through policy→group chain.
+
+---
+
+## [2026-04-08] fix(health_check): Replication & Archive — vault ID resolution, col E blank (v1.10)
+
+### Fixed
+- `health_check/health_check_report.py` — v2 policies may reference archival targets by vault ID only (no name/targetName field), causing `_arch_name()` to return `""` and col E to show 0. Fixed by building a `vaultId` → name lookup from `/public/vaults` and resolving IDs to names before building target maps. Cols G/H renamed to include API field names and "cumulative total" note.
+
+---
+
+## [2026-04-08] fix(health_check): Replication & Archive — vaultIds filter required for dataTransferToVaults (v1.9)
+
+### Fixed
+- `health_check/health_check_report.py` — `dataTransferToVaults` API returns empty results without a `vaultIds` filter. Fixed by extracting vault IDs from `_vaults()` and passing them to `_fortknox_data()`. Vault type (col D) now read from `archivalTargetConfig.targetType` inside the policy target rather than a name-based vault list lookup.
+
+---
+
+## [2026-04-08] fix(health_check): Replication & Archive cols D–H blank (v1.8)
+
+### Fixed
+- `health_check/health_check_report.py` — Three root causes: (1) `_fortknox_data()` used `startTimeUsecs`/`endTimeUsecs` param names — API requires `startTimeMsecs`/`endTimeMsecs`; (2) archival rows driven by vault list name mismatches; (3) cols G/H (Logical/Physical Transferred) hardcoded as empty — now populated from `numLogicalBytesTransferred`/`numPhysicalBytesTransferred`.
+
+---
+
+## [2026-04-08] fix(health_check): FortKnox status — false-negatives from lastRun.archivalInfo (v1.7)
+
+### Fixed
+- `health_check/health_check_report.py` — `_fk_status()` was returning "idle" for clusters actively sending to FortKnox. Root cause: `lastRun.archivalInfo` is only populated when the most recent primary run included archival — groups with daily local backups and less-frequent archival appeared idle even when active. Fixed by scanning full `group_runs` history (non-quick mode) for successful archival runs matched by target type and vault name. `lastRun` remains the fallback in `--quick` mode.
+
+---
+
+## [2026-04-08] feat(health_check): FortKnox idle detection in Security tab (v1.6)
+
+### Added
+- `health_check/health_check_report.py` — Security tab now distinguishes three FortKnox states: "Active" (green, data sent recently), "Configured — Idle" (orange, vault configured but no recent transfers), "No" (red, not configured). Idle state scores 10/20 points instead of the full 20. Triggers a HIGH-priority recommendation. Detected via `group_runs` archival history and `dataTransferToVaults` transfer records.
+
+---
+
+## [2026-04-08] fix(health_check): drop Alerts columns K and L; fix Policy Audit col N; add Policy → Groups sheet (v1.4–1.5)
+
+### Fixed
+- `health_check/health_check_report.py` — Alerts tab: removed columns K (Node ID) and L (Entity) — `propertyList` fields are only populated on hardware alerts; they were always blank for software/backup alerts.
+- Policy Audit col N (Groups Using): `p.get("numProtectionGroups")` does not exist in the v2 API. Fixed by counting groups whose `policyId` matches each policy from `cd["groups"]`.
+
+### Added
+- New "Policy → Groups" sheet (sheet 6): lists every protection group with its governing policy name, sorted by policy then group name. Paused groups highlighted in yellow, failed groups in red.
+
+---
+
+## [2026-04-08] fix(health_check): infrastructure disk count and NTP columns (v1.3)
+
+### Fixed
+- `health_check/health_check_report.py` — Disk count (col G): previous helper looked for `diskVec`/`disks`/`diskInfo` list fields which don't exist in the v1 `/public/nodes` response. Fixed to use `n.get("diskCount")` integer per node. NTP servers (col J): empty list produced a blank cell instead of "Not configured". Added `ntpServersList` and `ntpServerIps` fallback paths.
+
+---
+
+## [2026-04-08] feat(health_check): initial release — 13-sheet Excel workbook + Word document (v1.0–1.2)
+
+### Added
+- `health_check/health_check_report.py` v1.0 — Multi-cluster Cohesity health check for CBRs and SE engagements. Connects to Helios, discovers all clusters, and collects: cluster info, nodes, alerts, protection groups, policies, storage domains, views, vaults, FortKnox transfer data, and run history. Produces:
+  - **Excel workbook** (13 sheets): Executive Summary, Infrastructure, Protection Health, Storage & Capacity, Policy Audit, Policy → Groups, Alerts, Security, Replication & Archive, Data Services, Coverage Gaps, Trends (30d), Recommendations
+  - **Word document**: cover page, executive scorecard, environment overview, protection health, storage, security posture, recommendations, and scoring methodology appendix
+- Scoring engine: six weighted dimensions (protection 25%, SLA 20%, infrastructure 15%, storage 15%, security 15%, alerts 10%). Grades: Excellent / Good / Fair / At Risk / Critical.
+- Recommendations engine: CRITICAL / HIGH / MEDIUM / LOW prioritised findings with business impact text.
+- `--quick` mode: uses last-run only (no per-group run history) for fast scans of large installs.
+- `--debug` flag: prints HTTP status for every API call.
+- Output filenames include version number, customer name, and local timestamp.
+- `health_check/health_check_report.md` — Full reference: sheet descriptions, scoring model, recommendations priorities, all API endpoints used, performance notes, and version history table.
+
+---
+
 ## [2026-04-07] fix(infrastructure): v1 API field names — node health, disk, and capacity checks
 
 ### Changed
