@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.30**
+**Current version: 1.32**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,7 +10,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (18 sheets)
+### Excel Workbook (19 sheets)
 
 | # | Sheet | Contents |
 |---|-------|----------|
@@ -18,7 +18,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 2 | Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS |
 | 3 | Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status |
 | 4 | **Disk Health** | Per-disk status, type, model, serial, **SSD wear %**, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
-| 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes |
+| 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes, **DataLock (WORM) per group** |
 | 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
 | 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy, compliance gaps, group count |
 | 8 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
@@ -27,11 +27,12 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 11 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
 | 12 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
 | 13 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
-| 14 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
-| 15 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
-| 16 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login — RED for admins without MFA |
-| 17 | Trends (30d) | Daily backup success rate aggregated per cluster with embedded line chart |
-| 18 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+| 14 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, snapshots. Full=`--days` window; quick=last 1 day |
+| 15 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
+| 16 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
+| 17 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login — RED for admins without MFA |
+| 18 | Trends (30d) | Daily backup success rate aggregated per cluster with embedded line chart |
+| 19 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
 
 ### Word Document
 
@@ -213,6 +214,8 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.32 | 2026-04-09 | feat: DataLock (WORM) column added to Protection Health (col 18, per group, color-coded); new FortKnox Data Transfer sheet (sheet 14) — per-protection-group view of logical/physical TB transferred and storage consumed per vault; full mode uses `--days` window, quick mode uses 1-day window; sheet count 18 → 19 |
+| 1.31 | 2026-04-09 | polish: Word doc headings/cover title color unified to `#70AD47`; Excel header rows gain thin black border + height 32; `auto_fit_columns()` handles multiline values, min=12, max=45; Trends charts moved to col L (right of data), height=16, legend at bottom, title 14 pt bold with overlay disabled |
 | 1.30 | 2026-04-09 | feat: DataLock (WORM) tracking — new `DataLock (WORM)` column in Policy Audit (per-policy mode+duration, col 15) and Security sheet (cluster rollup col 16: Compliance/Administrative/Mixed/None). "No DataLock" added to Gaps. MEDIUM recommendation if no DataLock; LOW if Administrative-only. No new API calls — reads `backupPolicy.regular.retention.dataLockConfig` from already-fetched v2 policies |
 | 1.29 | 2026-04-09 | fix: removed Helios username/password auth — `helios.cohesity.com` login endpoints require OIDC/OAuth2 (`401 "No open ID token found in header"`). Using `--username` without `--cluster-host` now prints a clear error with instructions to generate an API key. `cohesity_auth.py` v1.4 |
 | 1.28 | 2026-04-09 | feat: direct cluster mode (`--cluster-host` + `--username` → Bearer token via `POST /v2/users/sessions`). Cluster name auto-detected from cluster's own API. `--clear-credentials` flag. `_get()` uses `session.base_url`. `cohesity_auth.py` v1.2 |

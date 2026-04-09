@@ -32,7 +32,7 @@ __version__ = "1.0"
 from datetime import datetime, timezone
 
 # Cohesity brand green — used for header rows in all reports
-COHESITY_GREEN = "70AD47"
+COHESITY_GREEN = "00B388"
 
 
 def usecs_to_datetime(usecs: int, tz=None) -> str:
@@ -108,7 +108,7 @@ def style_worksheet(ws):
     ws.freeze_panes = "A2"
 
 
-def auto_fit_columns(ws, min_width: int = 10, max_width: int = 60):
+def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
     """
     Auto-fit column widths in an openpyxl worksheet based on cell content.
     Caps width between min_width and max_width.
@@ -116,6 +116,9 @@ def auto_fit_columns(ws, min_width: int = 10, max_width: int = 60):
     Handles merged cells gracefully — MergedCell objects have no column_letter,
     so we fall back to get_column_letter(cell.column) and skip their content
     when measuring width.
+
+    Handles multiline cell values (newline-separated) by measuring the longest
+    line rather than the full string.
     """
     try:
         from openpyxl.cell.cell import MergedCell
@@ -136,5 +139,8 @@ def auto_fit_columns(ws, min_width: int = 10, max_width: int = 60):
             if isinstance(cell, MergedCell):
                 continue
             if cell.value is not None:
-                best = max(best, len(str(cell.value)) + 2)
+                # For multiline values measure the longest line, not the full string
+                lines    = str(cell.value).split("\n")
+                cell_len = max(len(line) for line in lines) + 2
+                best     = max(best, cell_len)
         ws.column_dimensions[col_letter].width = min(best, max_width)

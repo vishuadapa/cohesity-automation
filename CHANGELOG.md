@@ -7,6 +7,29 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] feat(health_check): DataLock in Protection Health + FortKnox Data Transfer sheet (v1.32)
+
+### Added — `health_check/health_check_report.py`
+- **Protection Health sheet**: new `DataLock (WORM)` column (col 18) per protection group — looks up the group's governing policy and shows its DataLock config (e.g. "Compliance / 14 Days"). Green for Compliance, yellow for Administrative, red for None.
+- **FortKnox Data Transfer sheet** (sheet 14, 19 total): per-protection-group view of data transferred to every external vault target: Logical Transferred (TB), Physical Transferred (TB), Storage Consumed (TB), Snapshots, Period.
+  - Full mode: uses existing `fk_data` covering the full `--days` lookback window (default 30 days).
+  - Quick mode (`--quick`): fetches a separate 1-day window (`fk_data_1d`) to show last-day transfers only.
+- `collect_cluster()` now stores `cd["quick"]`, `cd["days"]`, and `cd["fk_data_1d"]`.
+
+---
+
+## [2026-04-09] polish(health_check): formatting improvements — Word colors, Excel borders/columns, Trends charts (v1.31)
+
+### Changed — `health_check/health_check_report.py`
+- **Word doc**: headings (`_h1`, `_h2`) and cover page title color changed from `#00B388` to `#70AD47` — now consistent with Excel header green throughout the entire report.
+- **Excel header rows**: `_hdr()` now applies a thin black border on all four sides of every header cell; row height set to 32 for breathing room.
+- **Trends charts**: moved from below the data (`B{trend_end+2}`) to the right of the data (`L{trend_start}`) — no more overlap with data columns. Chart height increased to 16, legend placed at the bottom (`position="b"`), title rendered at 14 pt bold with `overlay=False` so it doesn't obscure chart content.
+
+### Changed — `utils/formatters.py`
+- **`auto_fit_columns()`**: handles multiline cell values (newline-separated) by measuring the longest line instead of the full concatenated string. Default `min_width` raised from 10 → 12, `max_width` lowered from 60 → 45.
+
+---
+
 ## [2026-04-09] feat(health_check): DataLock (WORM) tracking — Policy Audit, Security, Recommendations (v1.30)
 
 ### Added — `health_check/health_check_report.py`

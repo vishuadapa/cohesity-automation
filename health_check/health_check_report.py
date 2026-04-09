@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.28
+health_check_report.py  v1.32
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -16,25 +16,26 @@ cluster) and produces:
 
   Excel sheets
   ────────────
-  1  Executive Summary   — per-cluster health score & grade
-  2  Infrastructure      — versions, nodes, disks, config
-  3  Node Hardware       — per-node model, serial, EOL status
-  4  Disk Health         — per-disk status, SSD wear %, encryption
-  5  Protection Health   — success rates, SLA, RPO gaps
-  6  Storage & Capacity  — utilization, data reduction, runway
-  7  Policy Audit        — retention, replication, archival (groups count fixed)
-  8  Policy → Groups     — every group with the policy that governs it
-  9  Alerts              — open critical/warning with age
-  10 Security            — expanded checklist: encryption, FIPS, audit log, MFA,
-                           NTP auth, tunnel, SSO, cert expiry, vault, FK
-  11 Agent Health        — per-host agent version, status, upgradability
-  12 Source Coverage     — registered sources with protected/unprotected counts
-  13 Replication/Archive — targets, last transfer, FortKnox
-  14 Data Services       — NAS views, quota utilization
-  15 Coverage Gaps       — groups with no recent successful backup
-  16 User Security       — user accounts, MFA, locked status, roles, last login
-  17 Trends (30d)        — daily success rate + storage growth charts
-  18 Recommendations     — prioritized action list
+  1  Executive Summary       — per-cluster health score & grade
+  2  Infrastructure          — versions, nodes, disks, config
+  3  Node Hardware           — per-node model, serial, EOL status
+  4  Disk Health             — per-disk status, SSD wear %, encryption
+  5  Protection Health       — success rates, SLA, RPO gaps, DataLock per group
+  6  Storage & Capacity      — utilization, data reduction, runway
+  7  Policy Audit            — retention, replication, archival, DataLock per policy
+  8  Policy → Groups         — every group with the policy that governs it
+  9  Alerts                  — open critical/warning with age
+  10 Security                — expanded checklist: encryption, FIPS, audit log, MFA,
+                               NTP auth, tunnel, SSO, cert expiry, vault, FK, DataLock
+  11 Agent Health            — per-host agent version, status, upgradability
+  12 Source Coverage         — registered sources with protected/unprotected counts
+  13 Replication/Archive     — targets, last transfer, FortKnox
+  14 FortKnox Data Transfer  — per-group transfer to external targets (30d full / 1d quick)
+  15 Data Services           — NAS views, quota utilization
+  16 Coverage Gaps           — groups with no recent successful backup
+  17 User Security           — user accounts, MFA, locked status, roles, last login
+  18 Trends (30d)            — daily success rate + storage growth charts
+  19 Recommendations         — prioritized action list
 
   Word document
   ─────────────
@@ -79,6 +80,23 @@ Requirements
 
 Version history
 ───────────────
+  1.32 (2026-04-09) — feat: DataLock (WORM) column in Protection Health sheet
+                     (col 18 per group, green=Compliance/yellow=Administrative/
+                     red=None); new "FortKnox Data Transfer" sheet (sheet 14)
+                     showing per-protection-group transfer to every external
+                     target: logical TB, physical TB, storage consumed TB,
+                     snapshots. Full mode covers the full lookback window
+                     (args.days); quick mode fetches a separate 1-day window.
+                     Sheet count: 18 → 19.
+  1.31 (2026-04-09) — polish: formatting improvements — Word doc headings and
+                     cover title standardized to #70AD47 (was #00B388); Excel
+                     header rows gain a thin black border on all sides and row
+                     height 32; auto_fit_columns() handles multiline cell values
+                     (measures longest line) with tuned defaults (min 12, max 45);
+                     Trends charts moved to the right of data (col L) to prevent
+                     overlap, height increased to 16, legend placed at bottom,
+                     chart title rendered at 14 pt bold with overlay disabled.
+                     formatters.py: auto_fit_columns defaults min=12, max=45.
   1.30 (2026-04-09) — feat: DataLock (WORM) tracking across Policy Audit,
                      Security, and Recommendations. New helper functions
                      _policy_datalock_str() and _cluster_datalock() read
@@ -294,7 +312,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.30"
+__version__ = "1.32"
 
 import argparse
 import datetime
@@ -319,7 +337,7 @@ from formatters import (
 
 try:
     from openpyxl import Workbook
-    from openpyxl.styles import PatternFill, Font, Alignment
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.chart import LineChart, Reference
     from openpyxl.chart.series import SeriesLabel
     EXCEL_OK = True
@@ -424,13 +442,17 @@ def _rag_fill(score):
     return _fill("FF8080")
 
 def _hdr(ws, row, cols):
-    """Write a bold Cohesity-green header row."""
+    """Write a bold Cohesity-green header row with a thin black border."""
+    _thin   = Side(style="thin", color="000000")
+    _border = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
     for c, val in enumerate(cols, 1):
         cell = ws.cell(row=row, column=c, value=val)
         cell.font      = Font(bold=True, color=WHITE, size=10)
         cell.fill      = _fill(COH_GREEN)
         cell.alignment = Alignment(wrap_text=True, vertical="center",
                                    horizontal="center")
+        cell.border    = _border
+    ws.row_dimensions[row].height = 32
 
 def _title(ws, text, span):
     ws.merge_cells(f"A1:{span}1")
@@ -786,7 +808,10 @@ def collect_cluster(session, api_key, cluster, args):
     print(" vaults...", end="", flush=True)
     vaults    = _vaults(session, h, dbg)
     vault_ids = [v["id"] for v in vaults if "id" in v]
-    fk_data   = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
+    fk_data    = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
+    # For the FortKnox detail tab: quick mode shows last 1 day only
+    fk_data_1d = (_fortknox_data(session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
+                  if args.quick else [])
     print(" run-summary...", end="", flush=True)
     v1_runs   = _v1_protection_runs(session, h, start_usecs, end_usecs, dbg)
     print(" certs/agents...", end="", flush=True)
@@ -840,6 +865,9 @@ def collect_cluster(session, api_key, cluster, args):
         "tenants":     tenants,
         "start_usecs": start_usecs,
         "end_usecs":   end_usecs,
+        "days":        args.days,
+        "quick":       args.quick,
+        "fk_data_1d":  fk_data_1d,
     }
     cd["scores"]          = _compute_scores(cd, args.quick)
     cd["recommendations"] = _build_recommendations(cd)
@@ -1733,7 +1761,7 @@ def _sheet_hardware(wb, all_data):
 def _sheet_protection(wb, all_data):
     ws = wb.create_sheet("Protection Health")
     ws.freeze_panes = "A3"
-    _title(ws, "Protection Health — Group Status & Run Metrics", "S")
+    _title(ws, "Protection Health — Group Status & Run Metrics", "T")
 
     cols = ["Cluster", "Group Name", "Policy",
             "Active", "Paused",
@@ -1742,11 +1770,13 @@ def _sheet_protection(wb, all_data):
             "Objects OK", "Objects Failed",
             "Logical (GB)", "Physical (GB)",
             "Replication Status", "Archival Status",
+            "DataLock (WORM)",
             "RPO (hrs)", "Flag"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
-        pm = cd.get("policy_map", {})
+        pm         = cd.get("policy_map", {})
+        policy_by_id = {p.get("id"): p for p in cd["policies"] if p.get("id")}
         for g in cd["groups"]:
             lr  = g.get("lastRun") or {}
             lb  = lr.get("localBackupInfo") or {}
@@ -1800,6 +1830,10 @@ def _sheet_protection(wb, all_data):
                            or pm.get(g.get("policyId"), "")
                            or g.get("policyId", ""))
 
+            # DataLock: look up via the full policy object
+            policy = policy_by_id.get(g.get("policyId"), {})
+            dl_str = _policy_datalock_str(policy)
+
             row = [cd["name"], g.get("name", ""),
                    policy_name,
                    "Yes" if g.get("isActive", True) else "No",
@@ -1809,12 +1843,25 @@ def _sheet_protection(wb, all_data):
                    usecs_to_datetime(start_u), usecs_to_datetime(end_u), dur,
                    objs_ok, objs_fail,
                    logical_gb, physical_gb,
-                   repl_st, arch_st, rpo_hrs, flag]
+                   repl_st, arch_st,
+                   dl_str,
+                   rpo_hrs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-            fc = ws.cell(row=rn, column=19)
+            # DataLock col 18 — color by mode
+            dc = ws.cell(row=rn, column=18)
+            dl_lower = dl_str.lower()
+            if "compliance" in dl_lower:
+                dc.fill = _fill(LT_GREEN)
+            elif "administrative" in dl_lower:
+                dc.fill = _fill(YELLOW); dc.font = _font(bold=True)
+            else:
+                dc.fill = _fill(RED); dc.font = _font(bold=True, color=WHITE)
+
+            # Flag col 20
+            fc = ws.cell(row=rn, column=20)
             if flag == "FAILED":
                 fc.fill = _fill(RED);   fc.font = _font(bold=True, color=WHITE)
             elif flag in ("PAUSED",) or "RPO GAP" in flag:
@@ -2557,6 +2604,71 @@ def _sheet_replication(wb, all_data):
     ws.column_dimensions["K"].width = 60
 
 
+def _sheet_fortknox_detail(wb, all_data):
+    """Per-protection-group data transfer to FortKnox / external vault targets.
+
+    Full mode: covers the full lookback window (args.days, default 30 days).
+    Quick mode: covers the last 1 day only (separate fk_data_1d fetch).
+    """
+    ws = wb.create_sheet("FortKnox Data Transfer")
+    ws.freeze_panes = "A3"
+    _title(ws,
+           "FortKnox / External Target Data Transfer — Per Protection Group", "I")
+
+    cols = ["Cluster", "Vault Name", "Vault Type",
+            "Protection Group",
+            "Logical Transferred (TB)", "Physical Transferred (TB)",
+            "Storage Consumed (TB)", "Snapshots",
+            "Period"]
+    _hdr(ws, 2, cols)
+
+    def _vtype_label(vt):
+        tl = (vt or "").lower()
+        if any(x in tl for x in ("fortknox", "rpaas", "krpaas", "kfortknox")):
+            return "FortKnox / RPaaS"
+        if any(x in tl for x in ("s3", "glacier", "azure", "gcp", "cloud")):
+            return "Cloud Tier"
+        if "nas" in tl:
+            return "NAS Vault"
+        if "tape" in tl:
+            return "Tape"
+        return vt or "Unknown"
+
+    for cd in all_data:
+        quick      = cd.get("quick", False)
+        days       = cd.get("days", 30)
+        fk_source  = cd.get("fk_data_1d") if quick else (cd.get("fk_data") or [])
+        period     = "Last 1 day" if quick else f"Last {days} days"
+
+        has_rows = False
+        for fk in (fk_source or []):
+            vname = fk.get("vaultName", "")
+            vtype = _vtype_label(fk.get("vaultType", ""))
+            for job in (fk.get("dataTransferPerProtectionJob") or []):
+                jname    = job.get("protectionJobName", "")
+                logical  = round(bytes_to_tb(job.get("numLogicalBytesTransferred")  or 0), 4)
+                physical = round(bytes_to_tb(job.get("numPhysicalBytesTransferred") or 0), 4)
+                consumed = round(bytes_to_tb(job.get("storageConsumed")             or 0), 4)
+                snaps    = job.get("numSnapshots") or ""
+                rn  = ws.max_row + 1
+                row = [cd["name"], vname, vtype, jname,
+                       logical, physical, consumed, snaps, period]
+                for c, val in enumerate(row, 1):
+                    ws.cell(row=rn, column=c, value=val).font = _font()
+                has_rows = True
+
+        if not has_rows:
+            rn = ws.max_row + 1
+            ws.cell(row=rn, column=1, value=cd["name"]).font = _font()
+            ws.cell(row=rn, column=4,
+                    value="No data transfer records for this cluster in the period.") \
+               .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["B"].width = 30   # Vault Name
+    ws.column_dimensions["D"].width = 35   # Protection Group
+
+
 def _sheet_views(wb, all_data):
     ws = wb.create_sheet("Data Services")
     ws.freeze_panes = "A3"
@@ -2775,10 +2887,35 @@ def _sheet_trends(wb, all_data):
         n_days    = trend_end - trend_start + 1
         if n_days > 1:
             chart = LineChart()
-            chart.title  = f"{cd['name']} — Daily Success Rate (incl. Warnings)"
             chart.style  = 10
-            chart.height = 14
-            chart.width  = 28
+            chart.height = 16   # taller for readability
+            chart.width  = 26   # wide but fits to the right of the data cols
+
+            # ── Chart title: larger font, no overlay ──────────────────────────
+            _title_text = f"{cd['name']} — Daily Success Rate (incl. Warnings)"
+            try:
+                from openpyxl.chart.title import Title as _CTitle
+                from openpyxl.drawing.text import (
+                    RichTextBodyProperties as _BodyPr,
+                    Paragraph as _Para,
+                    RegularTextRun as _Run,
+                    RunProperties as _RunPr,
+                )
+                from openpyxl.chart.text import RichText as _CRichText, Text as _CText
+                _ctitle = _CTitle()
+                _ctitle.overlay = False
+                _rich = _CRichText()
+                _rich.bodyPr = _BodyPr()
+                _para = _Para()
+                _run  = _Run()
+                _run.t  = _title_text
+                _run.rPr = _RunPr(sz=1400, b=True)   # 14 pt bold
+                _para.r.append(_run)
+                _rich.p.append(_para)
+                _ctitle.tx = _CText(rich=_rich)
+                chart.title = _ctitle
+            except Exception:
+                chart.title = _title_text   # fallback: plain string
 
             # ── Y axis: Success %, fixed 0–100, tick marks visible ───────────
             chart.y_axis.title         = "Success %"
@@ -2825,7 +2962,16 @@ def _sheet_trends(wb, all_data):
             s.marker.graphicalProperties.solidFill   = COH_GREEN
             s.marker.graphicalProperties.line.solidFill = COH_GREEN
 
-            ws.add_chart(chart, f"B{trend_end + 2}")
+            # ── Legend at the bottom ──────────────────────────────────────────
+            try:
+                from openpyxl.chart.legend import Legend as _ChartLegend
+                chart.legend = _ChartLegend()
+                chart.legend.position = "b"
+            except Exception:
+                pass
+
+            # Place chart to the right of the data columns (col L = 12)
+            ws.add_chart(chart, f"L{trend_start}")
 
     auto_fit_columns(ws)
 
@@ -3174,21 +3320,22 @@ def write_excel(all_data, args):
     _sheet_summary(wb, all_data)           # 1
     _sheet_infrastructure(wb, all_data)    # 2
     _sheet_hardware(wb, all_data)          # 3
-    _sheet_disk_health(wb, all_data)       # 4  NEW
+    _sheet_disk_health(wb, all_data)       # 4
     _sheet_protection(wb, all_data)        # 5
     _sheet_storage(wb, all_data)           # 6
     _sheet_policies(wb, all_data)          # 7
     _sheet_policy_groups(wb, all_data)     # 8
     _sheet_alerts(wb, all_data)            # 9
     _sheet_security(wb, all_data)          # 10
-    _sheet_agent_health(wb, all_data)      # 11 NEW
-    _sheet_source_coverage(wb, all_data)   # 12 NEW
+    _sheet_agent_health(wb, all_data)      # 11
+    _sheet_source_coverage(wb, all_data)   # 12
     _sheet_replication(wb, all_data)       # 13
-    _sheet_views(wb, all_data)             # 14
-    _sheet_coverage(wb, all_data)          # 15
-    _sheet_user_security(wb, all_data)     # 16 NEW
-    _sheet_trends(wb, all_data)            # 17
-    _sheet_recommendations(wb, all_data)   # 18
+    _sheet_fortknox_detail(wb, all_data)   # 14 NEW
+    _sheet_views(wb, all_data)             # 15
+    _sheet_coverage(wb, all_data)          # 16
+    _sheet_user_security(wb, all_data)     # 17
+    _sheet_trends(wb, all_data)            # 18
+    _sheet_recommendations(wb, all_data)   # 19
 
     out = f"{args.output}.xlsx"
     wb.save(out)
@@ -3220,13 +3367,13 @@ def write_word(all_data, args):
     def _h1(text):
         p = doc.add_heading(text, level=1)
         for run in p.runs:
-            run.font.color.rgb = RGBColor(0x00, 0xB3, 0x88)
+            run.font.color.rgb = RGBColor(0x70, 0xAD, 0x47)
         return p
 
     def _h2(text):
         p = doc.add_heading(text, level=2)
         for run in p.runs:
-            run.font.color.rgb = RGBColor(0x00, 0xB3, 0x88)
+            run.font.color.rgb = RGBColor(0x70, 0xAD, 0x47)
         return p
 
     def _cell_shade(cell, hex_color):
@@ -3259,7 +3406,7 @@ def write_word(all_data, args):
     run = cp.add_run("Cohesity Health Check Report")
     run.font.size  = Pt(28)
     run.font.bold  = True
-    run.font.color.rgb = RGBColor(0x00, 0xB3, 0x88)
+    run.font.color.rgb = RGBColor(0x70, 0xAD, 0x47)
 
     doc.add_paragraph("")
     cp2 = doc.add_paragraph()
