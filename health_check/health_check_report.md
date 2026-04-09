@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.24**
+**Current version: 1.25**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -31,7 +31,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 15 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
 | 16 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login — RED for admins without MFA |
 | 17 | Trends (30d) | Daily backup success rate aggregated per cluster with embedded line chart |
-| 18 | Recommendations | Prioritised action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+| 18 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
 
 ### Word Document
 
@@ -45,7 +45,7 @@ Narrative report suitable for printing or sharing with customers:
 - Security Posture
 - **Agent Health & Source Coverage** — agent status summary, unprotected source count
 - **User Security** — per-cluster user table with MFA and locked account counts
-- Prioritised Recommendations table
+- Prioritized Recommendations table
 - Appendix: scoring methodology and thresholds
 
 ---
@@ -137,7 +137,7 @@ Each cluster receives a score from 0 to 100 and a grade:
 | Protection success rate | 25% | % of runs in the lookback window that succeeded |
 | SLA compliance | 20% | % of runs that did not violate SLA |
 | Infrastructure health | 15% | % of nodes in healthy state |
-| Storage capacity | 15% | Penalised above 70% used; critical above 85% |
+| Storage capacity | 15% | Penalized above 70% used; critical above 85% |
 | Security posture | 15% | 20 pts each: encryption, FIPS, vault, replication, immutability |
 | Alert health | 10% | −10 pts per open critical alert, −2 pts per warning |
 
@@ -145,7 +145,7 @@ Each cluster receives a score from 0 to 100 and a grade:
 
 ## Recommendations
 
-The engine evaluates all collected data and generates a prioritised finding list:
+The engine evaluates all collected data and generates a prioritized finding list:
 
 | Priority | Meaning | Expected response |
 |----------|---------|-------------------|
@@ -178,7 +178,7 @@ The engine evaluates all collected data and generates a prioritised finding list
 | `GET /v2/data-protect/sources` | Registered sources with protected/unprotected object counts (falls back to v1 `/protectionSources/registrationInfo` on older firmware) |
 | `GET /irisservices/api/v1/public/users` | User accounts, MFA status, roles, last login |
 | `GET /irisservices/api/v1/public/idps` | SSO / IDP configuration |
-| `GET /irisservices/api/v1/public/tenants` | Tenant / organisation inventory |
+| `GET /irisservices/api/v1/public/tenants` | Tenant / organization inventory |
 
 ---
 
@@ -199,12 +199,13 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
-| 1.24 | 2026-04-09 | fix: Source Coverage sheet empty on older clusters — `/v2/data-protect/sources` returns 404 on pre-7.x firmware; `_sources()` now falls back to v1 `/protectionSources/registrationInfo` and normalises `rootNodes[].stats.protectedCount/unprotectedCount` into standard dict shape; also added `isinstance` guards to `stats`/`objectCount` lookups in `_sheet_source_coverage` |
+| 1.25 | 2026-04-09 | chore: standardize on US English throughout — utilization, prioritized, normalized, color-coded, behavior, organization, authorized, summarizes, maximize, minimize, penalized, labeled; affects sheet titles, Word doc narrative, docstring, comments |
+| 1.24 | 2026-04-09 | fix: Source Coverage sheet empty on older clusters — `/v2/data-protect/sources` returns 404 on pre-7.x firmware; `_sources()` now falls back to v1 `/protectionSources/registrationInfo` and normalizes `rootNodes[].stats.protectedCount/unprotectedCount` into standard dict shape; also added `isinstance` guards to `stats`/`objectCount` lookups in `_sheet_source_coverage` |
 | 1.23 | 2026-04-09 | fix: suppress debug body output for best-effort endpoints (`/disks/local`, `/v2/data-protect/sources`, `/tenants`) — added `silent` param to `_get()`; these callers pass `silent=True` so `--debug` output is not cluttered with expected 400/403/404 bodies |
 | 1.22 | 2026-04-09 | fix: replace all unsafe `(x or {}).get()` patterns with `isinstance(x, dict)` guards — affected: `healthStatus` (string in older clusters), `auditLogConfig`, `clusterAuditConfig`, `encryptionConfig`, `ntpSettings`, `remoteSupportConfig`, `mfaConfig`, source `stats`; added `isinstance(d, dict)` guards to disk comprehensions in `_build_recommendations()` |
 | 1.21 | 2026-04-08 | feat: ELF inventory additions — new sheets: Disk Health (per-disk status/SSD wear/encryption), Agent Health (agent version/status/upgradability), Source Coverage (protected vs unprotected objects per source), User Security (MFA/locked/roles/last login); Security sheet expanded to 17 controls (+ audit log, NTP auth, remote tunnel, cluster MFA, SSO, cert expiry); 7 new API calls; new recommendations for cert expiry, disk failures, SSD wear, agents, source coverage, user MFA, audit log, SSO; sheet count 14→18 |
 | 1.20 | 2026-04-08 | fix: 6.8.1 LTS EOS was November 15 2024 (already OOS) — old `"6.8"` prefix catch-all incorrectly reported it as in-support; split table so only 6.8.2+ maps to In Support — LTS. Hardware EOL table expanded: added C2100, C2200, C2510, C4500 model variants (Cohesity EOL doc Oct 2025) |
-| 1.19 | 2026-04-08 | feat: software and hardware lifecycle tracking — `SOFTWARE_EOS` and `HARDWARE_EOL` tables; `_sw_eos()` / `_hw_eol()` helpers; Infrastructure sheet gains SW Lifecycle Status (colour-coded), SW EOS Date, Days to EOS; new "Node Hardware" sheet (14th sheet) with per-node model/serial/type/capacity/tiers/EOL; recommendations engine updated with CRITICAL/HIGH/MEDIUM lifecycle findings; Word doc gains Software & Hardware Lifecycle section |
+| 1.19 | 2026-04-08 | feat: software and hardware lifecycle tracking — `SOFTWARE_EOS` and `HARDWARE_EOL` tables; `_sw_eos()` / `_hw_eol()` helpers; Infrastructure sheet gains SW Lifecycle Status (color-coded), SW EOS Date, Days to EOS; new "Node Hardware" sheet (14th sheet) with per-node model/serial/type/capacity/tiers/EOL; recommendations engine updated with CRITICAL/HIGH/MEDIUM lifecycle findings; Word doc gains Software & Hardware Lifecycle section |
 | 1.18 | 2026-04-08 | fix: Trends pagination still broken after v1.17 — `len(page) < PAGE_SIZE` assumed server cap == 1000, but actual cap varies by cluster version and is often lower; check fired on page 1 and stopped early. Fix: removed page-size check; page purely by timestamp cursor until empty response, window start reached, or no progress. Safety limit 200 pages |
 | 1.17 | 2026-04-08 | fix: Trends tab showed fewer than 30 days on busy clusters — added pagination by advancing `endTimeUsecs` cursor |
 | 1.16 | 2026-04-08 | feat: Trends chart — visible X/Y axes with tick marks and titles, Y axis fixed 0–100 with `0.0` format, circle data-point markers (size 5, Cohesity green), 2 pt line, StrRef category fix for date labels in Excel, auto tick-density reduction for >14d and >60d ranges |

@@ -7,10 +7,18 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] chore(health_check): standardize on US English throughout (v1.25)
+
+### Changed — `health_check/health_check_report.py` and docs
+- Replaced all British English spellings with US equivalents: utilization, prioritized, normalized, color-coded, behavior, organization, authorized, summarizes, maximize, minimize, penalized, labeled.
+- Affected locations: sheet title strings, Word document narrative, docstring version history, inline comments. No logic changes.
+
+---
+
 ## [2026-04-09] fix(health_check): Source Coverage sheet empty on older clusters — v1 fallback for /protectionSources (v1.24)
 
 ### Fixed — `health_check/health_check_report.py`
-- **Source Coverage tab was empty** on clusters where `/v2/data-protect/sources` returns 404 (pre-7.x firmware). `_sources()` now tries v2 first, then falls back to v1 `/irisservices/api/v1/public/protectionSources/registrationInfo`. The v1 response (`rootNodes[].stats.protectedCount` / `unprotectedCount`) is normalised into the same dict shape (`protectedObjectsCount`, `unprotectedObjectsCount`) so `_sheet_source_coverage` and `_build_recommendations` work without changes.
+- **Source Coverage tab was empty** on clusters where `/v2/data-protect/sources` returns 404 (pre-7.x firmware). `_sources()` now tries v2 first, then falls back to v1 `/irisservices/api/v1/public/protectionSources/registrationInfo`. The v1 response (`rootNodes[].stats.protectedCount` / `unprotectedCount`) is normalized into the same dict shape (`protectedObjectsCount`, `unprotectedObjectsCount`) so `_sheet_source_coverage` and `_build_recommendations` work without changes.
 - Fixed `isinstance` guards on `stats` and `objectCount` sub-object lookups in `_sheet_source_coverage` (same `(x or {}).get()` class of bug).
 
 ---
@@ -67,7 +75,7 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 - **`_sw_eos(version)`** helper — returns `(status, eos_date, label)` via prefix matching.
 - **`_hw_eol(model)`** helper — returns `eol_date` or `None` via substring matching.
 - **Infrastructure sheet** — 3 new columns: `SW Lifecycle Status` (RED = Out of Support, ORANGE = <90 days, green = current), `SW EOS Date`, `Days to EOS`.
-- **New "Node Hardware" sheet** (sheet 3, 14 sheets total) — per-node inventory: model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status (colour-coded).
+- **New "Node Hardware" sheet** (sheet 3, 14 sheets total) — per-node inventory: model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status (color-coded).
 - **Recommendations engine** — CRITICAL for OOS software or past-EOL hardware; HIGH for hardware EOL within 180 days or software EOS within 90 days; MEDIUM for software EOS within 180 days.
 - **Word document** — new "Software & Hardware Lifecycle" section with SW EOS table per cluster and hardware EOL narrative.
 - Sheet count: 13 → 14.
@@ -130,7 +138,7 @@ Replaced `#00B388` with `#70AD47` in every Excel header fill, chart line/marker 
 ## [2026-04-08] feat(health_check): include kWarning in Success % calculation (v1.15)
 
 ### Changed
-- `health_check/health_check_report.py` — `kWarning` runs (complete with data protected, minor issues) now count toward Success %. Trends col H renamed "Success % (incl. Warnings)". `_score_protection()` and `_success_stats()` quick mode updated to match non-quick mode. Word doc Methodology appendix documents this behaviour.
+- `health_check/health_check_report.py` — `kWarning` runs (complete with data protected, minor issues) now count toward Success %. Trends col H renamed "Success % (incl. Warnings)". `_score_protection()` and `_success_stats()` quick mode updated to match non-quick mode. Word doc Methodology appendix documents this behavior.
 
 ---
 
@@ -222,7 +230,7 @@ Replaced `#00B388` with `#70AD47` in every Excel header fill, chart line/marker 
   - **Excel workbook** (13 sheets): Executive Summary, Infrastructure, Protection Health, Storage & Capacity, Policy Audit, Policy → Groups, Alerts, Security, Replication & Archive, Data Services, Coverage Gaps, Trends (30d), Recommendations
   - **Word document**: cover page, executive scorecard, environment overview, protection health, storage, security posture, recommendations, and scoring methodology appendix
 - Scoring engine: six weighted dimensions (protection 25%, SLA 20%, infrastructure 15%, storage 15%, security 15%, alerts 10%). Grades: Excellent / Good / Fair / At Risk / Critical.
-- Recommendations engine: CRITICAL / HIGH / MEDIUM / LOW prioritised findings with business impact text.
+- Recommendations engine: CRITICAL / HIGH / MEDIUM / LOW prioritized findings with business impact text.
 - `--quick` mode: uses last-run only (no per-group run history) for fast scans of large installs.
 - `--debug` flag: prints HTTP status for every API call.
 - Output filenames include version number, customer name, and local timestamp.
@@ -345,7 +353,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 ## [2026-04-05] feat(reporting): protection_group_report v4.0 — --mode trend with daily storage history and chart per cluster
 
 ### Added
-- `reporting/protection_group_report.py` — `--mode trend`: queries daily storage consumed per protection group via `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (metric: `storageConsumedBytes`, `rollupIntervalSecs=86400`, `rollupFunction=Last`). Produces one row per group per day and adds a trend chart sheet per cluster — identical format to `fortknox_vault_report.py` (bottom legend, labelled axes, auto tick density). Default date range in trend mode is last 30 days. `--debug` prints raw `timeSeriesStats` response for metric name verification.
+- `reporting/protection_group_report.py` — `--mode trend`: queries daily storage consumed per protection group via `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (metric: `storageConsumedBytes`, `rollupIntervalSecs=86400`, `rollupFunction=Last`). Produces one row per group per day and adds a trend chart sheet per cluster — identical format to `fortknox_vault_report.py` (bottom legend, labeled axes, auto tick density). Default date range in trend mode is last 30 days. `--debug` prints raw `timeSeriesStats` response for metric name verification.
 
 ### Changed
 - `Storage Consumed (GB)` renamed to `Storage Consumed (Current, GB)` in summary/historical mode to make explicit that `GET /stats/consumers` is always a point-in-time snapshot with no date parameter. Trend mode uses the historical time-series endpoint instead.
@@ -374,14 +382,14 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 ## [2026-04-05] feat(reporting): fortknox_vault_report v4.5 — one chart sheet per cluster
 
 ### Changed
-- `reporting/fortknox_vault_report.py` — `--mode trend` now creates one chart sheet per cluster (sheet named after the cluster) instead of a single combined sheet. Each chart shows all protection groups for that cluster as separate series, with the same styling (16 pt bold title, bottom legend, labelled axes).
+- `reporting/fortknox_vault_report.py` — `--mode trend` now creates one chart sheet per cluster (sheet named after the cluster) instead of a single combined sheet. Each chart shows all protection groups for that cluster as separate series, with the same styling (16 pt bold title, bottom legend, labeled axes).
 
 ---
 
 ## [2026-04-05] feat(reporting): Cohesity green header branding across fortknox and protection_group reports
 
 ### Changed
-- `reporting/fortknox_vault_report.py` v4.4 — Trend chart improvements: 16 pt bold chart title, legend repositioned to bottom (no overlap with chart area), x-axis labelled "Date" with `yyyy-mm-dd` tick format, y-axis labelled "Storage Consumed (TB)" with 4-decimal number format. Report header row color changed from dark blue to Cohesity green (`#00B388`).
+- `reporting/fortknox_vault_report.py` v4.4 — Trend chart improvements: 16 pt bold chart title, legend repositioned to bottom (no overlap with chart area), x-axis labeled "Date" with `yyyy-mm-dd` tick format, y-axis labeled "Storage Consumed (TB)" with 4-decimal number format. Report header row color changed from dark blue to Cohesity green (`#00B388`).
 - `reporting/protection_group_report.py` v3.4 — Report header row color changed to Cohesity green (`#00B388`).
 
 ---
@@ -439,7 +447,7 @@ All infrastructure scripts now use Cohesity v1 API endpoints instead of v2. v1 i
 ## [2026-04-04] feat(reporting): fortknox_vault_report v3.7 — --mode trend with per-day rows
 
 ### Added
-- `reporting/fortknox_vault_report.py` — `--mode trend` flag. In trend mode the full date range is split into individual calendar days (using the auto-detected cluster timezone); each day is queried separately and produces its own set of rows. `Period Start` and `Period End` both show the specific date (YYYY-MM-DD) so rows from multiple runs can be stacked in Excel or a BI tool to plot a daily storage utilization trend per protection group. Vault IDs are fetched once per cluster and reused across all daily calls. Default behaviour (`--mode summary`) is unchanged.
+- `reporting/fortknox_vault_report.py` — `--mode trend` flag. In trend mode the full date range is split into individual calendar days (using the auto-detected cluster timezone); each day is queried separately and produces its own set of rows. `Period Start` and `Period End` both show the specific date (YYYY-MM-DD) so rows from multiple runs can be stacked in Excel or a BI tool to plot a daily storage utilization trend per protection group. Vault IDs are fetched once per cluster and reused across all daily calls. Default behavior (`--mode summary`) is unchanged.
 
 ---
 

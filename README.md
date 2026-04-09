@@ -15,7 +15,7 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | **18 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit, alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, and a prioritised recommendations list |
+| Excel workbook | **18 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit, alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, and a prioritized recommendations list |
 | Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, security posture, **agent health & source coverage**, **user security table**, recommendations, and scoring methodology appendix — ready to share with customers |
 
 ### Requirements

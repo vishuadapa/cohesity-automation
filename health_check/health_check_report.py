@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.24
+health_check_report.py  v1.25
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -20,7 +20,7 @@ engagements.  Gathers live data from Cohesity Helios and produces:
   3  Node Hardware       — per-node model, serial, EOL status
   4  Disk Health         — per-disk status, SSD wear %, encryption
   5  Protection Health   — success rates, SLA, RPO gaps
-  6  Storage & Capacity  — utilisation, data reduction, runway
+  6  Storage & Capacity  — utilization, data reduction, runway
   7  Policy Audit        — retention, replication, archival (groups count fixed)
   8  Policy → Groups     — every group with the policy that governs it
   9  Alerts              — open critical/warning with age
@@ -29,11 +29,11 @@ engagements.  Gathers live data from Cohesity Helios and produces:
   11 Agent Health        — per-host agent version, status, upgradability
   12 Source Coverage     — registered sources with protected/unprotected counts
   13 Replication/Archive — targets, last transfer, FortKnox
-  14 Data Services       — NAS views, quota utilisation
+  14 Data Services       — NAS views, quota utilization
   15 Coverage Gaps       — groups with no recent successful backup
   16 User Security       — user accounts, MFA, locked status, roles, last login
   17 Trends (30d)        — daily success rate + storage growth charts
-  18 Recommendations     — prioritised action list
+  18 Recommendations     — prioritized action list
 
   Word document
   ─────────────
@@ -63,11 +63,15 @@ Requirements
 
 Version history
 ───────────────
+  1.25 (2026-04-09) — chore: standardize on US English throughout — utilization,
+                     prioritized, normalized, color-coded, behavior, organization,
+                     authorized, summarizes, maximize, minimize, penalized, labeled.
+                     Affects docstring, sheet titles, Word doc narrative, comments.
   1.24 (2026-04-09) — fix: Source Coverage sheet empty on older clusters —
                      /v2/data-protect/sources returns 404 on pre-7.x firmware.
                      _sources() now falls back to v1
                      /protectionSources/registrationInfo (rootNodes[].stats.
-                     protectedCount / unprotectedCount) and normalises the
+                     protectedCount / unprotectedCount) and normalizes the
                      result into the same dict shape used by the sheet and
                      recommendations engine. Also fixed isinstance guards on
                      stats / objectCount sub-objects in _sheet_source_coverage.
@@ -107,10 +111,10 @@ Version history
   1.19 (2026-04-08) — feat: software and hardware lifecycle tracking. Added
                      SOFTWARE_EOS and HARDWARE_EOL reference tables from
                      Cohesity Product Life Cycle Policy (Oct 2025). Infrastructure
-                     sheet gets 3 new columns: SW Lifecycle Status (colour-coded
+                     sheet gets 3 new columns: SW Lifecycle Status (color-coded
                      red/orange/green), SW EOS Date, Days to EOS. New "Node Hardware"
                      sheet (sheet 3): per-node model, serial, node type, capacity,
-                     storage tiers, HW EOL date, HW EOL status colour-coded.
+                     storage tiers, HW EOL date, HW EOL status color-coded.
                      Recommendations engine updated: CRITICAL for out-of-support
                      software or past-EOL hardware, HIGH/MEDIUM for upcoming dates.
                      Word document gains a Software & Hardware Lifecycle section.
@@ -139,7 +143,7 @@ Version history
                      mode. Warning runs complete successfully (data protected)
                      but may have minor issues (skipped objects). They still
                      appear in the Warning column for visibility. Word doc
-                     Methodology appendix now documents this behaviour.
+                     Methodology appendix now documents this behavior.
   1.14 (2026-04-08) — fix: Trends tab inaccurate — switched primary data source
                      from per-group v2 runs to v1 /public/protectionRuns which
                      is the same source powering the Helios reporting page.
@@ -232,7 +236,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.24"
+__version__ = "1.25"
 
 import argparse
 import datetime
@@ -618,7 +622,7 @@ def _sources(session, h, debug):
 
     Tries v2 first (includeTenants).  Falls back to v1
     /protectionSources/registrationInfo on older cluster firmware where the
-    v2 endpoint returns 404.  Returns a list of normalised source dicts that
+    v2 endpoint returns 404.  Returns a list of normalized source dicts that
     _sheet_source_coverage and _build_recommendations can consume via the
     standard protectedObjectsCount / unprotectedObjectsCount keys.
     """
@@ -667,7 +671,7 @@ def _idps(session, h, debug):
 
 
 def _tenants(session, h, debug):
-    """Fetch tenant / organisation list (multi-tenancy inventory)."""
+    """Fetch tenant / organization list (multi-tenancy inventory)."""
     d = _get(session, h, "/irisservices/api/v1/public/tenants", debug=debug, silent=True)
     return d or []
 
@@ -1446,7 +1450,7 @@ def _sheet_summary(wb, all_data):
         for c, val in enumerate(row, 1):
             ws.cell(row=r, column=c, value=val).font = _font()
 
-        # RAG colour on score + grade
+        # RAG color on score + grade
         for col in (4, 5):
             ws.cell(row=r, column=col).fill = _rag_fill(scores["overall"])
             ws.cell(row=r, column=col).font = _font(bold=True)
@@ -1518,7 +1522,7 @@ def _sheet_infrastructure(wb, all_data):
         for c, val in enumerate(row, 1):
             ws.cell(row=rn, column=c, value=val).font = _font()
 
-        # Colour SW Lifecycle Status cell (col 3)
+        # color SW Lifecycle Status cell (col 3)
         sw_cell = ws.cell(row=rn, column=3)
         if sw_status == "eol":
             sw_cell.fill = _fill(RED);    sw_cell.font = _font(bold=True, color=WHITE)
@@ -1527,7 +1531,7 @@ def _sheet_infrastructure(wb, all_data):
         elif sw_status == "current":
             sw_cell.fill = _fill(LT_GREEN)
 
-        # Colour Days to EOS cell (col 5)
+        # color Days to EOS cell (col 5)
         eos_cell = ws.cell(row=rn, column=5)
         if isinstance(days_to_eos, int):
             if days_to_eos < 0:
@@ -1535,7 +1539,7 @@ def _sheet_infrastructure(wb, all_data):
             elif days_to_eos < SW_EOS_WARN_DAYS:
                 eos_cell.fill = _fill(ORANGE); eos_cell.font = _font(bold=True)
 
-        # Colour encryption / FIPS — now cols 15 and 16
+        # color encryption / FIPS — now cols 15 and 16
         enc_cell = ws.cell(row=rn, column=15)
         enc_cell.fill = _fill(LT_GREEN) if enc else _fill(RED)
         enc_cell.font = _font(bold=True, color=WHITE if not enc else "000000")
@@ -1606,7 +1610,7 @@ def _sheet_hardware(wb, all_data):
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-            # Colour HW EOL Status cell (col 12)
+            # color HW EOL Status cell (col 12)
             eol_cell = ws.cell(row=rn, column=12)
             if eol_date:
                 days_left = (eol_date - today).days
@@ -1721,7 +1725,7 @@ def _sheet_protection(wb, all_data):
 def _sheet_storage(wb, all_data):
     ws = wb.create_sheet("Storage & Capacity")
     ws.freeze_panes = "A3"
-    _title(ws, "Storage & Capacity — Utilisation & Data Reduction", "L")
+    _title(ws, "Storage & Capacity — Utilization & Data Reduction", "L")
 
     cols = ["Cluster", "Storage Domain", "Usable (TB)", "Used (TB)",
             "Free (TB)", "Used %", "Logical Data (TB)",
@@ -2136,7 +2140,7 @@ def _sheet_security(wb, all_data):
             cell.fill = _fill(LT_GREEN) if flag else _fill(RED)
             cell.font = _font(bold=True, color=WHITE if not flag else "000000")
 
-        # FK column 5: three-state colouring
+        # FK column 5: three-state coloring
         fk_cell = ws.cell(row=rn, column=5)
         if fk_st == "active":
             fk_cell.fill = _fill(LT_GREEN); fk_cell.font = _font(bold=True)
@@ -2374,7 +2378,7 @@ def _sheet_replication(wb, all_data):
 def _sheet_views(wb, all_data):
     ws = wb.create_sheet("Data Services")
     ws.freeze_panes = "A3"
-    _title(ws, "NAS Views — Quota Utilisation & Protocols", "L")
+    _title(ws, "NAS Views — Quota Utilization & Protocols", "L")
 
     cols = ["Cluster", "View Name", "Storage Domain", "Protocols",
             "Quota (GB)", "Used (GB)", "Usage %",
@@ -2647,7 +2651,7 @@ def _sheet_trends(wb, all_data):
 def _sheet_recommendations(wb, all_data):
     ws = wb.create_sheet("Recommendations")
     ws.freeze_panes = "A3"
-    _title(ws, "Prioritised Recommendations", "G")
+    _title(ws, "Prioritized Recommendations", "G")
 
     cols = ["#", "Priority", "Cluster", "Category",
             "Finding", "Recommended Action", "Business Impact"]
@@ -2720,7 +2724,7 @@ def _sheet_disk_health(wb, all_data):
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-            # Colour Status cell (col 8)
+            # color Status cell (col 8)
             sc = ws.cell(row=rn, column=8)
             if status.lower() in ("kfailed", "failed", "kmissing", "missing"):
                 sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
@@ -2730,7 +2734,7 @@ def _sheet_disk_health(wb, all_data):
             elif status.lower() in ("khealthy", "healthy", "kgood", "good"):
                 sc.fill = _fill(LT_GREEN)
 
-            # Colour SSD Wear cell (col 9)
+            # color SSD Wear cell (col 9)
             if wear is not None:
                 wc = ws.cell(row=rn, column=9)
                 if wear >= SSD_WEAR_CRIT_PCT:
@@ -2948,7 +2952,7 @@ def _sheet_user_security(wb, all_data):
                 ws.cell(row=rn, column=7).fill = _fill(RED)
                 ws.cell(row=rn, column=7).font = _font(bold=True, color=WHITE)
 
-            # MFA colour: red for admins, yellow for non-admins without MFA
+            # MFA color: red for admins, yellow for non-admins without MFA
             if not mfa and is_admin:
                 ws.cell(row=rn, column=8).fill = _fill(RED)
                 ws.cell(row=rn, column=8).font = _font(bold=True, color=WHITE)
@@ -3038,7 +3042,7 @@ def write_word(all_data, args):
         return p
 
     def _cell_shade(cell, hex_color):
-        """Apply background colour to a docx table cell."""
+        """Apply background color to a docx table cell."""
         tc   = cell._tc
         tcPr = tc.get_or_add_tcPr()
         shd  = OxmlElement("w:shd")
@@ -3078,7 +3082,7 @@ def write_word(all_data, args):
     doc.add_paragraph("")
     cp3 = doc.add_paragraph()
     cp3.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r3 = cp3.add_run("CONFIDENTIAL — For authorised recipients only")
+    r3 = cp3.add_run("CONFIDENTIAL — For authorized recipients only")
     r3.font.size   = Pt(10)
     r3.font.italic = True
     r3.font.color.rgb = RGBColor(0x59, 0x59, 0x59)
@@ -3107,7 +3111,7 @@ def write_word(all_data, args):
         summary += f"{n_high} high-priority item(s) require action within 30 days. "
     if not n_crit and not n_high:
         summary += "No critical or high-priority gaps were identified. "
-    summary += ("Detailed findings and prioritised recommendations are included "
+    summary += ("Detailed findings and prioritized recommendations are included "
                 "in the sections below, with full data in the accompanying Excel workbook.")
     doc.add_paragraph(summary)
 
@@ -3132,7 +3136,7 @@ def write_word(all_data, args):
     _h1("2. Environment Overview")
     doc.add_paragraph(
         f"The environment spans {n_clusters} cluster(s). "
-        "The table below summarises key infrastructure attributes for each cluster."
+        "The table below summarizes key infrastructure attributes for each cluster."
     )
     t2 = doc.add_table(rows=1, cols=7)
     t2.style = "Table Grid"
@@ -3157,7 +3161,7 @@ def write_word(all_data, args):
 
     _h2("Software & Hardware Lifecycle")
     doc.add_paragraph(
-        "The table below summarises the software lifecycle status for each cluster. "
+        "The table below summarizes the software lifecycle status for each cluster. "
         "Cohesity software versions follow a feature-release (9-month support) and "
         "LTS (12+ month support) model. All current in-support versions (6.8.2 LTS, "
         "7.1.2_u2 LTS, and 7.2.x feature releases) reach end of support on "
@@ -3203,7 +3207,7 @@ def write_word(all_data, args):
     doc.add_paragraph(
         f"The environment contains {total_g} active protection group(s) across all clusters. "
         f"{paused_g} group(s) are currently paused and {failed_g} have a failed last run. "
-        "The table below summarises protection health per cluster. "
+        "The table below summarizes protection health per cluster. "
         "Refer to the Protection Health and Coverage Gaps tabs in the Excel workbook "
         "for per-group detail."
     )
@@ -3227,7 +3231,7 @@ def write_word(all_data, args):
     # ── 4. Storage & Capacity ──────────────────────────────────────────────
     _h1("4. Storage & Capacity")
     doc.add_paragraph(
-        "Cohesity applies inline deduplication and compression to maximise storage "
+        "Cohesity applies inline deduplication and compression to maximize storage "
         "efficiency. The data reduction ratio shows how much raw data has been saved "
         "compared to the logical data ingested."
     )
@@ -3378,12 +3382,12 @@ def write_word(all_data, args):
     doc.add_page_break()
 
     # ── 8. Recommendations ─────────────────────────────────────────────────
-    _h1("8. Prioritised Recommendations")
+    _h1("8. Prioritized Recommendations")
     doc.add_paragraph(
         "The recommendations below are ranked by priority. Critical items should "
         "be addressed immediately; High-priority items within 30 days; Medium within "
         "90 days. Refer to the Recommendations tab in the Excel workbook for the "
-        "full prioritised list."
+        "full prioritized list."
     )
     sorted_recs = sorted(all_recs, key=lambda x: _PRIORITY_ORDER.get(x[1]["priority"], 99))
     if sorted_recs:
