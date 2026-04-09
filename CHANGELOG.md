@@ -7,6 +7,13 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): suppress debug body noise for best-effort endpoints (v1.23)
+
+### Fixed — `health_check/health_check_report.py`
+- Added `silent` parameter to `_get()`. When `silent=True`, non-200 responses still print the status code in `--debug` mode but skip the response body. Callers: `_disks()` (`/disks/local` → 400 when not proxied), `_sources()` (`/v2/data-protect/sources` → 404 on older firmware), `_tenants()` (`/tenants` → 403 on restricted API keys).
+
+---
+
 ## [2026-04-09] fix(health_check): replace unsafe (x or {}).get() patterns with isinstance guards throughout (v1.22)
 
 ### Fixed — `health_check/health_check_report.py`

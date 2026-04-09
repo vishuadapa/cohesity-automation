@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.22
+health_check_report.py  v1.23
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -63,6 +63,12 @@ Requirements
 
 Version history
 ───────────────
+  1.23 (2026-04-09) — fix: suppress debug body output for best-effort endpoints
+                     (_disks, _sources, _tenants) that return 400/403/404 on
+                     clusters where the endpoint is unavailable or restricted.
+                     Added `silent` param to _get(); these three callers pass
+                     silent=True so --debug output is not cluttered with
+                     expected error bodies.
   1.22 (2026-04-09) — fix: replace all unsafe `(x or {}).get()` patterns with
                      isinstance(x, dict) guards; affected fields: healthStatus
                      (could be a string in older cluster versions), auditLogConfig,
@@ -218,7 +224,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.22"
+__version__ = "1.23"
 
 import argparse
 import datetime
@@ -417,8 +423,12 @@ def _days_ago_usecs(n):
 # API HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get(session, headers, path, params=None, debug=False):
-    """GET from Helios (cluster already routed via accessClusterId in headers)."""
+def _get(session, headers, path, params=None, debug=False, silent=False):
+    """GET from Helios (cluster already routed via accessClusterId in headers).
+
+    silent=True suppresses the debug body print on non-200 responses — use for
+    best-effort endpoints where 400/403/404 is expected on some clusters.
+    """
     url = f"https://{HELIOS_HOST}{path}"
     try:
         r = session.get(url, headers=headers, params=params,
@@ -427,7 +437,7 @@ def _get(session, headers, path, params=None, debug=False):
             print(f"    DEBUG {path} → {r.status_code}")
         if r.status_code == 200:
             return r.json()
-        if debug:
+        if debug and not silent:
             print(f"    DEBUG body: {r.text[:300]}")
         return None
     except Exception as exc:
@@ -584,7 +594,7 @@ def _disks(session, h, nodes, debug):
         if not nid:
             continue
         d = _get(session, h, "/irisservices/api/v1/disks/local",
-                 params={"nodeId": nid}, debug=debug)
+                 params={"nodeId": nid}, debug=debug, silent=True)
         if not d:
             continue
         disk_list = d if isinstance(d, list) else (d.get("disks") or [])
@@ -598,7 +608,7 @@ def _disks(session, h, nodes, debug):
 def _sources(session, h, debug):
     """Fetch registered protection sources with coverage stats."""
     d = _get(session, h, "/v2/data-protect/sources",
-             params={"includeTenants": "true"}, debug=debug)
+             params={"includeTenants": "true"}, debug=debug, silent=True)
     if isinstance(d, list):
         return d
     return (d or {}).get("sources") or []
@@ -619,7 +629,7 @@ def _idps(session, h, debug):
 
 def _tenants(session, h, debug):
     """Fetch tenant / organisation list (multi-tenancy inventory)."""
-    d = _get(session, h, "/irisservices/api/v1/public/tenants", debug=debug)
+    d = _get(session, h, "/irisservices/api/v1/public/tenants", debug=debug, silent=True)
     return d or []
 
 
