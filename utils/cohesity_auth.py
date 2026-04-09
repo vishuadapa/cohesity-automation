@@ -34,6 +34,11 @@ Typical import pattern:
   )
 
 Version history:
+  1.3 (2026-04-09) — fix: helios_login() tried /mcm/login which returns 404.
+                     Rewritten to try /irisservices/api/v1/mcm/login first
+                     (emailId payload field), then /mcm/login (username field)
+                     as fallback. Also extracts token from session cookie for
+                     Helios versions that return cookie-based sessions.
   1.2 (2026-04-09) — feat: Helios username/password + MFA login via
                      helios_login() / get_helios_password(). Added mfa_code
                      parameter to get_auth_token() for direct-cluster MFA.
@@ -47,7 +52,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.2"
+__version__ = "1.3"
 
 import getpass
 import sys
@@ -224,39 +229,82 @@ def get_helios_password(username: str, cli_password: str = None) -> str:
 def helios_login(username: str, password: str, mfa_code: str = None) -> str:
     """
     Login to Helios with username/password and optional MFA/TOTP code.
-    Returns a session token that can be used in the apiKey request header,
-    identical in usage to a Helios API key.
+    Returns a token that is used in the apiKey request header (same as
+    a regular Helios API key).
 
-    Endpoint: POST https://helios.cohesity.com/mcm/login
-    MFA: include otpCode + otpType="Totp" for TOTP-based MFA.
+    Tries these endpoints in order until one succeeds (not 404):
+      1. POST /irisservices/api/v1/mcm/login  — primary path (emailId field)
+      2. POST /mcm/login                       — alternate path (username field)
+
+    MFA: otpCode + otpType="Totp" added to payload when mfa_code is given.
+    Token extracted from response body (token / accessToken / sessionToken)
+    or from the session cookie if none of those fields are present.
     """
-    url     = f"https://{HELIOS_HOST}/mcm/login"
-    payload = {"username": username, "password": password}
-    if mfa_code:
-        payload["otpCode"] = mfa_code
-        payload["otpType"] = "Totp"
     hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
-    try:
-        r = requests.post(url, json=payload, headers=hdrs, verify=False, timeout=30)
-        r.raise_for_status()
-    except requests.exceptions.ConnectionError:
-        print("ERROR: Cannot connect to Helios. Check your network/VPN.")
-        sys.exit(1)
-    except requests.exceptions.HTTPError:
-        body = r.text[:400]
-        if r.status_code == 401 and "otp" in body.lower():
-            print("ERROR: Helios requires an MFA code. Re-run with --mfa-code <code>.")
-        else:
+
+    # Endpoint candidates: (path, username_field_name)
+    endpoints = [
+        (f"https://{HELIOS_HOST}/irisservices/api/v1/mcm/login", "emailId"),
+        (f"https://{HELIOS_HOST}/mcm/login",                     "username"),
+    ]
+
+    last_status = None
+    last_body   = ""
+    for url, user_field in endpoints:
+        payload = {user_field: username, "password": password}
+        if mfa_code:
+            payload["otpCode"] = mfa_code
+            payload["otpType"] = "Totp"
+        try:
+            r = requests.post(url, json=payload, headers=hdrs,
+                              verify=False, timeout=30)
+        except requests.exceptions.ConnectionError:
+            print("ERROR: Cannot connect to Helios. Check your network/VPN.")
+            sys.exit(1)
+
+        if r.status_code == 404:
+            continue           # try next endpoint
+
+        if r.status_code in (401, 403):
+            body = r.text[:400]
+            if "otp" in body.lower():
+                print("ERROR: Helios requires an MFA code. Re-run with --mfa-code <code>.")
+                sys.exit(1)
             print(f"ERROR: Helios login failed ({r.status_code}). Check credentials.\n  {body}")
-        sys.exit(1)
-    data  = r.json()
-    token = (data.get("token") or data.get("accessToken")
-             or data.get("sessionToken") or "")
-    if not token:
-        print(f"ERROR: No token in Helios login response: {r.text[:200]}")
-        sys.exit(1)
-    print(f"[+] Logged in to Helios as '{username}'")
-    return token
+            sys.exit(1)
+
+        if not r.ok:
+            last_status = r.status_code
+            last_body   = r.text[:400]
+            continue           # try next endpoint
+
+        # ── Successful response — extract token ───────────────────────────
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+
+        token = (data.get("token") or data.get("accessToken")
+                 or data.get("sessionToken") or "")
+
+        # Some Helios versions return the token as a session cookie
+        if not token and r.cookies:
+            for name in ("cohesity-session", "sessionToken", "token"):
+                if name in r.cookies:
+                    token = r.cookies[name]
+                    break
+
+        if not token:
+            print(f"ERROR: No token in Helios login response: {r.text[:200]}")
+            sys.exit(1)
+
+        print(f"[+] Logged in to Helios as '{username}'")
+        return token
+
+    # All endpoints failed
+    print(f"ERROR: Helios login failed — no valid endpoint found "
+          f"(last status {last_status}).\n  {last_body}")
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
