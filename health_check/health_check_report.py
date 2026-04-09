@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.32
+health_check_report.py  v1.33
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -80,6 +80,14 @@ Requirements
 
 Version history
 ───────────────
+  1.33 (2026-04-09) — fix: Agent Health — hostname vs IP routing by content:
+                     new _split_host_ip() helper inspects each value and routes
+                     it to Host or IP Address column based on whether it matches
+                     an IPv4/IPv6 pattern (not field name). Fixes empty Host
+                     column when hostIp contains FQDNs.
+                     fix: Infrastructure Domain (col K) — domainNames[0] returns
+                     the full cluster FQDN (e.g. "mycluster.example.com"); strip
+                     the cluster hostname prefix so only the domain is shown.
   1.32 (2026-04-09) — feat: DataLock (WORM) column in Protection Health sheet
                      (col 18 per group, green=Compliance/yellow=Administrative/
                      red=None); new "FortKnox Data Transfer" sheet (sheet 14)
@@ -312,11 +320,12 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.32"
+__version__ = "1.33"
 
 import argparse
 import datetime
 import os
+import re
 import sys
 import time
 import urllib3
@@ -427,6 +436,29 @@ WHITE       = "FFFFFF"
 
 
 # ── openpyxl style helpers (lazy — only called when EXCEL_OK is True) ─────────
+_IP4_RE = re.compile(r'^\d{1,3}(\.\d{1,3}){3}$')
+_IP6_RE = re.compile(r'^[0-9a-fA-F]{0,4}(:[0-9a-fA-F]{0,4}){2,7}$')
+
+def _split_host_ip(raw_host, raw_ip):
+    """Route values to (hostname, ip_address) by content, not field name.
+
+    The Cohesity agents API sometimes puts FQDNs in hostIp and leaves hostName
+    empty. Inspect each value: if it looks like an IPv4/IPv6 address put it in
+    the ip slot; otherwise put it in the host slot.
+    """
+    host = ""
+    ip   = ""
+    for val in (raw_host, raw_ip):
+        val = (val or "").strip()
+        if not val:
+            continue
+        if _IP4_RE.match(val) or _IP6_RE.match(val):
+            if not ip:   ip   = val
+        else:
+            if not host: host = val
+    return host, ip
+
+
 def _fill(hex_color):
     return PatternFill("solid", fgColor=hex_color)
 
@@ -1388,8 +1420,10 @@ def _build_recommendations(cd):
               or (isinstance(_hs, str) and _hs)
               or agent.get("agentStatus") or agent.get("status") or "")
         if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
-            host = (agent.get("hostName") or agent.get("host")
-                    or agent.get("hostIp") or "unknown")
+            _rh, _ri = _split_host_ip(
+                agent.get("hostName") or agent.get("host") or "",
+                agent.get("hostIp") or "")
+            host = _rh or _ri or "unknown"
             unhealthy_agents.append(host)
     if unhealthy_agents:
         examples = ", ".join(unhealthy_agents[:3])
@@ -1641,7 +1675,14 @@ def _sheet_infrastructure(wb, all_data):
             ntp = ", ".join(str(s) for s in ntp_raw) if ntp_raw else "Not configured"
         else:
             ntp = str(ntp_raw) if ntp_raw else "Not configured"
-        domain = (info.get("domainNames") or [""])[0]
+        domain_raw = (info.get("domainNames") or [""])[0]
+        # domainNames returns the cluster FQDN (e.g. "mycluster.example.com").
+        # Strip the cluster hostname prefix so only the domain portion is shown.
+        _cluster_prefix = (info.get("name") or "").lower().rstrip(".")
+        if _cluster_prefix and domain_raw.lower().startswith(_cluster_prefix + "."):
+            domain = domain_raw[len(_cluster_prefix) + 1:]
+        else:
+            domain = domain_raw
 
         row = [cd["name"], sw_ver,
                sw_label, eos_date_str, days_to_eos,
@@ -3127,9 +3168,14 @@ def _sheet_agent_health(wb, all_data):
             if err:
                 notes = f"Upgrade error: {str(err)[:80]}"
 
+            # Route hostname vs IP by content — the API sometimes puts FQDNs in hostIp
+            _raw_host = agent.get("hostName") or agent.get("host") or ""
+            _raw_ip   = agent.get("hostIp") or ""
+            _host, _ip = _split_host_ip(_raw_host, _raw_ip)
+
             row = [cd["name"],
-                   agent.get("hostName") or agent.get("host") or "",
-                   agent.get("hostIp") or "",
+                   _host,
+                   _ip,
                    agent.get("hostOsType") or agent.get("osType") or "",
                    agent.get("agentVersion") or "",
                    status, upg, cert_exp, notes]
