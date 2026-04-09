@@ -63,6 +63,15 @@ Requirements
 
 Version history
 ───────────────
+  1.27 (2026-04-09) — fix: Disk Health sheet still empty after v1.26 — GET
+                     /v2/disks is not a valid Helios-proxied endpoint.
+                     Rewrote _disks() to use GET /v2/disks/local?nodeId={id}
+                     per node, matching the approach used by the Cohesity ELF
+                     inventory tool (cohesityInv.ps1, apiType='ClusterV2',
+                     path='/disks/local?nodeId={0}'). Updated field fallbacks
+                     throughout to include ELF field names: ssdUsedPercentage
+                     (was ssdWearLevelPct), capacityInBytes (was capacityBytes),
+                     encryptionStatus (was encryptionEnabled).
   1.26 (2026-04-09) — fix: Disk Health sheet empty — switched _disks() from the
                      private /v1/disks/local?nodeId=X endpoint (always 400 via
                      Helios proxy) to the supported GET /v2/disks endpoint;
@@ -241,7 +250,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.26"
+__version__ = "1.27"
 
 import argparse
 import datetime
@@ -603,48 +612,33 @@ def _agents(session, h, debug):
 
 
 def _disks(session, h, nodes, debug):
-    """Fetch per-disk info via GET /v2/disks (works through Helios proxy).
+    """Fetch per-disk info using GET /v2/disks/local?nodeId={id} per node.
 
-    Falls back to the private /v1/disks/local?nodeId=X endpoint (best-effort,
-    returns 400 on most Helios-proxied clusters).
+    This mirrors the approach used by the Cohesity ELF inventory tool
+    (cohesityInv.ps1, apiType='ClusterV2', path='/disks/local?nodeId={0}').
+    Each node is queried individually; results are annotated with _nodeId
+    and _nodeIp for display convenience.
 
-    The v2 response is a dict with a 'disks' list, or the list directly.
-    Each disk dict may carry nodeId; we annotate _nodeIp from the node list
-    for display convenience.
+    Field names returned by this endpoint (ELF script reference):
+      serialNumber, model, status, location, type, encryptionStatus,
+      ssdUsedPercentage (raw 0-100), removalProgressList, capacityInBytes
     """
-    # Build nodeId → IP lookup for annotation
-    node_ip = {n.get("id"): n.get("ip", "") for n in nodes if n.get("id")}
-
-    # ── Try v2/disks first ────────────────────────────────────────────────────
-    d = _get(session, h, "/v2/disks", debug=debug)
-    if d:
-        disk_list = d if isinstance(d, list) else (d.get("disks") or [])
-        if disk_list:
-            for disk in disk_list:
-                if not isinstance(disk, dict):
-                    continue
-                nid = disk.get("nodeId")
-                disk["_nodeId"] = nid
-                disk["_nodeIp"] = node_ip.get(nid, "")
-            return [dk for dk in disk_list if isinstance(dk, dict)]
-
-    # ── Fall back to private per-node endpoint ────────────────────────────────
     all_disks = []
     for n in nodes:
         nid = n.get("id")
         if not nid:
             continue
-        d2 = _get(session, h, "/irisservices/api/v1/disks/local",
-                  params={"nodeId": nid}, debug=debug, silent=True)
-        if not d2:
+        d = _get(session, h, "/v2/disks/local",
+                 params={"nodeId": nid}, debug=debug, silent=True)
+        if not d:
             continue
-        dl = d2 if isinstance(d2, list) else (d2.get("disks") or [])
+        dl = d if isinstance(d, list) else (d.get("disksList") or d.get("disks") or [])
         for disk in dl:
             if not isinstance(disk, dict):
                 continue
             disk["_nodeId"] = nid
             disk["_nodeIp"] = n.get("ip", "")
-        all_disks.extend(d for d in dl if isinstance(d, dict))
+        all_disks.extend(dk for dk in dl if isinstance(dk, dict))
     return all_disks
 
 
@@ -1311,10 +1305,12 @@ def _build_recommendations(cd):
             "Failed disks reduce storage redundancy and risk data loss"))
 
     high_wear = [(d.get("_nodeIp", "?"),
-                  d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+                  d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
+                  or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
                  for d in (cd.get("disks") or [])
                  if isinstance(d, dict)
-                 and (d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+                 and (d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
+                      or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
                  >= SSD_WEAR_CRIT_PCT]
     if high_wear:
         examples = ", ".join(f"{ip} ({w}%)" for ip, w in high_wear[:3])
@@ -2731,15 +2727,20 @@ def _sheet_disk_health(wb, all_data):
             continue
         any_data = True
         for disk in disks:
-            status  = disk.get("diskStatus") or disk.get("status") or "Unknown"
-            wear    = (disk.get("ssdWearLevelPct") or disk.get("wearLevel")
-                       or disk.get("lifeUsedPct"))
+            status  = (disk.get("diskStatus") or disk.get("status") or "Unknown")
+            # ssdUsedPercentage is the ELF field name (raw 0-100 integer)
+            wear    = (disk.get("ssdUsedPercentage") or disk.get("ssdWearLevelPct")
+                       or disk.get("wearLevel") or disk.get("lifeUsedPct"))
             _us     = disk.get("usageStats")
+            # capacityInBytes is the ELF field name
             cap_b   = ((isinstance(_us, dict) and _us.get("totalPhysicalCapacityBytes"))
-                       or disk.get("capacityBytes") or 0)
-            enc    = bool(disk.get("encryptionEnabled") or disk.get("encrypted"))
-            tier   = disk.get("storageTier") or disk.get("diskTier") or ""
-            dtype  = disk.get("diskType") or disk.get("type") or ""
+                       or disk.get("capacityInBytes") or disk.get("capacityBytes") or 0)
+            # encryptionStatus is the ELF field name (string like "kEncrypted")
+            enc_st  = disk.get("encryptionStatus") or ""
+            enc     = bool(disk.get("encryptionEnabled") or disk.get("encrypted")
+                           or (isinstance(enc_st, str) and "encrypt" in enc_st.lower()))
+            tier    = disk.get("storageTier") or disk.get("diskTier") or ""
+            dtype   = disk.get("diskType") or disk.get("type") or ""
 
             row = [cd["name"],
                    disk.get("_nodeId", ""), disk.get("_nodeIp", ""),

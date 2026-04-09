@@ -7,6 +7,15 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): use correct ELF disk endpoint GET /v2/disks/local?nodeId={id} (v1.27)
+
+### Fixed — `health_check/health_check_report.py`
+- `_disks()` completely rewritten: `GET /v2/disks` (added in v1.26) is not a valid Helios-proxied endpoint — it returned empty data. The correct endpoint is `GET /v2/disks/local?nodeId={nodeId}` per node, which is exactly what the Cohesity ELF inventory tool (`cohesityInv.ps1`) uses (`apiType='ClusterV2'`, path `/disks/local?nodeId={0}`).
+- Updated field-name fallbacks throughout to include ELF field names: `ssdUsedPercentage` (ELF) added alongside `ssdWearLevelPct`; `capacityInBytes` (ELF) added alongside `capacityBytes`; `encryptionStatus` string (ELF, e.g. `"kEncrypted"`) handled in addition to boolean `encryptionEnabled`.
+- Fixed in `_sheet_disk_health()` and `_build_recommendations()` disk SSD-wear check.
+
+---
+
 ## [2026-04-09] fix(health_check): switch disk API from private v1 endpoint to GET /v2/disks (v1.26)
 
 ### Fixed — `health_check/health_check_report.py`
