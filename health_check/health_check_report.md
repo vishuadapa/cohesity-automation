@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.25**
+**Current version: 1.26**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -174,7 +174,7 @@ The engine evaluates all collected data and generates a prioritized finding list
 | `GET /irisservices/api/v1/public/reports/dataTransferToVaults` | FortKnox transfer data |
 | `GET /irisservices/api/v1/public/certificates/webServer` | TLS certificate expiry (Disk Health, Security sheet) |
 | `GET /irisservices/api/v1/public/reports/agents` | Agent health, version, upgradability per host |
-| `GET /irisservices/api/v1/disks/local?nodeId=X` | Per-disk status, SSD wear, encryption (private API — best-effort) |
+| `GET /v2/disks` | Per-disk status, SSD wear %, encryption, storage tier (falls back to private `/v1/disks/local?nodeId=X` if unavailable) |
 | `GET /v2/data-protect/sources` | Registered sources with protected/unprotected object counts (falls back to v1 `/protectionSources/registrationInfo` on older firmware) |
 | `GET /irisservices/api/v1/public/users` | User accounts, MFA status, roles, last login |
 | `GET /irisservices/api/v1/public/idps` | SSO / IDP configuration |
@@ -199,6 +199,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.26 | 2026-04-09 | fix: Disk Health sheet empty — switched `_disks()` from private `/v1/disks/local?nodeId=X` (always 400 via Helios) to supported `GET /v2/disks`; private endpoint kept as fallback; added `isinstance` guard on `usageStats` in `_sheet_disk_health()` |
 | 1.25 | 2026-04-09 | chore: standardize on US English throughout — utilization, prioritized, normalized, color-coded, behavior, organization, authorized, summarizes, maximize, minimize, penalized, labeled; affects sheet titles, Word doc narrative, docstring, comments |
 | 1.24 | 2026-04-09 | fix: Source Coverage sheet empty on older clusters — `/v2/data-protect/sources` returns 404 on pre-7.x firmware; `_sources()` now falls back to v1 `/protectionSources/registrationInfo` and normalizes `rootNodes[].stats.protectedCount/unprotectedCount` into standard dict shape; also added `isinstance` guards to `stats`/`objectCount` lookups in `_sheet_source_coverage` |
 | 1.23 | 2026-04-09 | fix: suppress debug body output for best-effort endpoints (`/disks/local`, `/v2/data-protect/sources`, `/tenants`) — added `silent` param to `_get()`; these callers pass `silent=True` so `--debug` output is not cluttered with expected 400/403/404 bodies |

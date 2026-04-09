@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): switch disk API from private v1 endpoint to GET /v2/disks (v1.26)
+
+### Fixed — `health_check/health_check_report.py`
+- `_disks()` now calls `GET /v2/disks` first (works through Helios proxy, same endpoint used by `node_status.py` and `upgrade_readiness.py`). The private `/irisservices/api/v1/disks/local?nodeId=X` endpoint is kept as a fallback but always returned 400 via Helios.
+- Fixed `isinstance` guard on the `usageStats` sub-object in `_sheet_disk_health()`.
+
+---
+
 ## [2026-04-09] chore(health_check): standardize on US English throughout (v1.25)
 
 ### Changed — `health_check/health_check_report.py` and docs

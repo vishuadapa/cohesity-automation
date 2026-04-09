@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.25
+health_check_report.py  v1.26
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -63,6 +63,11 @@ Requirements
 
 Version history
 ───────────────
+  1.26 (2026-04-09) — fix: Disk Health sheet empty — switched _disks() from the
+                     private /v1/disks/local?nodeId=X endpoint (always 400 via
+                     Helios proxy) to the supported GET /v2/disks endpoint;
+                     private endpoint kept as fallback. Added isinstance guard
+                     on usageStats sub-object in _sheet_disk_health().
   1.25 (2026-04-09) — chore: standardize on US English throughout — utilization,
                      prioritized, normalized, color-coded, behavior, organization,
                      authorized, summarizes, maximize, minimize, penalized, labeled.
@@ -236,7 +241,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.25"
+__version__ = "1.26"
 
 import argparse
 import datetime
@@ -598,22 +603,48 @@ def _agents(session, h, debug):
 
 
 def _disks(session, h, nodes, debug):
-    """Fetch per-disk info for each node via the private disks/local API.
-    Returns an empty list gracefully if the endpoint is not proxied."""
+    """Fetch per-disk info via GET /v2/disks (works through Helios proxy).
+
+    Falls back to the private /v1/disks/local?nodeId=X endpoint (best-effort,
+    returns 400 on most Helios-proxied clusters).
+
+    The v2 response is a dict with a 'disks' list, or the list directly.
+    Each disk dict may carry nodeId; we annotate _nodeIp from the node list
+    for display convenience.
+    """
+    # Build nodeId → IP lookup for annotation
+    node_ip = {n.get("id"): n.get("ip", "") for n in nodes if n.get("id")}
+
+    # ── Try v2/disks first ────────────────────────────────────────────────────
+    d = _get(session, h, "/v2/disks", debug=debug)
+    if d:
+        disk_list = d if isinstance(d, list) else (d.get("disks") or [])
+        if disk_list:
+            for disk in disk_list:
+                if not isinstance(disk, dict):
+                    continue
+                nid = disk.get("nodeId")
+                disk["_nodeId"] = nid
+                disk["_nodeIp"] = node_ip.get(nid, "")
+            return [dk for dk in disk_list if isinstance(dk, dict)]
+
+    # ── Fall back to private per-node endpoint ────────────────────────────────
     all_disks = []
     for n in nodes:
         nid = n.get("id")
         if not nid:
             continue
-        d = _get(session, h, "/irisservices/api/v1/disks/local",
-                 params={"nodeId": nid}, debug=debug, silent=True)
-        if not d:
+        d2 = _get(session, h, "/irisservices/api/v1/disks/local",
+                  params={"nodeId": nid}, debug=debug, silent=True)
+        if not d2:
             continue
-        disk_list = d if isinstance(d, list) else (d.get("disks") or [])
-        for disk in disk_list:
+        dl = d2 if isinstance(d2, list) else (d2.get("disks") or [])
+        for disk in dl:
+            if not isinstance(disk, dict):
+                continue
             disk["_nodeId"] = nid
             disk["_nodeIp"] = n.get("ip", "")
-        all_disks.extend(disk_list)
+        all_disks.extend(d for d in dl if isinstance(d, dict))
     return all_disks
 
 
@@ -2700,11 +2731,12 @@ def _sheet_disk_health(wb, all_data):
             continue
         any_data = True
         for disk in disks:
-            status = disk.get("diskStatus") or disk.get("status") or "Unknown"
-            wear   = (disk.get("ssdWearLevelPct") or disk.get("wearLevel")
-                      or disk.get("lifeUsedPct"))
-            cap_b  = ((disk.get("usageStats") or {}).get("totalPhysicalCapacityBytes")
-                      or disk.get("capacityBytes") or 0)
+            status  = disk.get("diskStatus") or disk.get("status") or "Unknown"
+            wear    = (disk.get("ssdWearLevelPct") or disk.get("wearLevel")
+                       or disk.get("lifeUsedPct"))
+            _us     = disk.get("usageStats")
+            cap_b   = ((isinstance(_us, dict) and _us.get("totalPhysicalCapacityBytes"))
+                       or disk.get("capacityBytes") or 0)
             enc    = bool(disk.get("encryptionEnabled") or disk.get("encrypted"))
             tier   = disk.get("storageTier") or disk.get("diskTier") or ""
             dtype  = disk.get("diskType") or disk.get("type") or ""
