@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): Source Coverage sheet empty on older clusters — v1 fallback for /protectionSources (v1.24)
+
+### Fixed — `health_check/health_check_report.py`
+- **Source Coverage tab was empty** on clusters where `/v2/data-protect/sources` returns 404 (pre-7.x firmware). `_sources()` now tries v2 first, then falls back to v1 `/irisservices/api/v1/public/protectionSources/registrationInfo`. The v1 response (`rootNodes[].stats.protectedCount` / `unprotectedCount`) is normalised into the same dict shape (`protectedObjectsCount`, `unprotectedObjectsCount`) so `_sheet_source_coverage` and `_build_recommendations` work without changes.
+- Fixed `isinstance` guards on `stats` and `objectCount` sub-object lookups in `_sheet_source_coverage` (same `(x or {}).get()` class of bug).
+
+---
+
 ## [2026-04-09] fix(health_check): suppress debug body noise for best-effort endpoints (v1.23)
 
 ### Fixed — `health_check/health_check_report.py`

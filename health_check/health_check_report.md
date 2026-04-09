@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.23**
+**Current version: 1.24**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -175,7 +175,7 @@ The engine evaluates all collected data and generates a prioritised finding list
 | `GET /irisservices/api/v1/public/certificates/webServer` | TLS certificate expiry (Disk Health, Security sheet) |
 | `GET /irisservices/api/v1/public/reports/agents` | Agent health, version, upgradability per host |
 | `GET /irisservices/api/v1/disks/local?nodeId=X` | Per-disk status, SSD wear, encryption (private API — best-effort) |
-| `GET /v2/data-protect/sources` | Registered sources with protected/unprotected object counts |
+| `GET /v2/data-protect/sources` | Registered sources with protected/unprotected object counts (falls back to v1 `/protectionSources/registrationInfo` on older firmware) |
 | `GET /irisservices/api/v1/public/users` | User accounts, MFA status, roles, last login |
 | `GET /irisservices/api/v1/public/idps` | SSO / IDP configuration |
 | `GET /irisservices/api/v1/public/tenants` | Tenant / organisation inventory |
@@ -199,6 +199,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.24 | 2026-04-09 | fix: Source Coverage sheet empty on older clusters — `/v2/data-protect/sources` returns 404 on pre-7.x firmware; `_sources()` now falls back to v1 `/protectionSources/registrationInfo` and normalises `rootNodes[].stats.protectedCount/unprotectedCount` into standard dict shape; also added `isinstance` guards to `stats`/`objectCount` lookups in `_sheet_source_coverage` |
 | 1.23 | 2026-04-09 | fix: suppress debug body output for best-effort endpoints (`/disks/local`, `/v2/data-protect/sources`, `/tenants`) — added `silent` param to `_get()`; these callers pass `silent=True` so `--debug` output is not cluttered with expected 400/403/404 bodies |
 | 1.22 | 2026-04-09 | fix: replace all unsafe `(x or {}).get()` patterns with `isinstance(x, dict)` guards — affected: `healthStatus` (string in older clusters), `auditLogConfig`, `clusterAuditConfig`, `encryptionConfig`, `ntpSettings`, `remoteSupportConfig`, `mfaConfig`, source `stats`; added `isinstance(d, dict)` guards to disk comprehensions in `_build_recommendations()` |
 | 1.21 | 2026-04-08 | feat: ELF inventory additions — new sheets: Disk Health (per-disk status/SSD wear/encryption), Agent Health (agent version/status/upgradability), Source Coverage (protected vs unprotected objects per source), User Security (MFA/locked/roles/last login); Security sheet expanded to 17 controls (+ audit log, NTP auth, remote tunnel, cluster MFA, SSO, cert expiry); 7 new API calls; new recommendations for cert expiry, disk failures, SSD wear, agents, source coverage, user MFA, audit log, SSO; sheet count 14→18 |

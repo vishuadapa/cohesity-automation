@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.23
+health_check_report.py  v1.24
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -63,6 +63,14 @@ Requirements
 
 Version history
 ───────────────
+  1.24 (2026-04-09) — fix: Source Coverage sheet empty on older clusters —
+                     /v2/data-protect/sources returns 404 on pre-7.x firmware.
+                     _sources() now falls back to v1
+                     /protectionSources/registrationInfo (rootNodes[].stats.
+                     protectedCount / unprotectedCount) and normalises the
+                     result into the same dict shape used by the sheet and
+                     recommendations engine. Also fixed isinstance guards on
+                     stats / objectCount sub-objects in _sheet_source_coverage.
   1.23 (2026-04-09) — fix: suppress debug body output for best-effort endpoints
                      (_disks, _sources, _tenants) that return 400/403/404 on
                      clusters where the endpoint is unavailable or restricted.
@@ -224,7 +232,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.23"
+__version__ = "1.24"
 
 import argparse
 import datetime
@@ -606,12 +614,43 @@ def _disks(session, h, nodes, debug):
 
 
 def _sources(session, h, debug):
-    """Fetch registered protection sources with coverage stats."""
+    """Fetch registered protection sources with coverage stats.
+
+    Tries v2 first (includeTenants).  Falls back to v1
+    /protectionSources/registrationInfo on older cluster firmware where the
+    v2 endpoint returns 404.  Returns a list of normalised source dicts that
+    _sheet_source_coverage and _build_recommendations can consume via the
+    standard protectedObjectsCount / unprotectedObjectsCount keys.
+    """
     d = _get(session, h, "/v2/data-protect/sources",
              params={"includeTenants": "true"}, debug=debug, silent=True)
-    if isinstance(d, list):
+    if isinstance(d, list) and d:
         return d
-    return (d or {}).get("sources") or []
+    if isinstance(d, dict):
+        v2 = d.get("sources") or []
+        if v2:
+            return v2
+
+    # v1 fallback — works on all supported cluster versions
+    d1 = _get(session, h,
+              "/irisservices/api/v1/public/protectionSources/registrationInfo",
+              debug=debug)
+    rows = d1 if isinstance(d1, list) else ((d1 or {}).get("rootNodes") or [])
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ps   = row.get("rootNode") or row.get("protectionSource") or {}
+        ps   = ps if isinstance(ps, dict) else {}
+        st   = row.get("stats") or {}
+        st   = st if isinstance(st, dict) else {}
+        out.append({
+            "name":                    ps.get("name", ""),
+            "environment":             ps.get("environment", ""),
+            "protectedObjectsCount":   st.get("protectedCount")   or st.get("protectedObjectsCount")   or 0,
+            "unprotectedObjectsCount": st.get("unprotectedCount") or st.get("unprotectedObjectsCount") or 0,
+        })
+    return out
 
 
 def _users(session, h, debug):
@@ -2808,14 +2847,16 @@ def _sheet_source_coverage(wb, all_data):
             env  = (si.get("environment") or si.get("sourceEnvironment")
                     or src.get("environment") or "")
 
+            _ss  = src.get("stats");       _ss  = _ss  if isinstance(_ss,  dict) else {}
+            _oc  = src.get("objectCount"); _oc  = _oc  if isinstance(_oc,  dict) else {}
             prot   = (src.get("protectedObjectsCount")
                       or src.get("numProtectedObjects")
-                      or (src.get("stats") or {}).get("protectedObjectsCount")
-                      or (src.get("objectCount") or {}).get("protectedCount") or 0)
+                      or _ss.get("protectedObjectsCount")
+                      or _oc.get("protectedCount") or 0)
             unprot = (src.get("unprotectedObjectsCount")
                       or src.get("numUnprotectedObjects")
-                      or (src.get("stats") or {}).get("unprotectedObjectsCount")
-                      or (src.get("objectCount") or {}).get("unprotectedCount") or 0)
+                      or _ss.get("unprotectedObjectsCount")
+                      or _oc.get("unprotectedCount") or 0)
             total  = prot + unprot
             pct    = round(prot / total * 100, 1) if total else ""
 
