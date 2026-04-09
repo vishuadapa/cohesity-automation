@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.29**
+**Current version: 1.30**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -20,10 +20,10 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 4 | **Disk Health** | Per-disk status, type, model, serial, **SSD wear %**, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
 | 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes |
 | 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
-| 7 | Policy Audit | Retention schedules, replication targets, archival targets, compliance gaps per policy, group count |
+| 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy, compliance gaps, group count |
 | 8 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
 | 9 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 10 | Security | **Expanded 17-column checklist**: encryption, FIPS, vault, FortKnox, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, TLS cert expiry |
+| 10 | Security | **Expanded 18-column checklist**: encryption, FIPS, vault, FortKnox, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **DataLock (WORM)**, TLS cert expiry |
 | 11 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
 | 12 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
 | 13 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
@@ -213,6 +213,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.30 | 2026-04-09 | feat: DataLock (WORM) tracking — new `DataLock (WORM)` column in Policy Audit (per-policy mode+duration, col 15) and Security sheet (cluster rollup col 16: Compliance/Administrative/Mixed/None). "No DataLock" added to Gaps. MEDIUM recommendation if no DataLock; LOW if Administrative-only. No new API calls — reads `backupPolicy.regular.retention.dataLockConfig` from already-fetched v2 policies |
 | 1.29 | 2026-04-09 | fix: removed Helios username/password auth — `helios.cohesity.com` login endpoints require OIDC/OAuth2 (`401 "No open ID token found in header"`). Using `--username` without `--cluster-host` now prints a clear error with instructions to generate an API key. `cohesity_auth.py` v1.4 |
 | 1.28 | 2026-04-09 | feat: direct cluster mode (`--cluster-host` + `--username` → Bearer token via `POST /v2/users/sessions`). Cluster name auto-detected from cluster's own API. `--clear-credentials` flag. `_get()` uses `session.base_url`. `cohesity_auth.py` v1.2 |
 | 1.27 | 2026-04-09 | fix: Disk Health sheet still empty after v1.26 — `GET /v2/disks` is not a valid Helios-proxied endpoint. Rewrote `_disks()` to use `GET /v2/disks/local?nodeId={id}` per node (matches Cohesity ELF tool `cohesityInv.ps1` approach). Updated field fallbacks: `ssdUsedPercentage` (ELF name), `capacityInBytes` (ELF name), `encryptionStatus` string (ELF name) |

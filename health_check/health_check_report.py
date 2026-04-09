@@ -79,6 +79,20 @@ Requirements
 
 Version history
 ───────────────
+  1.30 (2026-04-09) — feat: DataLock (WORM) tracking across Policy Audit,
+                     Security, and Recommendations. New helper functions
+                     _policy_datalock_str() and _cluster_datalock() read
+                     backupPolicy.regular.retention.dataLockConfig from the
+                     v2 policies API (already fetched — no new API call).
+                     Policy Audit gains a "DataLock (WORM)" column (col 15,
+                     green=Compliance, yellow=Administrative, red=None) with
+                     "No DataLock" added to the Gaps cell when absent.
+                     Security sheet gains a "DataLock (WORM)" column (col 16)
+                     showing cluster-level rollup: Compliance / Administrative
+                     / Mixed / None, with "No DataLock" added to the Gaps
+                     column when absent. Recommendations: MEDIUM if no policies
+                     have DataLock enabled; LOW if Administrative mode only
+                     (urging upgrade to Compliance mode).
   1.29 (2026-04-09) — fix: removed Helios username/password auth mode —
                      Helios /irisservices/api/v1/mcm/login requires an OIDC
                      token in the Authorization header, not credentials in
@@ -280,7 +294,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.29"
+__version__ = "1.30"
 
 import argparse
 import datetime
@@ -1201,6 +1215,24 @@ def _build_recommendations(cd):
             "Immutable copy is configured but data is not flowing — "
             "ransomware protection gap despite vault being present"))
 
+    dl_status, _ = _cluster_datalock(policies)
+    if dl_status == "none":
+        recs.append(_r("MEDIUM", "Security",
+            "No policies have DataLock (WORM) enabled on local backup retention",
+            "Enable DataLock on protection policies — prefer Compliance mode to "
+            "prevent any user or admin from deleting or shortening backup snapshots",
+            "Without DataLock, local backups can be deleted or modified by "
+            "ransomware or a compromised admin account; FortKnox alone does not "
+            "protect local snapshots"))
+    elif dl_status == "administrative":
+        recs.append(_r("LOW", "Security",
+            "DataLock is set to Administrative mode on some policies — "
+            "Compliance mode provides stronger protection",
+            "Upgrade DataLock from Administrative to Compliance mode on critical "
+            "policies to prevent admin-level deletion of backup snapshots",
+            "Administrative mode DataLock can be overridden by a Cohesity admin; "
+            "Compliance mode is immutable even to admins"))
+
     has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
     if not has_repl:
@@ -1900,17 +1932,65 @@ def _sched_str(s):
             return f"Every {s[key]} {key}"
     return unit or ""
 
+def _policy_datalock_str(p):
+    """Return a display string for a single policy's local DataLock config.
+
+    Reads backupPolicy.regular.retention.dataLockConfig (v2 API).
+    Returns e.g. "Compliance / 14 Days", "Administrative / 30 Days", or "None".
+    """
+    bp  = p.get("backupPolicy") or {}
+    reg = bp.get("regular") or {}
+    ret = reg.get("retention") or bp.get("retention") or {}
+    dlc = ret.get("dataLockConfig") if isinstance(ret, dict) else None
+    if isinstance(dlc, dict) and dlc.get("mode"):
+        mode = dlc["mode"]
+        dur  = dlc.get("duration")
+        unit = dlc.get("unit", "Days")
+        return f"{mode} / {dur} {unit}" if dur else mode
+    return "None"
+
+
+def _cluster_datalock(policies):
+    """Return (status, label) for the cluster-level DataLock rollup across all policies.
+
+    Checks both local retention dataLockConfig and archival target retention dataLockConfig.
+    status: "compliance" | "administrative" | "mixed" | "none"
+    """
+    comp = False
+    adm  = False
+    for p in policies:
+        # Local retention
+        s = _policy_datalock_str(p).lower()
+        if "compliance" in s:
+            comp = True
+        elif "admin" in s:
+            adm = True
+        # Archival target retention
+        for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+            dlc = (t.get("retention") or {}).get("dataLockConfig")
+            if isinstance(dlc, dict):
+                m = (dlc.get("mode") or "").lower()
+                if "compliance" in m:
+                    comp = True
+                elif "admin" in m:
+                    adm = True
+    if comp and adm: return ("mixed",          "Mixed")
+    if comp:         return ("compliance",     "Compliance")
+    if adm:          return ("administrative", "Administrative")
+    return ("none", "None")
+
+
 def _sheet_policies(wb, all_data):
     ws = wb.create_sheet("Policy Audit")
     ws.freeze_panes = "A3"
-    _title(ws, "Policy Audit — Retention, Replication & Archival", "O")
+    _title(ws, "Policy Audit — Retention, Replication & Archival", "P")
 
     cols = ["Cluster", "Policy Name", "Type",
             "Full Schedule", "Incremental Schedule",
             "Local Retention", "Log Retention",
             "Has Replication", "Replication Target", "Replication Retention",
             "Has Archival", "Archival Target", "Archival Retention",
-            "Groups Using", "Gaps"]
+            "Groups Using", "DataLock (WORM)", "Gaps"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -1957,6 +2037,11 @@ def _sheet_policies(wb, all_data):
             if not rep_tgts:  gaps.append("No replication")
             if not arch_tgts: gaps.append("No archival")
 
+            dl_str = _policy_datalock_str(p)
+            dl_low = dl_str.lower()
+            if dl_str == "None":
+                gaps.append("No DataLock")
+
             row = [cd["name"], p.get("name", ""),
                    p.get("type") or p.get("policyCategory") or "",
                    _sched_str(full_sched), _sched_str(incr_sched),
@@ -1964,12 +2049,23 @@ def _sheet_policies(wb, all_data):
                    "Yes" if rep_tgts else "No", rep_names, _ret_str(rep_ret),
                    "Yes" if arch_tgts else "No", arch_names, _ret_str(arch_ret),
                    policy_group_count.get(p.get("id"), 0),
+                   dl_str,
                    "; ".join(gaps) if gaps else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=val).font = _font()
 
-            gc = ws.cell(row=rn, column=15)
+            # DataLock col 15 — color by mode
+            dl_cell = ws.cell(row=rn, column=15)
+            if "compliance" in dl_low:
+                dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
+            elif "admin" in dl_low:
+                dl_cell.fill = _fill(YELLOW);   dl_cell.font = _font(bold=True)
+            else:
+                dl_cell.fill = _fill(RED);      dl_cell.font = _font(bold=True, color=WHITE)
+
+            # Gaps col 16
+            gc = ws.cell(row=rn, column=16)
             if gaps:
                 gc.fill = _fill(YELLOW)
                 gc.font = _font(bold=True)
@@ -2076,7 +2172,7 @@ def _sheet_security(wb, all_data):
     import datetime as _dt
     ws = wb.create_sheet("Security")
     ws.freeze_panes = "A3"
-    _title(ws, "Security Posture — Checklist vs Best Practices", "Q")
+    _title(ws, "Security Posture — Checklist vs Best Practices", "R")
 
     cols = ["Cluster", "Encryption at Rest", "FIPS Mode",
             "Vault Configured", "FortKnox / Immutable",
@@ -2085,6 +2181,7 @@ def _sheet_security(wb, all_data):
             "Security Score /100",
             "Audit Log", "NTP Auth", "Remote Tunnel",
             "Cluster MFA", "SSO / IDP",
+            "DataLock (WORM)",
             "Soonest Cert Expiry",
             "Gaps"]
     _hdr(ws, 2, cols)
@@ -2180,17 +2277,20 @@ def _sheet_security(wb, all_data):
                 soonest_days    = d
                 cert_expiry_str = f"{exp_dt.isoformat()} ({d}d)"
 
+        dl_status, dl_label = _cluster_datalock(policies)
+
         gaps = []
-        if not enc:         gaps.append("No encryption")
-        if not fips:        gaps.append("FIPS off")
-        if not has_vault:   gaps.append("No vault")
-        if fk_st == "none": gaps.append("No immutability")
-        if fk_st == "idle": gaps.append("FK configured — not sending data")
-        if not has_repl:    gaps.append("No replication")
-        if not has_arch:    gaps.append("No archival")
-        if not audit_on:    gaps.append("Audit log off")
-        if not cluster_mfa: gaps.append("No cluster MFA")
-        if not has_sso:     gaps.append("No SSO")
+        if not enc:              gaps.append("No encryption")
+        if not fips:             gaps.append("FIPS off")
+        if not has_vault:        gaps.append("No vault")
+        if fk_st == "none":      gaps.append("No immutability")
+        if fk_st == "idle":      gaps.append("FK configured — not sending data")
+        if not has_repl:         gaps.append("No replication")
+        if not has_arch:         gaps.append("No archival")
+        if dl_status == "none":  gaps.append("No DataLock")
+        if not audit_on:         gaps.append("Audit log off")
+        if not cluster_mfa:      gaps.append("No cluster MFA")
+        if not has_sso:          gaps.append("No SSO")
         if soonest_days is not None and soonest_days < CERT_WARN_DAYS:
             gaps.append(f"Cert expires {soonest_days}d")
 
@@ -2202,6 +2302,7 @@ def _sheet_security(wb, all_data):
                scores["security"],
                yn(audit_on), yn(ntp_auth), yn(tunnel_on),
                yn(cluster_mfa), yn(has_sso),
+               dl_label,
                cert_expiry_str or "—",
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
@@ -2237,7 +2338,6 @@ def _sheet_security(wb, all_data):
         ]:
             cell = ws.cell(row=rn, column=col)
             if col == 13:
-                # Tunnel ON is acceptable but yellow; OFF is green
                 cell.fill = _fill(YELLOW) if flag else _fill(LT_GREEN)
                 cell.font = _font(bold=True)
             elif warn_if_off:
@@ -2247,16 +2347,25 @@ def _sheet_security(wb, all_data):
                 cell.fill = _fill(LT_GREEN) if flag else _fill(YELLOW)
                 cell.font = _font(bold=True)
 
-        # Cert expiry col 16
+        # DataLock col 16 — three-state coloring
+        dl_cell = ws.cell(row=rn, column=16)
+        if dl_status == "compliance":
+            dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
+        elif dl_status in ("administrative", "mixed"):
+            dl_cell.fill = _fill(YELLOW);   dl_cell.font = _font(bold=True)
+        else:
+            dl_cell.fill = _fill(RED);      dl_cell.font = _font(bold=True, color=WHITE)
+
+        # Cert expiry col 17
         if soonest_days is not None:
-            cc = ws.cell(row=rn, column=16)
+            cc = ws.cell(row=rn, column=17)
             if soonest_days < CERT_CRIT_DAYS:
                 cc.fill = _fill(RED);    cc.font = _font(bold=True, color=WHITE)
             elif soonest_days < CERT_WARN_DAYS:
                 cc.fill = _fill(ORANGE); cc.font = _font(bold=True)
 
     auto_fit_columns(ws)
-    ws.column_dimensions["Q"].width = 60
+    ws.column_dimensions["R"].width = 60
 
 
 def _sheet_replication(wb, all_data):

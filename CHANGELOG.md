@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] feat(health_check): DataLock (WORM) tracking — Policy Audit, Security, Recommendations (v1.30)
+
+### Added — `health_check/health_check_report.py`
+- **Policy Audit sheet**: new `DataLock (WORM)` column (col 15) per policy — shows mode + duration from `backupPolicy.regular.retention.dataLockConfig`. Green for Compliance, yellow for Administrative, red for None. "No DataLock" added to the Gaps cell when absent.
+- **Security sheet**: new `DataLock (WORM)` column (col 16) — cluster-level rollup across all policies: `Compliance` (green), `Administrative` / `Mixed` (yellow), `None` (red). "No DataLock" added to Gaps column when no policy has DataLock configured.
+- **Recommendations**: MEDIUM finding when no policies have DataLock enabled; LOW finding when only Administrative mode is used (recommends upgrading to Compliance mode).
+- Two new helpers: `_policy_datalock_str(p)` (per-policy display string) and `_cluster_datalock(policies)` (cluster-level status rollup). No new API calls — data sourced from the already-fetched v2 policies response.
+
+---
+
 ## [2026-04-09] fix(health_check): remove Helios user/pass auth — Helios requires OIDC, not credentials (v1.29)
 
 ### Fixed — `health_check/health_check_report.py` and `utils/cohesity_auth.py`
