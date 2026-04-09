@@ -7,6 +7,19 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): replace unsafe (x or {}).get() patterns with isinstance guards throughout (v1.22)
+
+### Fixed — `health_check/health_check_report.py`
+- **`healthStatus` field** — in some cluster versions this is a string (e.g. `"kHealthy"`) not a nested dict; `(x or {}).get("status")` raised `AttributeError: 'str' object has no attribute 'get'`. Fixed in `_build_recommendations()`, `_sheet_agent_health()`, and Word doc `_ag_st()` helper.
+- **`auditLogConfig` / `clusterAuditConfig`** — could be returned as a string on certain cluster versions; replaced `(x or {}).get("enabled")` with `isinstance(x, dict)` guards in both `_build_recommendations()` and `_sheet_security()`.
+- **`encryptionConfig`** — same pattern; fixed in `_score_security()`, `_build_recommendations()`, `_sheet_infrastructure()`, `_sheet_security()`, and two Word doc sections.
+- **`ntpSettings`** — replaced double `(info.get("ntpSettings") or {}).get(...)` calls (one in `_sheet_infrastructure()`, one in `_sheet_security()`) with a single `_ntp_s` variable guarded by `isinstance`.
+- **`remoteSupportConfig` / `mfaConfig`** — same pattern in `_sheet_security()`.
+- **Disk comprehensions** — added `isinstance(d, dict)` guard to `failed_disks` and `high_wear` list comprehensions in `_build_recommendations()`.
+- **Source `stats` sub-object** — replaced `(src.get("stats") or {}).get(...)` with `isinstance` guard.
+
+---
+
 ## [2026-04-08] feat(health_check): ELF inventory additions — disk health, agent health, source coverage, user security, expanded security controls (v1.21)
 
 ### Added — `health_check/health_check_report.py`

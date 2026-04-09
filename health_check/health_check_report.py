@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.21
+health_check_report.py  v1.22
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -63,6 +63,15 @@ Requirements
 
 Version history
 ───────────────
+  1.22 (2026-04-09) — fix: replace all unsafe `(x or {}).get()` patterns with
+                     isinstance(x, dict) guards; affected fields: healthStatus
+                     (could be a string in older cluster versions), auditLogConfig,
+                     clusterAuditConfig, encryptionConfig, ntpSettings,
+                     remoteSupportConfig, mfaConfig, sourceInfo (could be string
+                     in some source types), stats (source coverage). Added
+                     isinstance(d, dict) guards to disk comprehensions in
+                     _build_recommendations(). Fixed _ag_st() helper in Word
+                     doc section to handle str/dict/None healthStatus uniformly.
   1.21 (2026-04-08) — feat: Tier 1/2/3 ELF inventory additions. New data
                      collection: _certificates(), _agents(), _disks(),
                      _sources(), _users(), _idps(), _tenants(). New Excel
@@ -209,7 +218,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.21"
+__version__ = "1.22"
 
 import argparse
 import datetime
@@ -888,8 +897,9 @@ def _score_security(cd):
     policies = cd["policies"]
     score    = 0
     # Encryption
+    _enc_cfg_sc = info.get("encryptionConfig")
     if info.get("encryptionEnabled") or \
-       (info.get("encryptionConfig") or {}).get("encryptionEnabled"):
+       (isinstance(_enc_cfg_sc, dict) and _enc_cfg_sc.get("encryptionEnabled")):
         score += 20
     # FIPS
     if info.get("fipsCompliant") or info.get("fipsEnabled"):
@@ -1032,8 +1042,9 @@ def _build_recommendations(cd):
                 "Continued growth risks backup failures within weeks"))
 
     # ── Security ─────────────────────────────────────────────────────────────
+    _enc_cfg_r = info.get("encryptionConfig")
     enc = info.get("encryptionEnabled") or \
-          (info.get("encryptionConfig") or {}).get("encryptionEnabled")
+          (isinstance(_enc_cfg_r, dict) and _enc_cfg_r.get("encryptionEnabled"))
     if not enc:
         recs.append(_r("HIGH", "Security",
             "Encryption at rest is not enabled",
@@ -1188,7 +1199,9 @@ def _build_recommendations(cd):
     for agent in (cd.get("agents") or []):
         if not isinstance(agent, dict):
             continue
-        st = ((agent.get("healthStatus") or {}).get("status")
+        _hs = agent.get("healthStatus")
+        st = ((isinstance(_hs, dict) and _hs.get("status"))
+              or (isinstance(_hs, str) and _hs)
               or agent.get("agentStatus") or agent.get("status") or "")
         if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
             host = (agent.get("hostName") or agent.get("host")
@@ -1204,7 +1217,8 @@ def _build_recommendations(cd):
 
     # ── Disk health and SSD wear ──────────────────────────────────────────────
     failed_disks = [d for d in (cd.get("disks") or [])
-                    if (d.get("diskStatus") or d.get("status") or "").lower()
+                    if isinstance(d, dict)
+                    and (d.get("diskStatus") or d.get("status") or "").lower()
                     in ("kfailed", "failed", "kmissing", "missing")]
     if failed_disks:
         recs.append(_r("CRITICAL", "Disk Health",
@@ -1215,7 +1229,8 @@ def _build_recommendations(cd):
     high_wear = [(d.get("_nodeIp", "?"),
                   d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
                  for d in (cd.get("disks") or [])
-                 if (d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+                 if isinstance(d, dict)
+                 and (d.get("ssdWearLevelPct") or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
                  >= SSD_WEAR_CRIT_PCT]
     if high_wear:
         examples = ", ".join(f"{ip} ({w}%)" for ip, w in high_wear[:3])
@@ -1232,12 +1247,13 @@ def _build_recommendations(cd):
         _si = src.get("sourceInfo")
         si   = _si if isinstance(_si, dict) else src
         name = si.get("name") or si.get("sourceName") or src.get("name") or ""
+        _src_stats = src.get("stats")
         prot   = (src.get("protectedObjectsCount")
                   or src.get("numProtectedObjects")
-                  or (src.get("stats") or {}).get("protectedObjectsCount") or 0)
+                  or (isinstance(_src_stats, dict) and _src_stats.get("protectedObjectsCount")) or 0)
         unprot = (src.get("unprotectedObjectsCount")
                   or src.get("numUnprotectedObjects")
-                  or (src.get("stats") or {}).get("unprotectedObjectsCount") or 0)
+                  or (isinstance(_src_stats, dict) and _src_stats.get("unprotectedObjectsCount")) or 0)
         total  = prot + unprot
         if total > 0 and unprot > 0 and (unprot / total * 100) >= 25:
             low_coverage.append(f"{name} ({unprot}/{total} unprotected)")
@@ -1267,10 +1283,13 @@ def _build_recommendations(cd):
 
     # ── Audit log ─────────────────────────────────────────────────────────────
     info_local = cd["info"]
-    audit_enabled = (info_local.get("auditLogEnabled")
-                     or (info_local.get("auditLogConfig") or {}).get("enabled")
-                     or (info_local.get("clusterAuditConfig") or {}).get("enabled")
-                     or False)
+    _audit_cfg     = info_local.get("auditLogConfig")
+    _cluster_audit = info_local.get("clusterAuditConfig")
+    audit_enabled = bool(
+        info_local.get("auditLogEnabled")
+        or (isinstance(_audit_cfg, dict)     and _audit_cfg.get("enabled"))
+        or (isinstance(_cluster_audit, dict) and _cluster_audit.get("enabled"))
+    )
     if not audit_enabled:
         recs.append(_r("MEDIUM", "Security",
             "Cluster audit logging is not enabled",
@@ -1421,13 +1440,14 @@ def _sheet_infrastructure(wb, all_data):
         days_to_eos = (sw_eos_date - today).days if sw_eos_date else ""
         eos_date_str = sw_eos_date.isoformat() if sw_eos_date else ("—" if sw_status == "current" else "Unknown")
 
+        _enc_cfg = info.get("encryptionConfig")
         enc  = bool(info.get("encryptionEnabled") or
-                    (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
+                    (isinstance(_enc_cfg, dict) and _enc_cfg.get("encryptionEnabled")))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         dns  = ", ".join(info.get("dnsServerIps") or [])
         # NTP: v1 API returns ntpSettings.ntpServers or a flat ntpServers list
-        ntp_raw = ((info.get("ntpSettings") or {}).get("ntpServers")
-                   or info.get("ntpSettings", {}).get("ntpServersList")
+        _ntp_s  = info.get("ntpSettings")
+        ntp_raw = ((isinstance(_ntp_s, dict) and (_ntp_s.get("ntpServers") or _ntp_s.get("ntpServersList")))
                    or info.get("ntpServers")
                    or info.get("ntpServerIps")
                    or [])
@@ -1976,8 +1996,9 @@ def _sheet_security(wb, all_data):
         policies = cd["policies"]
         scores   = cd["scores"]
 
+        _enc_cfg_s = info.get("encryptionConfig")
         enc  = bool(info.get("encryptionEnabled") or
-                    (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
+                    (isinstance(_enc_cfg_s, dict) and _enc_cfg_s.get("encryptionEnabled")))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         has_vault = bool(vaults)
         fk_st    = _fk_status(cd)
@@ -1987,24 +2008,29 @@ def _sheet_security(wb, all_data):
                        for p in policies)
 
         # ── Extended security controls ─────────────────────────────────────
+        _audit_cfg2     = info.get("auditLogConfig")
+        _cluster_audit2 = info.get("clusterAuditConfig")
         audit_on = bool(
             info.get("auditLogEnabled")
-            or (info.get("auditLogConfig") or {}).get("enabled")
-            or (info.get("clusterAuditConfig") or {}).get("enabled")
+            or (isinstance(_audit_cfg2, dict)     and _audit_cfg2.get("enabled"))
+            or (isinstance(_cluster_audit2, dict) and _cluster_audit2.get("enabled"))
         )
+        _ntp_s2  = info.get("ntpSettings")
         ntp_auth = bool(
-            (info.get("ntpSettings") or {}).get("ntpAuthenticationEnabled")
-            or (info.get("ntpSettings") or {}).get("authEnabled")
+            isinstance(_ntp_s2, dict)
+            and (_ntp_s2.get("ntpAuthenticationEnabled") or _ntp_s2.get("authEnabled"))
         )
+        _remote_cfg = info.get("remoteSupportConfig")
         tunnel_on = bool(
             info.get("enableRemoteSupport")
-            or (info.get("remoteSupportConfig") or {}).get("enabled")
+            or (isinstance(_remote_cfg, dict) and _remote_cfg.get("enabled"))
             or info.get("remoteSupportEnabled")
         )
+        _mfa_cfg = info.get("mfaConfig")
         cluster_mfa = bool(
             info.get("clusterMfaEnabled")
             or info.get("mfaEnabled")
-            or (info.get("mfaConfig") or {}).get("enabled")
+            or (isinstance(_mfa_cfg, dict) and _mfa_cfg.get("enabled"))
         )
         has_sso = bool(cd.get("idps"))
 
@@ -2689,7 +2715,9 @@ def _sheet_agent_health(wb, all_data):
             continue
         any_data = True
         for agent in agents:
-            status = ((agent.get("healthStatus") or {}).get("status")
+            _hs2   = agent.get("healthStatus")
+            status = ((isinstance(_hs2, dict) and _hs2.get("status"))
+                      or (isinstance(_hs2, str) and _hs2)
                       or agent.get("agentStatus") or agent.get("status") or "")
             upg    = (agent.get("upgradability") or agent.get("upgradable") or "")
 
@@ -3064,8 +3092,9 @@ def write_word(all_data, args):
         healthy = sum(1 for n in nodes
                       if ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
                           or n.get("removalState") in (None, "kDontRemove")))
+        _enc_cfg_w = info.get("encryptionConfig")
         enc  = bool(info.get("encryptionEnabled") or
-                    (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
+                    (isinstance(_enc_cfg_w, dict) and _enc_cfg_w.get("encryptionEnabled")))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         status = "OK" if healthy == len(nodes) else f"WARN: {len(nodes)-healthy} node(s)"
         row = t2.add_row().cells
@@ -3189,8 +3218,9 @@ def write_word(all_data, args):
         info     = cd["info"]
         vaults   = cd["vaults"]
         policies = cd["policies"]
+        _enc_cfg_w2 = info.get("encryptionConfig")
         enc  = bool(info.get("encryptionEnabled") or
-                    (info.get("encryptionConfig") or {}).get("encryptionEnabled"))
+                    (isinstance(_enc_cfg_w2, dict) and _enc_cfg_w2.get("encryptionEnabled")))
         fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
         has_vault = bool(vaults)
         fk_v  = [v for v in vaults if v.get("vaultType") in ("kFortKnox", "kS3Compatible")]
@@ -3212,10 +3242,15 @@ def write_word(all_data, args):
     _h1("6. Agent Health & Source Coverage")
 
     total_agents    = sum(len(cd.get("agents") or []) for cd in all_data)
+    def _ag_st(a):
+        _hs = a.get("healthStatus") if isinstance(a, dict) else None
+        return ((isinstance(_hs, dict) and _hs.get("status"))
+                or (isinstance(_hs, str) and _hs)
+                or (isinstance(a, dict) and (a.get("agentStatus") or a.get("status")))
+                or "")
     unhealthy_ag    = sum(
         sum(1 for a in (cd.get("agents") or [])
-            if ((a.get("healthStatus") or {}).get("status")
-                or a.get("agentStatus") or a.get("status") or "").lower()
+            if _ag_st(a).lower()
             in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"))
         for cd in all_data)
     upgradable_ag   = sum(

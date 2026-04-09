@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.21**
+**Current version: 1.22**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -199,6 +199,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.22 | 2026-04-09 | fix: replace all unsafe `(x or {}).get()` patterns with `isinstance(x, dict)` guards — affected: `healthStatus` (string in older clusters), `auditLogConfig`, `clusterAuditConfig`, `encryptionConfig`, `ntpSettings`, `remoteSupportConfig`, `mfaConfig`, source `stats`; added `isinstance(d, dict)` guards to disk comprehensions in `_build_recommendations()` |
 | 1.21 | 2026-04-08 | feat: ELF inventory additions — new sheets: Disk Health (per-disk status/SSD wear/encryption), Agent Health (agent version/status/upgradability), Source Coverage (protected vs unprotected objects per source), User Security (MFA/locked/roles/last login); Security sheet expanded to 17 controls (+ audit log, NTP auth, remote tunnel, cluster MFA, SSO, cert expiry); 7 new API calls; new recommendations for cert expiry, disk failures, SSD wear, agents, source coverage, user MFA, audit log, SSO; sheet count 14→18 |
 | 1.20 | 2026-04-08 | fix: 6.8.1 LTS EOS was November 15 2024 (already OOS) — old `"6.8"` prefix catch-all incorrectly reported it as in-support; split table so only 6.8.2+ maps to In Support — LTS. Hardware EOL table expanded: added C2100, C2200, C2510, C4500 model variants (Cohesity EOL doc Oct 2025) |
 | 1.19 | 2026-04-08 | feat: software and hardware lifecycle tracking — `SOFTWARE_EOS` and `HARDWARE_EOL` tables; `_sw_eos()` / `_hw_eol()` helpers; Infrastructure sheet gains SW Lifecycle Status (colour-coded), SW EOS Date, Days to EOS; new "Node Hardware" sheet (14th sheet) with per-node model/serial/type/capacity/tiers/EOL; recommendations engine updated with CRITICAL/HIGH/MEDIUM lifecycle findings; Word doc gains Software & Hardware Lifecycle section |
