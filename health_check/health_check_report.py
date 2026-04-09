@@ -547,11 +547,11 @@ def _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, debug):
 
 
 def _certificates(session, h, debug):
-    """Fetch web server TLS certificate(s). Returns list of cert dicts."""
+    """Fetch web server TLS certificate(s). Returns list of cert dicts only."""
     d = _get(session, h, "/irisservices/api/v1/public/certificates/webServer",
              debug=debug)
     if isinstance(d, list):
-        return d
+        return [c for c in d if isinstance(c, dict)]
     if isinstance(d, dict) and d:
         return [d]
     return []
@@ -1150,6 +1150,8 @@ def _build_recommendations(cd):
 
     # ── TLS Certificate expiry ────────────────────────────────────────────────
     for cert in (cd.get("certs") or []):
+        if not isinstance(cert, dict):
+            continue
         exp_usecs = (cert.get("expiryUsecs")
                      or cert.get("expiryTimeMsecs")
                      or cert.get("notAfter"))
@@ -1184,6 +1186,8 @@ def _build_recommendations(cd):
     # ── Agent health ──────────────────────────────────────────────────────────
     unhealthy_agents = []
     for agent in (cd.get("agents") or []):
+        if not isinstance(agent, dict):
+            continue
         st = ((agent.get("healthStatus") or {}).get("status")
               or agent.get("agentStatus") or agent.get("status") or "")
         if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
@@ -1223,8 +1227,11 @@ def _build_recommendations(cd):
     # ── Source coverage ───────────────────────────────────────────────────────
     low_coverage = []
     for src in (cd.get("sources") or []):
-        si = src.get("sourceInfo") or src
-        name = si.get("name") or si.get("sourceName") or ""
+        if not isinstance(src, dict):
+            continue
+        _si = src.get("sourceInfo")
+        si   = _si if isinstance(_si, dict) else src
+        name = si.get("name") or si.get("sourceName") or src.get("name") or ""
         prot   = (src.get("protectedObjectsCount")
                   or src.get("numProtectedObjects")
                   or (src.get("stats") or {}).get("protectedObjectsCount") or 0)
@@ -1246,7 +1253,8 @@ def _build_recommendations(cd):
     admin_roles = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
     users_no_mfa = [
         u.get("username", "?") for u in (cd.get("users") or [])
-        if not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+        if isinstance(u, dict)
+        and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
         and bool(set(u.get("roles") or []) & admin_roles)
     ]
     if users_no_mfa:
@@ -2753,8 +2761,12 @@ def _sheet_source_coverage(wb, all_data):
         if not sources:
             continue
         for src in sources:
-            si   = src.get("sourceInfo") or src
-            name = si.get("name") or si.get("sourceName") or ""
+            if not isinstance(src, dict):
+                continue
+            _si  = src.get("sourceInfo")
+            si   = _si if isinstance(_si, dict) else src
+            name = (si.get("name") or si.get("sourceName")
+                    or src.get("name") or "")
             env  = (si.get("environment") or si.get("sourceEnvironment")
                     or src.get("environment") or "")
 
