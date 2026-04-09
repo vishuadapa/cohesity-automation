@@ -56,10 +56,10 @@ Two authentication modes are supported:
 
 ```bash
 # Helios — API key (key saved to OS keychain after first prompt)
-python health_check_report.py --apikey <key>
+python3 health_check_report.py --apikey <key>
 
 # Direct cluster — username/password + optional MFA (bypasses Helios)
-python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
+python3 health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
 ```
 
 > **Helios note:** Helios does not expose a scriptable username/password login endpoint. Its web login uses OIDC/OAuth2 and cannot be driven from a script. Generate an API key at **helios.cohesity.com → Settings → Access Management → API Keys**.
@@ -88,16 +88,16 @@ python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain
 
 ```bash
 # Full report — all clusters, 30-day window
-python health_check_report.py --apikey abc123 --customer "Acme Corp"
+python3 health_check_report.py --apikey abc123 --customer "Acme Corp"
 
 # Quick scan of a single cluster
-python health_check_report.py --apikey abc123 --cluster prod-east --quick
+python3 health_check_report.py --apikey abc123 --cluster prod-east --quick
 
 # Excel only, custom output path and filename
-python health_check_report.py --apikey abc123 --output /reports/q2_review --excel-only
+python3 health_check_report.py --apikey abc123 --output /reports/q2_review --excel-only
 
 # 90-day lookback with debug logging
-python health_check_report.py --apikey abc123 --days 90 --debug
+python3 health_check_report.py --apikey abc123 --days 90 --debug
 ```
 
 ---

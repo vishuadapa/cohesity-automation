@@ -45,10 +45,10 @@ cluster) and produces:
 Usage
 ─────
   # Helios — API key (key saved to OS keychain after first prompt)
-  python health_check_report.py --apikey <key> [options]
+  python3 health_check_report.py --apikey <key> [options]
 
   # Direct cluster — username/password + optional MFA (bypasses Helios)
-  python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
+  python3 health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
 
   NOTE: Helios does NOT expose a scriptable username/password login endpoint.
   Its web login uses OIDC/OAuth2 which cannot be driven from a script.
