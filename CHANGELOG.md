@@ -7,6 +7,17 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] feat(health_check): additional auth modes — Helios user+pass+MFA and direct cluster (v1.28)
+
+### Added — `health_check/health_check_report.py` and `utils/cohesity_auth.py`
+- **Helios username/password + MFA**: new `--username`, `--password`, `--mfa-code` flags. `helios_login()` posts to `POST /mcm/login` and returns a token used identically to a Helios API key. Passwords are saved/loaded from OS keychain under service `cohesity_helios_user`.
+- **Direct cluster mode**: new `--cluster-host <hostname/IP>` flag bypasses Helios entirely. Uses `--username` / `--password` / `--domain` / `--mfa-code` → Bearer token via `POST /v2/users/sessions`. Cluster name is auto-detected from `/irisservices/api/v1/public/cluster`. All 18 Excel sheets and Word document work unchanged.
+- **`--clear-credentials`** flag removes stored credentials from keychain (Helios API key, Helios user password, or cluster password based on which flags are provided).
+- `_get()` now reads base URL from `session.base_url` so the same helper works for Helios and direct cluster.
+- `cohesity_auth.py` v1.2: added `helios_login()`, `get_helios_password()`, `mfa_code` param to `get_auth_token()`, `cli_password` param to `get_cluster_password()`, `helios_user` param to `clear_stored_credentials()`.
+
+---
+
 ## [2026-04-09] fix(health_check): use correct ELF disk endpoint GET /v2/disks/local?nodeId={id} (v1.27)
 
 ### Fixed — `health_check/health_check_report.py`

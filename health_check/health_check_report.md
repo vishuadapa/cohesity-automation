@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.27**
+**Current version: 1.28**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
 
@@ -52,16 +52,31 @@ Narrative report suitable for printing or sharing with customers:
 
 ## Usage
 
+Three authentication modes are supported:
+
 ```bash
-python health_check_report.py --apikey <key> [options]
+# Helios — API key (default; key saved to OS keychain after first prompt)
+python health_check_report.py --apikey <key>
+
+# Helios — username/password + optional MFA
+python health_check_report.py --username admin@example.com [--mfa-code 123456]
+
+# Direct cluster — username/password + optional MFA (bypasses Helios)
+python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
 ```
 
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--apikey KEY` | env / keychain | Helios API key |
-| `--cluster NAME` | all | Limit to one cluster (partial name match) |
+| `--apikey KEY` | keychain | Helios API key |
+| `--username USER` | — | Helios email or cluster username for user+pass auth |
+| `--password PASS` | keychain / prompt | Password (not stored when passed on CLI) |
+| `--domain DOMAIN` | `LOCAL` | Auth domain for direct cluster login (`LOCAL` or AD name) |
+| `--mfa-code CODE` | — | TOTP/OTP code for MFA-enabled accounts (Helios or cluster) |
+| `--cluster-host HOST` | — | Bypass Helios; connect directly to this cluster hostname or IP |
+| `--cluster NAME` | all | (Helios modes) Limit to one cluster by partial name match |
+| `--clear-credentials` | — | Remove stored credentials from keychain and exit |
 | `--days N` | 30 | Lookback window for alerts and run history |
 | `--customer NAME` | *(blank)* | Customer name printed on Word cover page |
 | `--output PATH` | `cohesity_health_check` | Base path for output files (no extension) |
@@ -199,6 +214,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.28 | 2026-04-09 | feat: three auth modes — Helios API key (existing), Helios username/password+MFA (`--username` / `--mfa-code` → `helios_login()` → token as apiKey), direct cluster (`--cluster-host` + `--username` → Bearer token). `--clear-credentials` removes stored key/password from keychain. `_get()` uses `session.base_url`. `cohesity_auth.py` v1.2 |
 | 1.27 | 2026-04-09 | fix: Disk Health sheet still empty after v1.26 — `GET /v2/disks` is not a valid Helios-proxied endpoint. Rewrote `_disks()` to use `GET /v2/disks/local?nodeId={id}` per node (matches Cohesity ELF tool `cohesityInv.ps1` approach). Updated field fallbacks: `ssdUsedPercentage` (ELF name), `capacityInBytes` (ELF name), `encryptionStatus` string (ELF name) |
 | 1.26 | 2026-04-09 | fix: Disk Health sheet empty — switched `_disks()` from private `/v1/disks/local?nodeId=X` (always 400 via Helios) to supported `GET /v2/disks`; private endpoint kept as fallback; added `isinstance` guard on `usageStats` in `_sheet_disk_health()` |
 | 1.25 | 2026-04-09 | chore: standardize on US English throughout — utilization, prioritized, normalized, color-coded, behavior, organization, authorized, summarizes, maximize, minimize, penalized, labeled; affects sheet titles, Word doc narrative, docstring, comments |

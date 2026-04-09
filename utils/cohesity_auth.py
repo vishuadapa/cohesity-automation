@@ -11,24 +11,35 @@ cohesity_auth.py
 ----------------
 Unified authentication helper for Cohesity scripts.
 
-Supports two modes:
-  1. Direct cluster  — username/password → Bearer token via POST /v2/users/sessions
-  2. Helios (SaaS)   — API key against helios.cohesity.com
+Supports three modes:
+  1. Direct cluster  — username/password (+ optional MFA code) → Bearer token
+                       via POST /v2/users/sessions
+  2. Helios API key  — API key against helios.cohesity.com
+  3. Helios user     — username/password (+ optional MFA/TOTP code)
+                       via POST /mcm/login → token used as apiKey header
 
 Credential storage:
   - Helios API key stored in OS keychain under service "cohesity_helios" / user "apikey"
-  - Cluster passwords stored under service "cohesity_cluster" / user "<ip>:<domain>:<user>"
-  - Both fall back to interactive prompt if keyring is unavailable or nothing is stored
-  - --clear-credentials removes stored creds
+  - Helios user passwords stored under "cohesity_helios_user" / user "<username>"
+  - Cluster passwords stored under "cohesity_cluster" / user "<ip>:<domain>:<user>"
+  - All fall back to interactive prompt if keyring is unavailable or nothing stored
+  - clear_stored_credentials() removes stored creds
 
 Typical import pattern:
   from utils.cohesity_auth import (
-      get_api_key, clear_stored_credentials,
-      get_auth_token, make_headers, make_helios_headers,
-      get_helios_clusters, HELIOS_HOST,
+      get_api_key, get_helios_password, helios_login,
+      get_cluster_password, get_auth_token,
+      make_headers, make_helios_headers,
+      get_helios_clusters, clear_stored_credentials, HELIOS_HOST,
   )
 
 Version history:
+  1.2 (2026-04-09) — feat: Helios username/password + MFA login via
+                     helios_login() / get_helios_password(). Added mfa_code
+                     parameter to get_auth_token() for direct-cluster MFA.
+                     Added cli_password parameter to get_cluster_password().
+                     Updated clear_stored_credentials() to accept helios_user
+                     for clearing Helios user passwords from keychain.
   1.1 (2026-04-07) — fix: parse response JSON once in get_auth_token;
                      validate access token is non-empty before returning.
   1.0 (2026-04-06) — feat: initial module. Extracted shared auth patterns from
@@ -36,7 +47,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import getpass
 import sys
@@ -46,10 +57,11 @@ import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-HELIOS_HOST     = "helios.cohesity.com"
-_KR_SVC_HELIOS  = "cohesity_helios"
-_KR_USER_HELIOS = "apikey"
-_KR_SVC_CLUSTER = "cohesity_cluster"
+HELIOS_HOST       = "helios.cohesity.com"
+_KR_SVC_HELIOS    = "cohesity_helios"
+_KR_USER_HELIOS   = "apikey"
+_KR_SVC_HELIOS_US = "cohesity_helios_user"   # Helios username/password
+_KR_SVC_CLUSTER   = "cohesity_cluster"
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +121,15 @@ def get_api_key(cli_key: str = None) -> str:
 # Direct cluster password
 # ---------------------------------------------------------------------------
 
-def get_cluster_password(cluster: str, username: str, domain: str) -> str:
+def get_cluster_password(cluster: str, username: str, domain: str,
+                          cli_password: str = None) -> str:
     """
-    Return the password for direct cluster auth. Prompts if not in keychain,
-    then saves it for future runs.
+    Return the password for direct cluster auth.
+    cli_password is used as-is (not stored). Otherwise checks keychain,
+    then prompts interactively and saves the result.
     """
+    if cli_password:
+        return cli_password
     kr_user = f"{cluster}:{domain}:{username}"
     if _keyring_available():
         import keyring
@@ -140,17 +156,27 @@ def get_cluster_password(cluster: str, username: str, domain: str) -> str:
 # ---------------------------------------------------------------------------
 
 def clear_stored_credentials(cluster: str = None, username: str = "admin",
-                              domain: str = "LOCAL"):
+                              domain: str = "LOCAL", helios_user: str = None):
     """
     Remove stored credentials from the OS keychain.
-    Without --cluster: clears the Helios API key.
-    With --cluster:    clears the direct-cluster password.
+
+    Behavior (evaluated in order, first match wins):
+      helios_user set  → clear Helios username/password for that user
+      cluster set      → clear direct-cluster password for cluster:domain:username
+      neither set      → clear the Helios API key
     """
     if not _keyring_available():
         print("ERROR: 'keyring' package not installed. Nothing to clear.")
         sys.exit(1)
     import keyring
-    if cluster:
+    if helios_user:
+        kr_user = helios_user.lower()
+        if keyring.get_password(_KR_SVC_HELIOS_US, kr_user):
+            keyring.delete_password(_KR_SVC_HELIOS_US, kr_user)
+            print(f"[*] Stored Helios password for '{helios_user}' removed from keychain.")
+        else:
+            print(f"[*] No stored Helios password found for '{helios_user}'.")
+    elif cluster:
         kr_user = f"{cluster}:{domain}:{username}"
         if keyring.get_password(_KR_SVC_CLUSTER, kr_user):
             keyring.delete_password(_KR_SVC_CLUSTER, kr_user)
@@ -166,17 +192,90 @@ def clear_stored_credentials(cluster: str = None, username: str = "admin",
 
 
 # ---------------------------------------------------------------------------
+# Helios username/password auth
+# ---------------------------------------------------------------------------
+
+def get_helios_password(username: str, cli_password: str = None) -> str:
+    """
+    Return the Helios password for username/password login.
+    cli_password is used as-is (not stored). Otherwise checks keychain under
+    service "cohesity_helios_user", then prompts and saves.
+    """
+    if cli_password:
+        return cli_password
+    kr_user = username.lower()
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KR_SVC_HELIOS_US, kr_user)
+        if stored:
+            print(f"[*] Using stored Helios password for '{username}'.")
+            return stored
+    pwd = getpass.getpass(f"    Helios password for '{username}': ").strip()
+    if not pwd:
+        print("ERROR: Password cannot be empty.")
+        sys.exit(1)
+    if _keyring_available():
+        import keyring
+        keyring.set_password(_KR_SVC_HELIOS_US, kr_user, pwd)
+        print(f"[*] Helios password saved to keychain for '{username}'.")
+    return pwd
+
+
+def helios_login(username: str, password: str, mfa_code: str = None) -> str:
+    """
+    Login to Helios with username/password and optional MFA/TOTP code.
+    Returns a session token that can be used in the apiKey request header,
+    identical in usage to a Helios API key.
+
+    Endpoint: POST https://helios.cohesity.com/mcm/login
+    MFA: include otpCode + otpType="Totp" for TOTP-based MFA.
+    """
+    url     = f"https://{HELIOS_HOST}/mcm/login"
+    payload = {"username": username, "password": password}
+    if mfa_code:
+        payload["otpCode"] = mfa_code
+        payload["otpType"] = "Totp"
+    hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        r = requests.post(url, json=payload, headers=hdrs, verify=False, timeout=30)
+        r.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        print("ERROR: Cannot connect to Helios. Check your network/VPN.")
+        sys.exit(1)
+    except requests.exceptions.HTTPError:
+        body = r.text[:400]
+        if r.status_code == 401 and "otp" in body.lower():
+            print("ERROR: Helios requires an MFA code. Re-run with --mfa-code <code>.")
+        else:
+            print(f"ERROR: Helios login failed ({r.status_code}). Check credentials.\n  {body}")
+        sys.exit(1)
+    data  = r.json()
+    token = (data.get("token") or data.get("accessToken")
+             or data.get("sessionToken") or "")
+    if not token:
+        print(f"ERROR: No token in Helios login response: {r.text[:200]}")
+        sys.exit(1)
+    print(f"[+] Logged in to Helios as '{username}'")
+    return token
+
+
+# ---------------------------------------------------------------------------
 # Direct cluster auth
 # ---------------------------------------------------------------------------
 
-def get_auth_token(cluster: str, username: str, password: str, domain: str) -> str:
+def get_auth_token(cluster: str, username: str, password: str, domain: str,
+                   mfa_code: str = None) -> str:
     """
     Authenticate to a Cohesity cluster and return a Bearer token.
     Endpoint: POST /v2/users/sessions
     domain: 'LOCAL' for local accounts, or AD domain name (e.g. 'CORP').
+    mfa_code: optional TOTP code for MFA-enabled accounts.
     """
     url     = f"https://{cluster}/v2/users/sessions"
     payload = {"username": username, "password": password, "domain": domain}
+    if mfa_code:
+        payload["otpCode"] = mfa_code
+        payload["otpType"] = "Totp"
     hdrs    = {"Content-Type": "application/json", "Accept": "application/json"}
     try:
         r = requests.post(url, json=payload, headers=hdrs, verify=False, timeout=30)
@@ -185,7 +284,11 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str) -> s
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
         sys.exit(1)
     except requests.exceptions.HTTPError as e:
-        print(f"ERROR: Authentication failed: {e}\n       Response: {r.text}")
+        body = r.text[:400]
+        if r.status_code == 401 and "otp" in body.lower():
+            print("ERROR: Cluster requires an MFA code. Re-run with --mfa-code <code>.")
+            sys.exit(1)
+        print(f"ERROR: Authentication failed: {e}\n       Response: {body}")
         sys.exit(1)
     data         = r.json()
     access_token = data.get("accessToken", "")

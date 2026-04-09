@@ -7,11 +7,12 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.26
+health_check_report.py  v1.28
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
-engagements.  Gathers live data from Cohesity Helios and produces:
+engagements.  Gathers live data from Cohesity Helios (or directly from a single
+cluster) and produces:
 
   Excel sheets
   ────────────
@@ -43,12 +44,25 @@ engagements.  Gathers live data from Cohesity Helios and produces:
 
 Usage
 ─────
+  # Helios — API key (default)
   python health_check_report.py --apikey <key> [options]
+
+  # Helios — username/password (+ optional MFA)
+  python health_check_report.py --username admin@example.com [--mfa-code 123456]
+
+  # Direct cluster — username/password (+ optional MFA)
+  python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
 
 Options
 ───────
-  --apikey KEY        Helios API key (or set HELIOS_API_KEY env var)
-  --cluster NAME      Limit to a single cluster (partial name match)
+  --apikey KEY        Helios API key (one-time; stored in keychain if omitted)
+  --username USER     Helios login email or cluster username for user+pass auth
+  --password PASS     Password (prompted securely if omitted; saved to keychain)
+  --domain DOMAIN     Auth domain for cluster login — LOCAL or AD name (default: LOCAL)
+  --mfa-code CODE     TOTP/OTP code for MFA-enabled accounts (Helios or cluster)
+  --cluster-host HOST Bypass Helios; connect directly to this cluster hostname/IP
+  --cluster NAME      (Helios mode) Limit to one cluster by partial name match
+  --clear-credentials Remove stored credentials from keychain and exit
   --days N            Lookback window for alerts/runs (default 30)
   --customer NAME     Customer name printed on report cover
   --output PATH       Base path for output files (no extension)
@@ -63,6 +77,22 @@ Requirements
 
 Version history
 ───────────────
+  1.28 (2026-04-09) — feat: additional authentication modes.
+                     (1) Helios username/password + MFA: --username / --password /
+                         --mfa-code flags; helios_login() posts to /mcm/login
+                         and returns a token used identically to an API key.
+                         Passwords saved/loaded from OS keychain.
+                     (2) Direct cluster mode: --cluster-host bypasses Helios
+                         entirely; uses username/password → Bearer token via
+                         POST /v2/users/sessions (+ optional --mfa-code).
+                         Cluster name is read from the cluster's own
+                         /public/cluster endpoint. All data collection and
+                         report sheets work unchanged in direct mode.
+                     Added --clear-credentials flag (removes stored key or
+                     password from keychain based on context). Updated
+                     _get() to read base URL from session.base_url so the
+                     same helper works for both Helios and direct cluster.
+                     cohesity_auth.py bumped to v1.2.
   1.27 (2026-04-09) — fix: Disk Health sheet still empty after v1.26 — GET
                      /v2/disks is not a valid Helios-proxied endpoint.
                      Rewrote _disks() to use GET /v2/disks/local?nodeId={id}
@@ -250,7 +280,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.27"
+__version__ = "1.28"
 
 import argparse
 import datetime
@@ -266,6 +296,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
 from cohesity_auth import (
     get_api_key, get_helios_clusters, make_helios_headers, HELIOS_HOST,
+    get_helios_password, helios_login,
+    get_cluster_password, get_auth_token, make_headers,
+    clear_stored_credentials,
 )
 from formatters import (
     bytes_to_gb, bytes_to_tb, usecs_to_datetime, auto_fit_columns,
@@ -450,12 +483,16 @@ def _days_ago_usecs(n):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get(session, headers, path, params=None, debug=False, silent=False):
-    """GET from Helios (cluster already routed via accessClusterId in headers).
+    """GET from Helios or a direct cluster.
+
+    The base URL is read from session.base_url (set in main() based on auth
+    mode). Defaults to Helios if not set.
 
     silent=True suppresses the debug body print on non-200 responses — use for
     best-effort endpoints where 400/403/404 is expected on some clusters.
     """
-    url = f"https://{HELIOS_HOST}{path}"
+    base = getattr(session, "base_url", f"https://{HELIOS_HOST}")
+    url  = f"{base}{path}"
     try:
         r = session.get(url, headers=headers, params=params,
                         verify=False, timeout=60)
@@ -702,11 +739,21 @@ def _tenants(session, h, debug):
 
 
 def collect_cluster(session, api_key, cluster, args):
-    """Collect all health-check data for one cluster. Returns a dict."""
+    """Collect all health-check data for one cluster. Returns a dict.
+
+    cluster dict shapes:
+      Helios mode: {"name": "...", "clusterId": 123}
+      Direct mode: {"name": "...", "clusterId": None, "mode": "direct",
+                    "host": "10.1.2.3", "token": "Bearer ..."}
+    """
     name = cluster.get("name", "Unknown")
     cid  = cluster.get("clusterId")
-    h    = make_helios_headers(api_key, cluster_id=cid)
     dbg  = args.debug
+
+    if cluster.get("mode") == "direct":
+        h = make_headers(cluster["token"])
+    else:
+        h = make_helios_headers(api_key, cluster_id=cid)
 
     start_usecs = _days_ago_usecs(args.days)
     end_usecs   = _now_usecs()
@@ -3487,24 +3534,50 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--apikey",    help="Helios API key")
-    parser.add_argument("--cluster",   help="Limit to one cluster (partial name match)")
-    parser.add_argument("--days",      type=int, default=30,
+    # ── Helios API key auth ───────────────────────────────────────────────────
+    parser.add_argument("--apikey",           help="Helios API key (stored in keychain if omitted)")
+    # ── Helios or cluster username/password auth ──────────────────────────────
+    parser.add_argument("--username",         help="Helios login email or cluster username")
+    parser.add_argument("--password",         help="Password (prompted if omitted; saved to keychain)")
+    parser.add_argument("--domain",           default="LOCAL",
+                        help="Auth domain for cluster login: LOCAL or AD name (default: LOCAL)")
+    parser.add_argument("--mfa-code",         dest="mfa_code",
+                        help="TOTP/OTP code for MFA-enabled accounts")
+    # ── Direct cluster mode ───────────────────────────────────────────────────
+    parser.add_argument("--cluster-host",     dest="cluster_host",
+                        help="Bypass Helios — connect directly to this cluster hostname/IP")
+    # ── Credential management ─────────────────────────────────────────────────
+    parser.add_argument("--clear-credentials", action="store_true",
+                        help="Remove stored credentials from keychain and exit")
+    # ── Helios cluster filter ─────────────────────────────────────────────────
+    parser.add_argument("--cluster",          help="(Helios) Limit to one cluster (partial name match)")
+    # ── Report options ────────────────────────────────────────────────────────
+    parser.add_argument("--days",             type=int, default=30,
                         help="Lookback window in days (default 30)")
-    parser.add_argument("--customer",  default="",
+    parser.add_argument("--customer",         default="",
                         help="Customer name for report cover page")
-    parser.add_argument("--output",    default="cohesity_health_check",
+    parser.add_argument("--output",           default="cohesity_health_check",
                         help="Output base path without extension "
                              "(default: cohesity_health_check)")
-    parser.add_argument("--quick",     action="store_true",
+    parser.add_argument("--quick",            action="store_true",
                         help="Skip per-group run history; use last-run only (faster)")
-    parser.add_argument("--excel-only",action="store_true",
+    parser.add_argument("--excel-only",       action="store_true",
                         help="Generate Excel only, skip Word document")
-    parser.add_argument("--word-only", action="store_true",
+    parser.add_argument("--word-only",        action="store_true",
                         help="Generate Word only, skip Excel")
-    parser.add_argument("--debug",     action="store_true",
+    parser.add_argument("--debug",            action="store_true",
                         help="Print HTTP status for each API call")
     args = parser.parse_args()
+
+    # ── Clear stored credentials and exit ─────────────────────────────────────
+    if args.clear_credentials:
+        clear_stored_credentials(
+            cluster=args.cluster_host,
+            username=args.username or "admin",
+            domain=args.domain,
+            helios_user=args.username if not args.cluster_host else None,
+        )
+        sys.exit(0)
 
     if not EXCEL_OK and not args.word_only:
         print("ERROR: openpyxl is required.  pip install openpyxl")
@@ -3524,28 +3597,71 @@ def main():
         parts.append(ts)
         args.output = "_".join(parts)
 
-    print(f"\nCohesity Health Check Report  v{__version__}")
-    print(f"  Customer : {args.customer or '(not specified)'}")
-    print(f"  Lookback : {args.days} days")
-    print(f"  Mode     : {'Quick (last-run only)' if args.quick else 'Full (run history)'}")
-    print()
+    # ── Authenticate and discover clusters ────────────────────────────────────
+    session = requests.Session()
+    api_key = None
 
-    api_key  = get_api_key(args.apikey)
-    clusters = get_helios_clusters(api_key)
-    if not clusters:
-        print("ERROR: No clusters returned from Helios.")
-        sys.exit(1)
+    if args.cluster_host:
+        # ── Direct cluster mode ───────────────────────────────────────────────
+        if not args.username:
+            print("ERROR: --username is required with --cluster-host.")
+            sys.exit(1)
+        pwd   = get_cluster_password(args.cluster_host, args.username, args.domain,
+                                     cli_password=args.password)
+        token = get_auth_token(args.cluster_host, args.username, pwd, args.domain,
+                               mfa_code=args.mfa_code)
+        session.base_url = f"https://{args.cluster_host}"
+        # Fetch cluster name from the cluster itself
+        try:
+            import urllib3 as _u3; _u3.disable_warnings()
+            _r = session.get(
+                f"https://{args.cluster_host}/irisservices/api/v1/public/cluster",
+                headers=make_headers(token), verify=False, timeout=30)
+            _r.raise_for_status()
+            cname = _r.json().get("name", args.cluster_host)
+        except Exception:
+            cname = args.cluster_host
+        clusters = [{"name": cname, "clusterId": None,
+                     "mode": "direct", "host": args.cluster_host, "token": token}]
+        auth_desc = f"Direct ({args.cluster_host})"
 
-    if args.cluster:
+    elif args.username:
+        # ── Helios username/password auth ─────────────────────────────────────
+        pwd     = get_helios_password(args.username, cli_password=args.password)
+        api_key = helios_login(args.username, pwd, mfa_code=args.mfa_code)
+        session.base_url = f"https://{HELIOS_HOST}"
+        clusters = get_helios_clusters(api_key)
+        if not clusters:
+            print("ERROR: No clusters returned from Helios.")
+            sys.exit(1)
+        auth_desc = f"Helios user ({args.username})"
+
+    else:
+        # ── Helios API key (default) ──────────────────────────────────────────
+        api_key = get_api_key(args.apikey)
+        session.base_url = f"https://{HELIOS_HOST}"
+        clusters = get_helios_clusters(api_key)
+        if not clusters:
+            print("ERROR: No clusters returned from Helios.")
+            sys.exit(1)
+        auth_desc = "Helios API key"
+
+    # Apply --cluster name filter (Helios modes only)
+    if args.cluster and not args.cluster_host:
         clusters = [c for c in clusters
                     if args.cluster.lower() in c.get("name", "").lower()]
         if not clusters:
             print(f"ERROR: No cluster matching '{args.cluster}'")
             sys.exit(1)
 
-    print(f"Clusters : {', '.join(c.get('name','?') for c in clusters)}\n")
+    print(f"\nCohesity Health Check Report  v{__version__}")
+    print(f"  Auth     : {auth_desc}")
+    print(f"  Customer : {args.customer or '(not specified)'}")
+    print(f"  Lookback : {args.days} days")
+    print(f"  Mode     : {'Quick (last-run only)' if args.quick else 'Full (run history)'}")
+    print(f"  Clusters : {', '.join(c.get('name', '?') for c in clusters)}")
+    print()
 
-    session  = requests.Session()
     all_data = []
     for cluster in clusters:
         try:
