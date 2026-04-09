@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-09] fix(health_check): remove Helios user/pass auth — Helios requires OIDC, not credentials (v1.29)
+
+### Fixed — `health_check/health_check_report.py` and `utils/cohesity_auth.py`
+- Helios `/irisservices/api/v1/mcm/login` returns 401 `"No open ID token found in header"` — the endpoint expects an OIDC/OAuth2 token in the `Authorization` header, not username/password in the POST body. Helios web login is OIDC-based and cannot be driven from a script.
+- Removed `helios_login()` and `get_helios_password()` from `cohesity_auth.py`. Removed the Helios username/password branch from `main()`. Using `--username` without `--cluster-host` now prints a clear error explaining how to generate a Helios API key.
+- `--username/--password/--domain/--mfa-code` remain valid and supported for `--cluster-host` (direct cluster) mode, where username/password auth works via `POST /v2/users/sessions`.
+- `cohesity_auth.py` bumped to v1.4.
+
+---
+
 ## [2026-04-09] feat(health_check): additional auth modes — Helios user+pass+MFA and direct cluster (v1.28)
 
 ### Added — `health_check/health_check_report.py` and `utils/cohesity_auth.py`

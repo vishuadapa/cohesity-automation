@@ -11,40 +11,42 @@ cohesity_auth.py
 ----------------
 Unified authentication helper for Cohesity scripts.
 
-Supports three modes:
-  1. Direct cluster  — username/password (+ optional MFA code) → Bearer token
+Supports two modes:
+  1. Helios (SaaS)   — API key against helios.cohesity.com
+                       Helios does not expose a scriptable username/password
+                       endpoint; its web login uses an OIDC/OAuth2 flow.
+                       Generate an API key at:
+                         helios.cohesity.com → Settings → Access Management → API Keys
+  2. Direct cluster  — username/password (+ optional MFA code) → Bearer token
                        via POST /v2/users/sessions
-  2. Helios API key  — API key against helios.cohesity.com
-  3. Helios user     — username/password (+ optional MFA/TOTP code)
-                       via POST /mcm/login → token used as apiKey header
 
 Credential storage:
   - Helios API key stored in OS keychain under service "cohesity_helios" / user "apikey"
-  - Helios user passwords stored under "cohesity_helios_user" / user "<username>"
   - Cluster passwords stored under "cohesity_cluster" / user "<ip>:<domain>:<user>"
-  - All fall back to interactive prompt if keyring is unavailable or nothing stored
+  - Both fall back to interactive prompt if keyring is unavailable or nothing stored
   - clear_stored_credentials() removes stored creds
 
 Typical import pattern:
   from utils.cohesity_auth import (
-      get_api_key, get_helios_password, helios_login,
-      get_cluster_password, get_auth_token,
+      get_api_key, get_cluster_password, get_auth_token,
       make_headers, make_helios_headers,
       get_helios_clusters, clear_stored_credentials, HELIOS_HOST,
   )
 
 Version history:
-  1.3 (2026-04-09) — fix: helios_login() tried /mcm/login which returns 404.
-                     Rewritten to try /irisservices/api/v1/mcm/login first
-                     (emailId payload field), then /mcm/login (username field)
-                     as fallback. Also extracts token from session cookie for
-                     Helios versions that return cookie-based sessions.
-  1.2 (2026-04-09) — feat: Helios username/password + MFA login via
-                     helios_login() / get_helios_password(). Added mfa_code
-                     parameter to get_auth_token() for direct-cluster MFA.
-                     Added cli_password parameter to get_cluster_password().
-                     Updated clear_stored_credentials() to accept helios_user
-                     for clearing Helios user passwords from keychain.
+  1.4 (2026-04-09) — fix: removed helios_login() / get_helios_password() —
+                     Helios login endpoints require OIDC/OAuth2 (not plain
+                     username/password). The /irisservices/api/v1/mcm/login
+                     endpoint returned 401 "No open ID token found in header".
+                     Helios access requires an API key; username/password auth
+                     is only supported for direct cluster (--cluster-host).
+                     Removed helios_user param from clear_stored_credentials().
+  1.3 (2026-04-09) — fix: helios_login() /mcm/login returns 404; added
+                     fallback to /irisservices/api/v1/mcm/login (removed in
+                     v1.4 as the endpoint requires OIDC, not credentials).
+  1.2 (2026-04-09) — feat: Helios username/password + MFA login attempt;
+                     mfa_code param for get_auth_token(); cli_password param
+                     for get_cluster_password().
   1.1 (2026-04-07) — fix: parse response JSON once in get_auth_token;
                      validate access token is non-empty before returning.
   1.0 (2026-04-06) — feat: initial module. Extracted shared auth patterns from
@@ -52,7 +54,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.3"
+__version__ = "1.4"
 
 import getpass
 import sys
@@ -62,11 +64,10 @@ import requests
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-HELIOS_HOST       = "helios.cohesity.com"
-_KR_SVC_HELIOS    = "cohesity_helios"
-_KR_USER_HELIOS   = "apikey"
-_KR_SVC_HELIOS_US = "cohesity_helios_user"   # Helios username/password
-_KR_SVC_CLUSTER   = "cohesity_cluster"
+HELIOS_HOST     = "helios.cohesity.com"
+_KR_SVC_HELIOS  = "cohesity_helios"
+_KR_USER_HELIOS = "apikey"
+_KR_SVC_CLUSTER = "cohesity_cluster"
 
 
 # ---------------------------------------------------------------------------
@@ -161,27 +162,18 @@ def get_cluster_password(cluster: str, username: str, domain: str,
 # ---------------------------------------------------------------------------
 
 def clear_stored_credentials(cluster: str = None, username: str = "admin",
-                              domain: str = "LOCAL", helios_user: str = None):
+                              domain: str = "LOCAL"):
     """
     Remove stored credentials from the OS keychain.
 
-    Behavior (evaluated in order, first match wins):
-      helios_user set  → clear Helios username/password for that user
-      cluster set      → clear direct-cluster password for cluster:domain:username
-      neither set      → clear the Helios API key
+    Without --cluster-host: clears the Helios API key.
+    With --cluster-host:    clears the stored direct-cluster password.
     """
     if not _keyring_available():
         print("ERROR: 'keyring' package not installed. Nothing to clear.")
         sys.exit(1)
     import keyring
-    if helios_user:
-        kr_user = helios_user.lower()
-        if keyring.get_password(_KR_SVC_HELIOS_US, kr_user):
-            keyring.delete_password(_KR_SVC_HELIOS_US, kr_user)
-            print(f"[*] Stored Helios password for '{helios_user}' removed from keychain.")
-        else:
-            print(f"[*] No stored Helios password found for '{helios_user}'.")
-    elif cluster:
+    if cluster:
         kr_user = f"{cluster}:{domain}:{username}"
         if keyring.get_password(_KR_SVC_CLUSTER, kr_user):
             keyring.delete_password(_KR_SVC_CLUSTER, kr_user)
@@ -194,117 +186,6 @@ def clear_stored_credentials(cluster: str = None, username: str = "admin",
             print("[*] Stored Helios API key removed from system keychain.")
         else:
             print("[*] No stored Helios API key found — nothing to clear.")
-
-
-# ---------------------------------------------------------------------------
-# Helios username/password auth
-# ---------------------------------------------------------------------------
-
-def get_helios_password(username: str, cli_password: str = None) -> str:
-    """
-    Return the Helios password for username/password login.
-    cli_password is used as-is (not stored). Otherwise checks keychain under
-    service "cohesity_helios_user", then prompts and saves.
-    """
-    if cli_password:
-        return cli_password
-    kr_user = username.lower()
-    if _keyring_available():
-        import keyring
-        stored = keyring.get_password(_KR_SVC_HELIOS_US, kr_user)
-        if stored:
-            print(f"[*] Using stored Helios password for '{username}'.")
-            return stored
-    pwd = getpass.getpass(f"    Helios password for '{username}': ").strip()
-    if not pwd:
-        print("ERROR: Password cannot be empty.")
-        sys.exit(1)
-    if _keyring_available():
-        import keyring
-        keyring.set_password(_KR_SVC_HELIOS_US, kr_user, pwd)
-        print(f"[*] Helios password saved to keychain for '{username}'.")
-    return pwd
-
-
-def helios_login(username: str, password: str, mfa_code: str = None) -> str:
-    """
-    Login to Helios with username/password and optional MFA/TOTP code.
-    Returns a token that is used in the apiKey request header (same as
-    a regular Helios API key).
-
-    Tries these endpoints in order until one succeeds (not 404):
-      1. POST /irisservices/api/v1/mcm/login  — primary path (emailId field)
-      2. POST /mcm/login                       — alternate path (username field)
-
-    MFA: otpCode + otpType="Totp" added to payload when mfa_code is given.
-    Token extracted from response body (token / accessToken / sessionToken)
-    or from the session cookie if none of those fields are present.
-    """
-    hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
-
-    # Endpoint candidates: (path, username_field_name)
-    endpoints = [
-        (f"https://{HELIOS_HOST}/irisservices/api/v1/mcm/login", "emailId"),
-        (f"https://{HELIOS_HOST}/mcm/login",                     "username"),
-    ]
-
-    last_status = None
-    last_body   = ""
-    for url, user_field in endpoints:
-        payload = {user_field: username, "password": password}
-        if mfa_code:
-            payload["otpCode"] = mfa_code
-            payload["otpType"] = "Totp"
-        try:
-            r = requests.post(url, json=payload, headers=hdrs,
-                              verify=False, timeout=30)
-        except requests.exceptions.ConnectionError:
-            print("ERROR: Cannot connect to Helios. Check your network/VPN.")
-            sys.exit(1)
-
-        if r.status_code == 404:
-            continue           # try next endpoint
-
-        if r.status_code in (401, 403):
-            body = r.text[:400]
-            if "otp" in body.lower():
-                print("ERROR: Helios requires an MFA code. Re-run with --mfa-code <code>.")
-                sys.exit(1)
-            print(f"ERROR: Helios login failed ({r.status_code}). Check credentials.\n  {body}")
-            sys.exit(1)
-
-        if not r.ok:
-            last_status = r.status_code
-            last_body   = r.text[:400]
-            continue           # try next endpoint
-
-        # ── Successful response — extract token ───────────────────────────
-        try:
-            data = r.json()
-        except ValueError:
-            data = {}
-
-        token = (data.get("token") or data.get("accessToken")
-                 or data.get("sessionToken") or "")
-
-        # Some Helios versions return the token as a session cookie
-        if not token and r.cookies:
-            for name in ("cohesity-session", "sessionToken", "token"):
-                if name in r.cookies:
-                    token = r.cookies[name]
-                    break
-
-        if not token:
-            print(f"ERROR: No token in Helios login response: {r.text[:200]}")
-            sys.exit(1)
-
-        print(f"[+] Logged in to Helios as '{username}'")
-        return token
-
-    # All endpoints failed
-    print(f"ERROR: Helios login failed — no valid endpoint found "
-          f"(last status {last_status}).\n  {last_body}")
-    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

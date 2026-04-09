@@ -44,23 +44,25 @@ cluster) and produces:
 
 Usage
 ─────
-  # Helios — API key (default)
+  # Helios — API key (key saved to OS keychain after first prompt)
   python health_check_report.py --apikey <key> [options]
 
-  # Helios — username/password (+ optional MFA)
-  python health_check_report.py --username admin@example.com [--mfa-code 123456]
-
-  # Direct cluster — username/password (+ optional MFA)
+  # Direct cluster — username/password + optional MFA (bypasses Helios)
   python health_check_report.py --cluster-host 10.1.2.3 --username admin [--domain LOCAL]
+
+  NOTE: Helios does NOT expose a scriptable username/password login endpoint.
+  Its web login uses OIDC/OAuth2 which cannot be driven from a script.
+  Generate a Helios API key at:
+    helios.cohesity.com → Settings → Access Management → API Keys
 
 Options
 ───────
-  --apikey KEY        Helios API key (one-time; stored in keychain if omitted)
-  --username USER     Helios login email or cluster username for user+pass auth
-  --password PASS     Password (prompted securely if omitted; saved to keychain)
-  --domain DOMAIN     Auth domain for cluster login — LOCAL or AD name (default: LOCAL)
-  --mfa-code CODE     TOTP/OTP code for MFA-enabled accounts (Helios or cluster)
+  --apikey KEY        Helios API key (stored in keychain if omitted)
   --cluster-host HOST Bypass Helios; connect directly to this cluster hostname/IP
+  --username USER     Cluster username (required with --cluster-host)
+  --password PASS     Password (prompted securely if omitted; saved to keychain)
+  --domain DOMAIN     Auth domain — LOCAL or AD name (default: LOCAL)
+  --mfa-code CODE     TOTP/OTP code for MFA-enabled cluster accounts
   --cluster NAME      (Helios mode) Limit to one cluster by partial name match
   --clear-credentials Remove stored credentials from keychain and exit
   --days N            Lookback window for alerts/runs (default 30)
@@ -77,22 +79,20 @@ Requirements
 
 Version history
 ───────────────
-  1.28 (2026-04-09) — feat: additional authentication modes.
-                     (1) Helios username/password + MFA: --username / --password /
-                         --mfa-code flags; helios_login() posts to /mcm/login
-                         and returns a token used identically to an API key.
-                         Passwords saved/loaded from OS keychain.
-                     (2) Direct cluster mode: --cluster-host bypasses Helios
-                         entirely; uses username/password → Bearer token via
-                         POST /v2/users/sessions (+ optional --mfa-code).
-                         Cluster name is read from the cluster's own
-                         /public/cluster endpoint. All data collection and
-                         report sheets work unchanged in direct mode.
-                     Added --clear-credentials flag (removes stored key or
-                     password from keychain based on context). Updated
-                     _get() to read base URL from session.base_url so the
-                     same helper works for both Helios and direct cluster.
-                     cohesity_auth.py bumped to v1.2.
+  1.29 (2026-04-09) — fix: removed Helios username/password auth mode —
+                     Helios /irisservices/api/v1/mcm/login requires an OIDC
+                     token in the Authorization header, not credentials in
+                     the POST body. Helios access requires an API key
+                     (generate at helios.cohesity.com → Settings → Access
+                     Management → API Keys). --username/--password/--mfa-code
+                     are now only supported with --cluster-host (direct
+                     cluster mode). cohesity_auth.py bumped to v1.4.
+  1.28 (2026-04-09) — feat: direct cluster mode (--cluster-host) bypasses
+                     Helios; authenticates via POST /v2/users/sessions →
+                     Bearer token. Cluster name auto-detected from cluster's
+                     own /public/cluster endpoint. Added --clear-credentials
+                     flag and --mfa-code for cluster MFA. _get() now reads
+                     base URL from session.base_url. cohesity_auth.py v1.2.
   1.27 (2026-04-09) — fix: Disk Health sheet still empty after v1.26 — GET
                      /v2/disks is not a valid Helios-proxied endpoint.
                      Rewrote _disks() to use GET /v2/disks/local?nodeId={id}
@@ -280,7 +280,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.28"
+__version__ = "1.29"
 
 import argparse
 import datetime
@@ -296,7 +296,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
 from cohesity_auth import (
     get_api_key, get_helios_clusters, make_helios_headers, HELIOS_HOST,
-    get_helios_password, helios_login,
     get_cluster_password, get_auth_token, make_headers,
     clear_stored_credentials,
 )
@@ -3536,8 +3535,8 @@ def main():
     )
     # ── Helios API key auth ───────────────────────────────────────────────────
     parser.add_argument("--apikey",           help="Helios API key (stored in keychain if omitted)")
-    # ── Helios or cluster username/password auth ──────────────────────────────
-    parser.add_argument("--username",         help="Helios login email or cluster username")
+    # ── Direct cluster username/password auth (requires --cluster-host) ───────
+    parser.add_argument("--username",         help="Cluster username (use with --cluster-host)")
     parser.add_argument("--password",         help="Password (prompted if omitted; saved to keychain)")
     parser.add_argument("--domain",           default="LOCAL",
                         help="Auth domain for cluster login: LOCAL or AD name (default: LOCAL)")
@@ -3575,7 +3574,6 @@ def main():
             cluster=args.cluster_host,
             username=args.username or "admin",
             domain=args.domain,
-            helios_user=args.username if not args.cluster_host else None,
         )
         sys.exit(0)
 
@@ -3625,16 +3623,24 @@ def main():
                      "mode": "direct", "host": args.cluster_host, "token": token}]
         auth_desc = f"Direct ({args.cluster_host})"
 
-    elif args.username:
-        # ── Helios username/password auth ─────────────────────────────────────
-        pwd     = get_helios_password(args.username, cli_password=args.password)
-        api_key = helios_login(args.username, pwd, mfa_code=args.mfa_code)
-        session.base_url = f"https://{HELIOS_HOST}"
-        clusters = get_helios_clusters(api_key)
-        if not clusters:
-            print("ERROR: No clusters returned from Helios.")
-            sys.exit(1)
-        auth_desc = f"Helios user ({args.username})"
+    elif args.username and not args.cluster_host:
+        # --username without --cluster-host makes no sense: Helios does not
+        # expose a scriptable username/password login endpoint (it uses
+        # OIDC/OAuth2 web-based auth). Direct the user to create an API key.
+        print(
+            "ERROR: --username is only supported with --cluster-host.\n"
+            "\n"
+            "  Helios does not provide a scriptable username/password login\n"
+            "  endpoint. Its web login uses OIDC/OAuth2 and cannot be driven\n"
+            "  from a script.\n"
+            "\n"
+            "  To use Helios, generate an API key and pass it with --apikey:\n"
+            "    helios.cohesity.com → Settings → Access Management → API Keys\n"
+            "\n"
+            "  To run against a single cluster directly (no Helios required):\n"
+            "    --cluster-host <ip/hostname> --username <user>"
+        )
+        sys.exit(1)
 
     else:
         # ── Helios API key (default) ──────────────────────────────────────────
