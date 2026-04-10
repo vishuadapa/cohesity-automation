@@ -80,6 +80,17 @@ Requirements
 
 Version history
 ───────────────
+  1.37 (2026-04-10) — fix: Quorum detection revised — Quorum is a Helios control-
+                     plane feature; any enabled quorum group now marks ALL Helios-
+                     connected clusters as quorum-enabled (per-cluster ID matching
+                     was unreliable when clusterIdentifiers is unpopulated).
+                     fix: DataLock label "None" → "No"; removed broken policy-only
+                     fallback from _cluster_datalock() — when no group data exists
+                     return "No" rather than claiming full/partial coverage.
+                     feat: Word doc Security Posture table expanded from 8→10
+                     columns: "Indelible (FK/DL)" split into "Indelible (FK)" and
+                     "DataLock (WORM)"; "Admins w/o MFA" column added with red
+                     cell highlight when count > 0. Appendix scoring text updated.
   1.36 (2026-04-10) — feat: Environment Topology diagram. New _topology_data()
                      helper extracts cluster/replication/archival/FortKnox graph
                      from all_data. _generate_topology_drawio() writes an editable
@@ -350,7 +361,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.36"
+__version__ = "1.37"
 
 import argparse
 import datetime
@@ -2241,23 +2252,17 @@ def _cluster_datalock(policies, groups=None):
     covered = covered_any
 
     if total == 0:
-        # No group data — fall back to policy-only detection
-        has_comp = any(v == "compliance" for v in policy_dl.values())
-        has_adm  = any(v == "administrative" for v in policy_dl.values())
-        if has_comp and not has_adm:
-            return ("full_compliance", "Compliance (all policies)", 0, 0)
-        if has_comp or has_adm:
-            return ("full_any", "Administrative / Mixed", 0, 0)
-        return ("none", "None", 0, 0)
+        # No active protection groups — cannot determine coverage.
+        return ("none", "No", 0, 0)
 
     if covered == 0:
-        return ("none", "None", 0, total)
+        return ("none", "No", 0, total)
     if covered == total and covered_comp == total:
         return ("full_compliance", "Full Compliance", covered, total)
     if covered == total:
-        return ("full_any", f"Full — {covered_comp}/{total} Compliance mode", covered, total)
-    # Partial
-    return ("partial", f"Partial — {covered}/{total} groups", covered, total)
+        return ("full_any", f"Full ({covered_comp}/{total} Compliance)", covered, total)
+    # Partial coverage
+    return ("partial", f"Partial ({covered}/{total} groups)", covered, total)
 
 
 def _sheet_policies(wb, all_data):
@@ -4486,33 +4491,49 @@ def write_word(all_data, args):
         "design; DataLock (WORM) makes individual snapshots indelible — permanently "
         "retained even against administrator deletion."
     )
-    t5 = doc.add_table(rows=1, cols=8)
+    t5 = doc.add_table(rows=1, cols=10)
     t5.style = "Table Grid"
     _tbl_header(t5, ["Cluster", "Cluster Enc", "SD Enc", "Vault",
-                      "Indelible (FK/DL)", "Replication", "Quorum", "Score /100"])
+                      "Indelible (FK)", "DataLock (WORM)",
+                      "Replication", "Quorum", "Admins w/o MFA", "Score /100"])
+    _admin_roles_w = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
     for cd in all_data:
         vaults   = cd["vaults"]
         policies = cd["policies"]
         cluster_enc_s, sd_enc_s = _sd_enc_status(cd)
         sd_enc_str_s = ("Yes" if sd_enc_s is True else
                         "No"  if sd_enc_s is False else "N/A")
-        has_vault = bool(vaults)
-        fk_st_s   = _fk_status(cd)
-        indelible = fk_st_s in ("active", "idle")
+        has_vault   = bool(vaults)
+        fk_st_s     = _fk_status(cd)
+        fk_label_s  = {"active": "Active", "idle": "Idle", "none": "No"}[fk_st_s]
         repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
+        dl_status_s, dl_label_s, _, _ = _cluster_datalock(policies, cd["groups"])
         if cd.get("mode") == "direct":
             quorum_str_s = "N/A"
         else:
             quorum_str_s = "Yes" if cd.get("quorum_enabled") else "No"
+        admins_no_mfa_w = sum(
+            1 for u in (cd.get("users") or [])
+            if isinstance(u, dict)
+            and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+            and bool(set(u.get("roles") or []) & _admin_roles_w)
+        )
         row = t5.add_row().cells
         yn  = lambda v: "Yes" if v else "No"
         for i, val in enumerate([cd["name"],
                                   yn(cluster_enc_s), sd_enc_str_s,
-                                  yn(has_vault), yn(indelible), yn(repl),
-                                  quorum_str_s,
+                                  yn(has_vault), fk_label_s, dl_label_s,
+                                  yn(repl), quorum_str_s,
+                                  admins_no_mfa_w,
                                   f"{cd['scores']['security']}/100"]):
             row[i].text = str(val)
+        # Highlight admin MFA cell red when non-zero
+        if admins_no_mfa_w > 0:
+            _cell_shade(row[8], "FF4C4C")
+            for run in row[8].paragraphs[0].runs:
+                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                run.font.bold = True
     doc.add_page_break()
 
     # ── 6. Agent Health & Source Coverage ────────────────────────────────────
@@ -4644,7 +4665,11 @@ def write_word(all_data, args):
         "Within the Security posture dimension, the 100-point security score is "
         "calculated across six areas: cluster encryption (15 pts), storage-domain "
         "encryption (15 pts), vault configured (15 pts), replication (15 pts), "
-        "FortKnox/indelible copy (20 pts), and DataLock/WORM (20 pts)."
+        "FortKnox/indelible copy (20 pts), and DataLock/WORM (20 pts). "
+        "A penalty of −10 pts is applied when any administrator account lacks MFA. "
+        "DataLock coverage is measured at the protection-group level — only groups "
+        "whose governing policy has DataLock (WORM) explicitly configured count; "
+        "FortKnox archival (indelible by design) scores separately in the FK dimension."
     )
     _h2("Thresholds")
     notes = [
@@ -4802,19 +4827,22 @@ def main():
             print("ERROR: No clusters returned from Helios.")
             sys.exit(1)
         auth_desc = "Helios API key"
-        # Fetch Helios-level quorum configuration and tag each cluster
-        _quorum_ids: set = set()
+        # Quorum is a Helios control-plane feature configured in Security Center →
+        # Security Posture → Quorum. When any enabled quorum group exists, the
+        # quorum requirement applies to all clusters managed by that Helios tenant.
+        # We therefore set quorum_enabled=True for every cluster when at least one
+        # enabled group is returned by the API (rather than matching per clusterId,
+        # which is unreliable when clusterIdentifiers is unpopulated).
+        _quorum_enabled = False
         try:
             for _qg in _helios_quorum_groups(session, api_key, args.debug):
                 if _qg.get("isEnabled"):
-                    for _ci in (_qg.get("clusterIdentifiers") or []):
-                        _cid = _ci.get("clusterId")
-                        if _cid is not None:
-                            _quorum_ids.add(int(_cid))
+                    _quorum_enabled = True
+                    break
         except Exception:
             pass
         for _c in clusters:
-            _c["quorum_enabled"] = _c.get("clusterId") in _quorum_ids
+            _c["quorum_enabled"] = _quorum_enabled
 
     # Apply --cluster name filter (Helios modes only)
     if args.cluster and not args.cluster_host:

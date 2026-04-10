@@ -7,6 +7,23 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): Quorum detection, DataLock "No" label, Word security table (v1.37)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **Quorum detection (revised)**: Quorum is a Helios control-plane feature configured in Security Center → Security Posture → Quorum, not a per-cluster API field. Previous fix tried to match per-cluster IDs via `clusterIdentifiers`, which is unreliable when the field is unpopulated. New logic: if ANY enabled quorum group is returned by `GET /v2/mcm/quorum/groups`, set `quorum_enabled=True` for all Helios-managed clusters. Direct-mode clusters continue to show N/A.
+
+- **DataLock label "None" → "No"**: `_cluster_datalock()` now returns `"No"` (not `"None"`) when no groups have DataLock coverage. The broken policy-only fallback (when `total == 0`) has been removed — without group data the function returns `("none", "No", 0, 0)` rather than incorrectly claiming full/partial coverage from unused policies. Partial label changed from `"Partial — X/Y groups"` to `"Partial (X/Y groups)"`; full-mixed from `"Full — X/Y Compliance mode"` to `"Full (X/Y Compliance)"`.
+
+### Added — `health_check/health_check_report.py`
+
+- **Word doc Security Posture table** (section 5) expanded from 8 → 10 columns:
+  - `"Indelible (FK/DL)"` split into `"Indelible (FK)"` (FortKnox active/idle/no) and `"DataLock (WORM)"` (strict WORM coverage: No / Partial / Full)
+  - `"Admins w/o MFA"` column added — shows count of admin accounts without MFA; cell highlighted **red** when count > 0
+- Appendix Scoring Model text updated to document the MFA penalty and clarify DataLock vs FortKnox distinction.
+
+---
+
 ## [2026-04-10] feat(health_check): Editable environment topology diagram — draw.io + Word preview (v1.36)
 
 ### Added — `health_check/health_check_report.py`
