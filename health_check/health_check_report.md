@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.38**
+**Current version: 1.39**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
@@ -225,6 +225,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.39 | 2026-04-10 | fix: Executive Summary "30d Success %" now equals the average of Trends tab column H — `_success_stats()` rebuilt to use same source priority (`v1_runs` → `group_runs`) and same per-day formula as `_sheet_trends()` |
 | 1.38 | 2026-04-10 | fix: Environment Topology table (Word) FortKnox Vaults column — replaced narrow `kFortKnox`/`kS3Compatible` vault-type check with `_fk_status(cd)` for accurate active/idle/none classification; vault name collection now uses the same comprehensive `_is_fk` logic (covers `krpaas`, `kfortknox`, `kfort_knox`, `krpaasarchival`, `"fortknox"` substring). Active = vault names on green; idle = vault names + `(Configured — not sending data)` on amber; none = `No` |
 | 1.32 | 2026-04-09 | feat: DataLock (WORM) column added to Protection Health (col 18, per group, color-coded); new FortKnox Data Transfer sheet (sheet 14) — per-protection-group view of logical/physical TB transferred and storage consumed per vault; full mode uses `--days` window, quick mode uses 1-day window; sheet count 18 → 19 |
 | 1.31 | 2026-04-09 | polish: Word doc headings/cover title color unified to `#70AD47`; Excel header rows gain thin black border + height 32; `auto_fit_columns()` handles multiline values, min=12, max=45; Trends charts moved to col L (right of data), height=16, legend at bottom, title 14 pt bold with overlay disabled |

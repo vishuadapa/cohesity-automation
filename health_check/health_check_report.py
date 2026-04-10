@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.38
+health_check_report.py  v1.39
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -81,6 +81,12 @@ Requirements
 
 Version history
 ───────────────
+  1.39 (2026-04-10) — fix: Executive Summary "30d Success %" now matches the
+                     Trends tab. _success_stats() rebuilt to use the same data
+                     source priority as _sheet_trends() (v1_runs → group_runs
+                     fallback) and now returns the average of per-day success %
+                     values (= average of Trends col H) instead of a flat run-
+                     count ratio across the entire window.
   1.38 (2026-04-10) — fix: Environment Topology table (Word) FortKnox Vaults
                      column now uses _fk_status() (active/idle/none) instead of
                      a narrow vault-type check. FK vault names collected via the
@@ -371,7 +377,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.38"
+__version__ = "1.39"
 
 import argparse
 import datetime
@@ -1672,20 +1678,62 @@ def _build_recommendations(cd):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _success_stats(cd):
-    """Return (succ_pct, sla_pct) from run history or last-run fallback."""
-    all_runs = [r for runs in cd["group_runs"].values() for r in runs]
-    groups   = cd["groups"]
-    if all_runs:
-        total = len(all_runs)
-        succ  = sum(1 for r in all_runs
-                    if (r.get("localBackupInfo") or {}).get("status", "")
-                    in ("kSuccess", "Succeeded", "kWarning"))
-        viols = sum(1 for r in all_runs if r.get("isSlaViolated", False))
-        return (
-            round(succ / total * 100, 1) if total else 100,
-            round((total - viols) / total * 100, 1) if total else 100,
-        )
-    # quick mode
+    """Return (succ_pct, sla_pct) from run history.
+
+    succ_pct: average of per-day Success % (incl. Warnings) — identical to
+              the average of column H in the Trends sheet, so the Executive
+              Summary stays consistent with the Trends tab.
+    sla_pct:  percentage of total runs without an SLA violation.
+
+    Data source priority mirrors _sheet_trends():
+      1. v1_runs  — Helios protectionRuns (preferred; same as Helios reports)
+      2. group_runs — v2 per-group run history (fallback when v1 unavailable)
+      3. lastRun per group — quick-mode last resort
+    """
+    # ── Build daily buckets (same logic as _sheet_trends) ────────────────────
+    daily = {}
+    for run in (cd.get("v1_runs") or []):
+        br  = run.get("backupRun") or {}
+        su  = (br.get("stats") or {}).get("startTimeUsecs") or 0
+        if not su:
+            continue
+        day = datetime.datetime.fromtimestamp(
+            su / 1_000_000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+        d  = daily.setdefault(day, dict(total=0, succ=0, warn=0, viols=0))
+        st = br.get("status", "")
+        d["total"] += 1
+        if st == "kSuccess":   d["succ"]  += 1
+        elif st == "kWarning": d["warn"]  += 1
+        if br.get("slaViolated"): d["viols"] += 1
+
+    if not daily:
+        for runs in cd["group_runs"].values():
+            for run in runs:
+                lb = run.get("localBackupInfo") or {}
+                su = lb.get("startTimeUsecs") or 0
+                if not su:
+                    continue
+                day = datetime.datetime.fromtimestamp(
+                    su / 1_000_000, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+                d  = daily.setdefault(day, dict(total=0, succ=0, warn=0, viols=0))
+                st = lb.get("status", "")
+                d["total"] += 1
+                if st in ("kSuccess", "Succeeded"): d["succ"]  += 1
+                elif st == "kWarning":              d["warn"]  += 1
+                if lb.get("isSlaViolated"): d["viols"] += 1
+
+    # ── Average of per-day success % (= average of Trends col H) ─────────────
+    if daily:
+        day_pcts = [(d["succ"] + d["warn"]) / d["total"] * 100
+                    for d in daily.values() if d["total"]]
+        succ_pct    = round(sum(day_pcts) / len(day_pcts), 1) if day_pcts else 100
+        total_runs  = sum(d["total"] for d in daily.values())
+        total_viols = sum(d["viols"] for d in daily.values())
+        sla_pct     = round((total_runs - total_viols) / total_runs * 100, 1) if total_runs else 100
+        return succ_pct, sla_pct
+
+    # ── quick-mode last resort: last-run per group ────────────────────────────
+    groups = cd["groups"]
     if not groups:
         return (100, 100)
     total = len(groups)

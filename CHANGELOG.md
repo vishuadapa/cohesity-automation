@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): Executive Summary 30d Success % matches Trends tab (v1.39)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **Executive Summary "30d Success %"**: `_success_stats()` previously computed a flat run-count ratio from `group_runs` (v2 per-group data), which could differ from the Trends tab because the Trends tab uses `v1_runs` (Helios protectionRuns) as its primary source and computes per-day success %. The function is now rebuilt to mirror `_sheet_trends()` exactly — same source priority (`v1_runs` preferred, `group_runs` fallback) and same formula (average of per-day `(succ + warn) / total × 100`). The Executive Summary "30d Success %" now always equals the average of column H in the Trends sheet.
+
+---
+
 ## [2026-04-10] fix(health_check): FortKnox Vaults column in Word topology table (v1.38)
 
 ### Fixed — `health_check/health_check_report.py`
