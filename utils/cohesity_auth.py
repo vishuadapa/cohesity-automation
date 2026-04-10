@@ -34,6 +34,12 @@ Typical import pattern:
   )
 
 Version history:
+  1.5 (2026-04-10) — fix: get_auth_token() now tries v1 endpoint first
+                     (POST /irisservices/api/v1/public/accessTokens) then
+                     falls back to v2 (POST /v2/users/sessions). The v1
+                     endpoint has the widest compatibility across Cohesity
+                     versions and account types. v2 /users/sessions returns
+                     400 "KValidationError Access denied" on some clusters.
   1.4 (2026-04-09) — fix: removed helios_login() / get_helios_password() —
                      Helios login endpoints require OIDC/OAuth2 (not plain
                      username/password). The /irisservices/api/v1/mcm/login
@@ -54,7 +60,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.4"
+__version__ = "1.5"
 
 import getpass
 import sys
@@ -196,18 +202,44 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
                    mfa_code: str = None) -> str:
     """
     Authenticate to a Cohesity cluster and return a Bearer token.
-    Endpoint: POST /v2/users/sessions
+
+    Tries two endpoints in order:
+      1. POST /irisservices/api/v1/public/accessTokens  (classic, widest compat)
+      2. POST /v2/users/sessions                         (v2 API, newer clusters)
+
     domain: 'LOCAL' for local accounts, or AD domain name (e.g. 'CORP').
     mfa_code: optional TOTP code for MFA-enabled accounts.
     """
-    url     = f"https://{cluster}/v2/users/sessions"
-    payload = {"username": username, "password": password, "domain": domain}
-    if mfa_code:
-        payload["otpCode"] = mfa_code
-        payload["otpType"] = "Totp"
-    hdrs    = {"Content-Type": "application/json", "Accept": "application/json"}
+    hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+
+    # ── Attempt 1 — v1 /public/accessTokens (works on all versions) ──────
+    url_v1     = f"https://{cluster}/irisservices/api/v1/public/accessTokens"
+    payload_v1 = {"username": username, "password": password, "domain": domain}
     try:
-        r = requests.post(url, json=payload, headers=hdrs, verify=False, timeout=30)
+        r = requests.post(url_v1, json=payload_v1, headers=hdrs,
+                          verify=False, timeout=30)
+        r.raise_for_status()
+        data         = r.json()
+        access_token = data.get("accessToken", "")
+        if access_token:
+            token = f"{data.get('tokenType', 'Bearer')} {access_token}"
+            print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v1)")
+            return token
+    except requests.exceptions.ConnectionError:
+        print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
+        sys.exit(1)
+    except requests.exceptions.HTTPError:
+        pass  # fall through to v2
+
+    # ── Attempt 2 — v2 /users/sessions ───────────────────────────────────
+    url_v2     = f"https://{cluster}/v2/users/sessions"
+    payload_v2 = {"username": username, "password": password, "domain": domain}
+    if mfa_code:
+        payload_v2["otpCode"] = mfa_code
+        payload_v2["otpType"] = "Totp"
+    try:
+        r = requests.post(url_v2, json=payload_v2, headers=hdrs,
+                          verify=False, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
@@ -217,7 +249,9 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         if r.status_code == 401 and "otp" in body.lower():
             print("ERROR: Cluster requires an MFA code. Re-run with --mfa-code <code>.")
             sys.exit(1)
-        print(f"ERROR: Authentication failed: {e}\n       Response: {body}")
+        print(f"ERROR: Authentication failed on both v1 and v2 endpoints.\n"
+              f"       v2 response: {e}\n       Body: {body}\n"
+              f"       Check username/password/domain and that the account is active.")
         sys.exit(1)
     data         = r.json()
     access_token = data.get("accessToken", "")
@@ -225,7 +259,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         print(f"ERROR: No access token in response: {r.text[:200]}")
         sys.exit(1)
     token = f"{data.get('tokenType', 'Bearer')} {access_token}"
-    print(f"[+] Authenticated to {cluster} as {domain}\\{username}")
+    print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v2)")
     return token
 
 

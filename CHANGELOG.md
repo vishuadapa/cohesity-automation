@@ -7,6 +7,18 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): Direct cluster auth — v1 accessTokens endpoint + mode propagation (v1.42)
+
+### Fixed — `utils/cohesity_auth.py` (v1.5)
+
+- **Direct cluster authentication**: `get_auth_token()` now tries the v1 endpoint first (`POST /irisservices/api/v1/public/accessTokens`) which has the widest compatibility across all Cohesity versions and account types. Falls back to v2 (`POST /v2/users/sessions`) if v1 fails. The v2 endpoint returned `400 KValidationError Access denied` on some clusters, preventing any direct-mode usage.
+
+### Fixed — `health_check/health_check_report.py`
+
+- **Direct mode detection**: `collect_cluster()` now stores `"mode": "direct"` (or `None`) in the cluster data dict. Previously the mode was only in the cluster input dict but never propagated to `cd`, causing downstream code (quorum "N/A" label, Word security table) to miss direct-mode detection and show incorrect values.
+
+---
+
 ## [2026-04-10] feat(health_check): Startup prerequisite check + full documentation update (v1.41)
 
 ### Added — `health_check/health_check_report.py`

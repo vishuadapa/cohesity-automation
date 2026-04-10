@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.41
+health_check_report.py  v1.42
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -84,6 +84,16 @@ Requirements
 
 Version history
 ───────────────
+  1.42 (2026-04-10) — fix: Direct cluster auth — get_auth_token() now tries
+                     v1 endpoint first (POST /irisservices/api/v1/public/
+                     accessTokens) then falls back to v2 (POST /v2/users/
+                     sessions). The v1 endpoint has the widest compatibility
+                     across Cohesity versions and account types; v2 returned
+                     400 "KValidationError Access denied" on some clusters.
+                     fix: collect_cluster() now stores "mode" in the cd dict
+                     so downstream code (quorum N/A, Word security table)
+                     correctly detects direct mode.
+                     cohesity_auth.py v1.5.
   1.41 (2026-04-10) — feat: Startup prerequisite check. main() now validates
                      all required packages (requests, openpyxl, python-docx)
                      before execution and prints clear error messages with
@@ -405,7 +415,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.41"
+__version__ = "1.42"
 
 import argparse
 import datetime
@@ -979,6 +989,7 @@ def collect_cluster(session, api_key, cluster, args):
     cd = {
         "name":        name,
         "id":          cid,
+        "mode":        cluster.get("mode"),       # "direct" or None (Helios)
         "info":        info,
         "nodes":       nodes,
         "alerts":      alerts,
