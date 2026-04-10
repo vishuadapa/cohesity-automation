@@ -3983,10 +3983,28 @@ def _render_topology_word_shapes(doc, all_data):
     """
     try:
         from docx.oxml import OxmlElement
-        from docx.oxml.ns import qn
+        from docx.oxml.ns import qn, nsmap as _nsmap
         from docx.shared import Emu, Pt
     except ImportError:
         return False
+
+    # python-docx ≤1.2 does not register the wps namespace; patch it so
+    # OxmlElement('wps:wsp') resolves correctly.  setdefault is idempotent.
+    _nsmap.setdefault(
+        'wps', 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape')
+
+    try:
+        return _render_topology_word_shapes_inner(doc, all_data,
+                                                   OxmlElement, qn, Emu, Pt)
+    except Exception as exc:
+        print(f"  WARN: native Word shapes failed: {exc}")
+        return False
+
+
+def _render_topology_word_shapes_inner(doc, all_data, OxmlElement, qn, Emu, Pt):
+    """Inner implementation — separated so the caller can catch all errors."""
+    from docx.shared import RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     topo       = _topology_data(all_data)
     clusters   = topo["clusters"]
@@ -4127,11 +4145,17 @@ def _render_topology_word_shapes(doc, all_data):
         pg = _mk('a:prstGeom', {'prst': geom})
         pg.append(_mk('a:avLst'))
         spPr.append(pg)
-        sf = _mk('a:solidFill');  sf.append(_mk('a:srgbClr', {'val': fill}))
-        spPr.append(sf)
-        ln = _mk('a:ln', {'w': '12700'})
-        lf = _mk('a:solidFill');  lf.append(_mk('a:srgbClr', {'val': stroke}))
-        ln.append(lf);  spPr.append(ln)
+        if fill == "NONE":
+            spPr.append(_mk('a:noFill'))
+        else:
+            sf = _mk('a:solidFill');  sf.append(_mk('a:srgbClr', {'val': fill}))
+            spPr.append(sf)
+        if stroke == "NONE":
+            ln = _mk('a:ln');  ln.append(_mk('a:noFill'));  spPr.append(ln)
+        else:
+            ln = _mk('a:ln', {'w': '12700'})
+            lf = _mk('a:solidFill');  lf.append(_mk('a:srgbClr', {'val': stroke}))
+            ln.append(lf);  spPr.append(ln)
         wsp.append(spPr)
 
         # Text body
@@ -4207,7 +4231,7 @@ def _render_topology_word_shapes(doc, all_data):
 
     # ── Column label (no-fill text shape) ────────────────────────────────
     def _label(para, x, w, text, color, z=200):
-        _shape(para, x, 0, w, LABEL_H, "rect", "FFFFFF", "FFFFFF",
+        _shape(para, x, 0, w, LABEL_H, "rect", "NONE", "NONE",
                [text], fsz=9, fclr=color, z=z)
 
     # ── Build the diagram ────────────────────────────────────────────────
