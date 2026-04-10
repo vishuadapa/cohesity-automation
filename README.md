@@ -65,9 +65,11 @@ Or install only what you need:
 
 If a required package is missing, the script exits with a clear error and the exact `pip install` command. Optional packages produce a note at startup but do not block execution.
 
+> **Standalone / single-file use**: `health_check_report.py` can be downloaded and run as a single file — all auth and formatting helpers are bundled inside it as fallbacks. The only external requirement is `pip install requests` (plus `openpyxl` / `python-docx` for report output).
+
 ### Where to run from
 
-Run the script from the `health_check/` directory, or from the repo root — it uses relative imports only through the standard library so the working directory does not matter:
+Run the script from the `health_check/` directory, from the repo root, or as a single standalone file — the working directory does not matter:
 
 ```bash
 cd health_check
@@ -131,9 +133,9 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.42_AcmeCorp_20260410_1430.xlsx
-cohesity_health_check_v1.42_AcmeCorp_20260410_1430.docx
-cohesity_health_check_v1.42_AcmeCorp_20260410_1430.drawio
+cohesity_health_check_v1.43_AcmeCorp_20260410_1430.xlsx
+cohesity_health_check_v1.43_AcmeCorp_20260410_1430.docx
+cohesity_health_check_v1.43_AcmeCorp_20260410_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.

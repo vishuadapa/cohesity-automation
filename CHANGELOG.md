@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): Standalone single-file distribution — bundled auth/format fallbacks (v1.43)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **`ModuleNotFoundError: No module named 'urllib3'` on Windows**: `urllib3` is a transitive dependency of `requests`, not a top-level package. The module-level `import urllib3` crashed before any user-visible error handling could run. Fixed: `requests` is now imported first with a try/except that prints a clear `pip install requests` message and exits cleanly. `urllib3` warning suppression falls back to `requests.packages.urllib3` when urllib3 is not directly importable.
+
+- **Standalone / single-file distribution**: `from cohesity_auth import` and `from formatters import` failed when the script was downloaded as a single file without the repo's `utils/` directory. Both imports are now wrapped in try/except with full inline fallback implementations — the script now works correctly when run as a single downloaded `.py` file anywhere on the filesystem.
+
+---
+
 ## [2026-04-10] fix(health_check): Direct cluster auth — v1 accessTokens endpoint + mode propagation (v1.42)
 
 ### Fixed — `utils/cohesity_auth.py` (v1.5)

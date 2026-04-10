@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.42
+health_check_report.py  v1.43
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -84,6 +84,18 @@ Requirements
 
 Version history
 ───────────────
+  1.43 (2026-04-10) — fix: Standalone / single-file distribution on Windows.
+                     import urllib3 failed with ModuleNotFoundError when
+                     requests was not installed (urllib3 is a dep of requests,
+                     not a top-level package). Now catches ImportError at the
+                     requests import itself and prints a clear install command.
+                     urllib3 warning suppression falls back to
+                     requests.packages.urllib3 when urllib3 is not importable
+                     as a standalone package.
+                     fix: cohesity_auth and formatters imports wrapped in
+                     try/except with full inline fallbacks — script now runs
+                     as a single downloaded .py file without needing the repo's
+                     utils/ directory alongside it.
   1.42 (2026-04-10) — fix: Direct cluster auth — get_auth_token() now tries
                      v1 endpoint first (POST /irisservices/api/v1/public/
                      accessTokens) then falls back to v2 (POST /v2/users/
@@ -415,7 +427,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.42"
+__version__ = "1.43"
 
 import argparse
 import datetime
@@ -423,21 +435,237 @@ import os
 import re
 import sys
 import time
-import urllib3
 
-import requests
+# ── Core HTTP client ──────────────────────────────────────────────────────────
+# requests must be present.  urllib3 is bundled inside requests; we suppress
+# the SSL-verify warning through whichever path is available.
+# If requests is missing we exit here with a clear install command rather than
+# propagating a cryptic "No module named 'urllib3'" traceback.
+try:
+    import requests
+    try:
+        import urllib3 as _urllib3
+        _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
+    except ImportError:
+        requests.packages.urllib3.disable_warnings(
+            requests.packages.urllib3.exceptions.InsecureRequestWarning)
+except ImportError:
+    print("=" * 65)
+    print("  MISSING REQUIRED PACKAGE: requests")
+    print()
+    print("  Install it with:")
+    print("    pip install requests")
+    print()
+    print("  Or install all required packages at once:")
+    print("    pip install requests openpyxl python-docx")
+    print("=" * 65)
+    sys.exit(1)
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# ── Auth + formatting helpers ─────────────────────────────────────────────────
+# Try the repo's utils/ directory first (normal dev/clone usage).
+# If the utils modules are not found (e.g. single-file standalone download),
+# fall back to inline implementations so the script works out of the box.
+_utils_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils")
+sys.path.insert(0, _utils_dir)
+try:
+    from cohesity_auth import (
+        get_api_key, get_helios_clusters, make_helios_headers, HELIOS_HOST,
+        get_cluster_password, get_auth_token, make_headers,
+        clear_stored_credentials,
+    )
+    from formatters import (
+        bytes_to_gb, bytes_to_tb, usecs_to_datetime, auto_fit_columns,
+    )
+except ImportError:
+    # ── Bundled fallbacks — used only when running as a standalone file ───────
+    import getpass as _getpass
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
-from cohesity_auth import (
-    get_api_key, get_helios_clusters, make_helios_headers, HELIOS_HOST,
-    get_cluster_password, get_auth_token, make_headers,
-    clear_stored_credentials,
-)
-from formatters import (
-    bytes_to_gb, bytes_to_tb, usecs_to_datetime, auto_fit_columns,
-)
+    HELIOS_HOST     = "helios.cohesity.com"
+    _KR_SVC_HELIOS  = "cohesity_helios"
+    _KR_USER_HELIOS = "apikey"
+    _KR_SVC_CLUSTER = "cohesity_cluster"
+
+    def _keyring_available():
+        try:
+            import keyring  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def get_api_key(cli_key=None):
+        if cli_key:
+            return cli_key
+        if _keyring_available():
+            import keyring
+            stored = keyring.get_password(_KR_SVC_HELIOS, _KR_USER_HELIOS)
+            if stored:
+                print("[*] Using Helios API key stored in system keychain.")
+                return stored
+            print("[*] No stored Helios API key found.")
+        else:
+            print("    NOTE: 'keyring' not installed — key will not be saved.")
+        key = _getpass.getpass("    Enter Helios API key: ").strip()
+        if not key:
+            print("ERROR: API key cannot be empty.")
+            sys.exit(1)
+        if _keyring_available():
+            import keyring
+            keyring.set_password(_KR_SVC_HELIOS, _KR_USER_HELIOS, key)
+            print("[*] Helios API key saved to system keychain.")
+        return key
+
+    def get_cluster_password(cluster, username, domain, cli_password=None):
+        if cli_password:
+            return cli_password
+        kr_user = f"{cluster}:{domain}:{username}"
+        if _keyring_available():
+            import keyring
+            stored = keyring.get_password(_KR_SVC_CLUSTER, kr_user)
+            if stored:
+                print(f"[*] Using stored password for {domain}\\{username}@{cluster}")
+                return stored
+        pwd = _getpass.getpass(f"Password for {domain}\\{username}@{cluster}: ").strip()
+        if not pwd:
+            print("ERROR: Password cannot be empty.")
+            sys.exit(1)
+        if _keyring_available():
+            import keyring
+            keyring.set_password(_KR_SVC_CLUSTER, kr_user, pwd)
+            print(f"[*] Password saved to keychain for {domain}\\{username}@{cluster}")
+        return pwd
+
+    def clear_stored_credentials(cluster=None, username="admin", domain="LOCAL"):
+        if not _keyring_available():
+            print("ERROR: 'keyring' not installed. Nothing to clear.")
+            sys.exit(1)
+        import keyring
+        if cluster:
+            kr_user = f"{cluster}:{domain}:{username}"
+            if keyring.get_password(_KR_SVC_CLUSTER, kr_user):
+                keyring.delete_password(_KR_SVC_CLUSTER, kr_user)
+                print(f"[*] Stored password for {domain}\\{username}@{cluster} removed.")
+            else:
+                print(f"[*] No stored password found for {domain}\\{username}@{cluster}.")
+        else:
+            if keyring.get_password(_KR_SVC_HELIOS, _KR_USER_HELIOS):
+                keyring.delete_password(_KR_SVC_HELIOS, _KR_USER_HELIOS)
+                print("[*] Stored Helios API key removed.")
+            else:
+                print("[*] No stored Helios API key found — nothing to clear.")
+
+    def get_auth_token(cluster, username, password, domain, mfa_code=None):
+        _hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+        url_v1 = f"https://{cluster}/irisservices/api/v1/public/accessTokens"
+        try:
+            r = requests.post(url_v1,
+                              json={"username": username, "password": password,
+                                    "domain": domain},
+                              headers=_hdrs, verify=False, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            token_val = data.get("accessToken", "")
+            if token_val:
+                print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v1)")
+                return f"{data.get('tokenType', 'Bearer')} {token_val}"
+        except requests.exceptions.ConnectionError:
+            print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
+            sys.exit(1)
+        except requests.exceptions.HTTPError:
+            pass
+        url_v2 = f"https://{cluster}/v2/users/sessions"
+        pl2 = {"username": username, "password": password, "domain": domain}
+        if mfa_code:
+            pl2["otpCode"] = mfa_code
+            pl2["otpType"] = "Totp"
+        try:
+            r = requests.post(url_v2, json=pl2, headers=_hdrs, verify=False, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
+            sys.exit(1)
+        except requests.exceptions.HTTPError as e:
+            body = r.text[:400]
+            if r.status_code == 401 and "otp" in body.lower():
+                print("ERROR: Cluster requires MFA. Re-run with --mfa-code <code>.")
+                sys.exit(1)
+            print(f"ERROR: Authentication failed.\n  {e}\n  {body}")
+            sys.exit(1)
+        data = r.json()
+        token_val = data.get("accessToken", "")
+        if not token_val:
+            print(f"ERROR: No access token in response: {r.text[:200]}")
+            sys.exit(1)
+        print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v2)")
+        return f"{data.get('tokenType', 'Bearer')} {token_val}"
+
+    def make_headers(token):
+        return {"Authorization": token, "Accept": "application/json",
+                "Content-Type": "application/json"}
+
+    def make_helios_headers(api_key, cluster_id=None):
+        h = {"apiKey": api_key, "Accept": "application/json",
+             "Content-Type": "application/json"}
+        if cluster_id is not None:
+            h["accessClusterId"] = str(cluster_id)
+        return h
+
+    def get_helios_clusters(api_key):
+        url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
+        try:
+            r = requests.get(url, headers=make_helios_headers(api_key),
+                             verify=False, timeout=30)
+            r.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            print("ERROR: Cannot connect to Helios. Check your network/VPN.")
+            sys.exit(1)
+        except requests.exceptions.HTTPError:
+            print(f"ERROR: Helios auth failed ({r.status_code}). Check your API key.")
+            sys.exit(1)
+        clusters = r.json()
+        if not isinstance(clusters, list):
+            clusters = clusters.get("clusterList", [])
+        result = [{"name": c.get("name", ""), "clusterId": c.get("clusterId")}
+                  for c in clusters]
+        print(f"[+] Connected to Helios — {len(result)} cluster(s)")
+        return result
+
+    # ── Formatting helpers ────────────────────────────────────────────────────
+    from datetime import datetime as _dt, timezone as _tz_utc
+
+    def usecs_to_datetime(usecs, tz=None):
+        if not usecs:
+            return ""
+        dt = _dt.fromtimestamp(usecs / 1_000_000, tz=_tz_utc.utc)
+        if tz is not None:
+            dt = dt.astimezone(tz)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def bytes_to_gb(b):
+        return round(b / 1_000_000_000, 4) if b else 0.0
+
+    def bytes_to_tb(b):
+        return round(b / 1_000_000_000_000, 4) if b else 0.0
+
+    def auto_fit_columns(ws, min_width=12, max_width=45):
+        try:
+            from openpyxl.cell.cell import MergedCell
+            from openpyxl.utils import get_column_letter as _gcl
+        except ImportError:
+            return
+        for col in ws.columns:
+            if not col:
+                continue
+            first = col[0]
+            col_letter = (first.column_letter if hasattr(first, "column_letter")
+                          else _gcl(first.column))
+            best = min_width
+            for cell in col:
+                if isinstance(cell, MergedCell):
+                    continue
+                if cell.value is not None:
+                    lines = str(cell.value).split("\n")
+                    best = max(best, max(len(ln) for ln in lines) + 2)
+            ws.column_dimensions[col_letter].width = min(best, max_width)
 
 try:
     from openpyxl import Workbook
