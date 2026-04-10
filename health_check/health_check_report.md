@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.35**
+**Current version: 1.36**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
@@ -48,6 +48,17 @@ Narrative report suitable for printing or sharing with customers:
 - **User Security** — per-cluster user table with MFA and locked account counts; admins without MFA flagged HIGH
 - Prioritized Recommendations table
 - Appendix: scoring methodology and thresholds (security score: 6 dimensions + −10 admin MFA penalty)
+
+### Topology Diagram (new in v1.36)
+
+Each run produces a **`.drawio` file** alongside the Excel and Word output. Open it with [diagrams.net](https://app.diagrams.net) or draw.io desktop to get a fully editable diagram showing:
+
+- Source clusters (Cohesity teal) with workload types, group count, source count, and protected capacity
+- Replication partner clusters (blue) with directed arrows
+- Archival vault targets (amber cylinders) with directed arrows
+- FortKnox / RPaaS vaults (dark green, dashed arrows)
+
+A PNG preview of the same diagram is embedded in the Word document's Environment section. Install `matplotlib` for the preview: `pip install matplotlib`.
 
 ---
 

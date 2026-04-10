@@ -80,6 +80,18 @@ Requirements
 
 Version history
 ───────────────
+  1.36 (2026-04-10) — feat: Environment Topology diagram. New _topology_data()
+                     helper extracts cluster/replication/archival/FortKnox graph
+                     from all_data. _generate_topology_drawio() writes an editable
+                     draw.io XML file (.drawio) alongside the Excel/Word output —
+                     open with diagrams.net or the draw.io desktop app. Nodes:
+                     clusters (Cohesity teal), replication targets (blue cluster
+                     boxes), archival vaults (amber cylinders), FortKnox/RPaaS
+                     (dark-green, dashed arrows). _render_topology_png() generates
+                     a matplotlib PNG preview (requires matplotlib) embedded in the
+                     Word doc after the topology table; caption references the
+                     .drawio file. Cohesity brand colors used throughout (#00B388
+                     teal, #0062B1 replication, #E07A00 archival, #1A5C3A FK).
   1.35 (2026-04-10) — fix: Quorum detection now fetches Helios-level quorum groups
                      via GET /v2/mcm/quorum/groups instead of probing per-cluster
                      info dict (which never had quorum fields). quorum_enabled is
@@ -338,7 +350,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.35"
+__version__ = "1.36"
 
 import argparse
 import datetime
@@ -3566,6 +3578,537 @@ def _sheet_user_security(wb, all_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TOPOLOGY DIAGRAM  (draw.io editable + matplotlib preview)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Cohesity brand palette used throughout:
+_DG_TEAL    = "#00B388"   # Cohesity primary teal  — source clusters
+_DG_TEAL_DK = "#008066"   # Darker teal            — cluster stroke
+_DG_NAVY    = "#1A3045"   # Dark navy              — header / background
+_DG_REPL    = "#0062B1"   # Blue                   — replication targets
+_DG_ARCH    = "#E07A00"   # Amber                  — archival vaults
+_DG_FK      = "#1A5C3A"   # Dark green             — FortKnox vaults
+_DG_FG      = "#FFFFFF"   # White text on dark boxes
+
+
+def _topology_data(all_data):
+    """Extract the topology graph from all_data.
+
+    Returns a dict:
+      clusters   — list of cluster dicts (id, name, groups, sources, workloads, cap_tb)
+      repl_nodes — list of unique replication-target dicts (id, name)
+      arch_nodes — list of unique archival-vault dicts (id, name)
+      fk_nodes   — list of unique FortKnox-vault dicts (id, name)
+      edges      — list of edge dicts (src, tgt, type="repl"|"arch"|"fk")
+    """
+    _fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+
+    def _is_fk(tt, tname=""):
+        tl = tt.lower(); nl = tname.lower()
+        return any(x in tl for x in _fk_types) or "fortknox" in tl or "fortknox" in nl
+
+    clusters = []
+    all_repl  = {}   # name → node dict
+    all_arch  = {}
+    all_fk    = {}
+    edges     = []
+
+    for i, cd in enumerate(all_data):
+        cid = f"c{i}"
+
+        # Workload types (de-prefix the leading "k", title-case)
+        workloads = sorted({
+            g.get("environment", "").lstrip("k").title()
+            for g in cd["groups"] if g.get("environment")
+        })[:4]
+
+        # Approximate protected capacity (sum logical bytes across groups)
+        raw_cap = 0
+        for g in cd["groups"]:
+            st = g.get("latestSuccessfulRunStats") or g.get("lastSuccessfulRunStats") or {}
+            raw_cap += st.get("logicalSizeBytes") or 0
+        if raw_cap == 0:
+            raw_cap = cd["info"].get("usedCapacityBytes") or 0
+        cap_tb = raw_cap / (1024 ** 4) if raw_cap else 0
+
+        for p in cd["policies"]:
+            rtp = p.get("remoteTargetPolicy") or {}
+            for t in (rtp.get("replicationTargets") or []):
+                name = (t.get("targetName")
+                        or (t.get("remoteTargetConfig") or {}).get("clusterName")
+                        or (t.get("remoteTargetConfig") or {}).get("name") or "")
+                if not name:
+                    continue
+                if name not in all_repl:
+                    all_repl[name] = {"id": f"r{len(all_repl)}", "name": name}
+                edges.append({"src": cid, "tgt": all_repl[name]["id"], "type": "repl"})
+
+            for t in (rtp.get("archivalTargets") or []):
+                cfg   = t.get("archivalTargetConfig") or {}
+                tt    = cfg.get("targetType") or t.get("targetType") or ""
+                tname = t.get("targetName") or cfg.get("name") or cfg.get("vaultName") or ""
+                if not tname:
+                    continue
+                if _is_fk(tt, tname):
+                    if tname not in all_fk:
+                        all_fk[tname] = {"id": f"f{len(all_fk)}", "name": tname}
+                    edges.append({"src": cid, "tgt": all_fk[tname]["id"], "type": "fk"})
+                else:
+                    if tname not in all_arch:
+                        all_arch[tname] = {"id": f"a{len(all_arch)}", "name": tname}
+                    edges.append({"src": cid, "tgt": all_arch[tname]["id"], "type": "arch"})
+
+        # Pick up FK vaults that appear in the vaults list but not in policies
+        for v in (cd.get("vaults") or []):
+            vtype = v.get("vaultType") or ""
+            vname = v.get("name") or ""
+            if vname and _is_fk(vtype, vname) and vname not in all_fk:
+                all_fk[vname] = {"id": f"f{len(all_fk)}", "name": vname}
+
+        clusters.append({
+            "id":       cid,
+            "name":     cd["name"],
+            "groups":   len(cd["groups"]),
+            "sources":  len(cd.get("sources") or []),
+            "workloads": workloads,
+            "cap_tb":   cap_tb,
+        })
+
+    # Deduplicate edges (multiple policies can produce identical edges)
+    seen = set()
+    unique_edges = []
+    for e in edges:
+        k = (e["src"], e["tgt"], e["type"])
+        if k not in seen:
+            seen.add(k)
+            unique_edges.append(e)
+
+    return {
+        "clusters":   clusters,
+        "repl_nodes": list(all_repl.values()),
+        "arch_nodes": list(all_arch.values()),
+        "fk_nodes":   list(all_fk.values()),
+        "edges":      unique_edges,
+    }
+
+
+# ── draw.io XML generator ─────────────────────────────────────────────────────
+
+def _generate_topology_drawio(all_data, out_path):
+    """Write an editable draw.io topology diagram to out_path + '.drawio'.
+
+    Returns True on success, False on error.
+    Node types and brand colors:
+      Clusters       — Cohesity teal rounded rectangles (left column)
+      Replication    — Blue rounded rectangles (2nd column)
+      Archival Vault — Amber cylinders (3rd column)
+      FortKnox/RPaaS — Dark-green rounded rectangles with lock symbol (4th column)
+    """
+    import html as _html
+
+    def _he(s):
+        return _html.escape(str(s), quote=False)
+
+    def _av(html_label):
+        """XML-escape an HTML label for use as a draw.io value attribute."""
+        return (html_label
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+    topo       = _topology_data(all_data)
+    clusters   = topo["clusters"]
+    repl_nodes = topo["repl_nodes"]
+    arch_nodes = topo["arch_nodes"]
+    fk_nodes   = topo["fk_nodes"]
+    edges      = topo["edges"]
+
+    # ── Layout constants (draw.io units, 1 unit ≈ 1 px at 100% zoom) ────────
+    MARGIN_X, MARGIN_Y = 40, 70
+    C_W,  C_H  = 220, 95    # source cluster box
+    T_W,  T_H  = 200, 70    # target node box
+    V_GAP      = 18          # vertical gap between nodes in same column
+    COL_GAP    = 70          # horizontal gap between columns
+
+    col_c  = MARGIN_X
+    col_r  = col_c + C_W + COL_GAP
+    col_a  = col_r + T_W + COL_GAP
+    col_f  = col_a + T_W + COL_GAP
+
+    def _col_y(nodes, idx, node_h):
+        return MARGIN_Y + 30 + idx * (node_h + V_GAP)
+
+    cells  = []
+    _ctr   = [2]
+
+    def _nid():
+        i = _ctr[0]; _ctr[0] += 1; return str(i)
+
+    def _vertex(vid, av_label, x, y, w, h, style):
+        cells.append(
+            f'<mxCell id="{vid}" value="{av_label}" style="{style}" '
+            f'vertex="1" parent="1">'
+            f'<mxGeometry x="{x}" y="{y}" width="{w}" height="{h}" as="geometry"/>'
+            f'</mxCell>'
+        )
+
+    def _edge(eid, src, tgt, style, label=""):
+        cells.append(
+            f'<mxCell id="{eid}" value="{label}" style="{style}" '
+            f'edge="1" source="{src}" target="{tgt}" parent="1">'
+            f'<mxGeometry relative="1" as="geometry"/>'
+            f'</mxCell>'
+        )
+
+    # ── Styles ───────────────────────────────────────────────────────────────
+    S_CLUSTER = (
+        f"rounded=1;whiteSpace=wrap;html=1;"
+        f"fillColor={_DG_TEAL};strokeColor={_DG_TEAL_DK};strokeWidth=2;"
+        f"fontColor=#FFFFFF;fontSize=11;fontStyle=1;align=left;"
+        f"spacingLeft=10;arcSize=6;"
+    )
+    S_REPL = (
+        f"rounded=1;whiteSpace=wrap;html=1;"
+        f"fillColor={_DG_REPL};strokeColor=#004A8A;strokeWidth=2;"
+        f"fontColor=#FFFFFF;fontSize=10;align=center;arcSize=6;"
+    )
+    S_ARCH = (
+        f"shape=cylinder3;whiteSpace=wrap;html=1;direction=south;"
+        f"fillColor={_DG_ARCH};strokeColor=#B05A00;strokeWidth=2;"
+        f"fontColor=#FFFFFF;fontSize=10;align=center;size=12;"
+    )
+    S_FK = (
+        f"rounded=1;whiteSpace=wrap;html=1;"
+        f"fillColor={_DG_FK};strokeColor=#0E3B25;strokeWidth=2;"
+        f"fontColor=#FFFFFF;fontSize=10;fontStyle=1;align=center;arcSize=6;"
+    )
+
+    def _s_hdr(color):
+        return (f"text;html=1;align=center;verticalAlign=middle;"
+                f"fontStyle=1;fontSize=12;fontColor={color};")
+
+    def _s_edge(color, dashed=False):
+        d = "dashed=1;dashPattern=8 4;" if dashed else ""
+        return (
+            f"edgeStyle=elbowEdgeStyle;elbow=vertical;{d}"
+            f"strokeColor={color};strokeWidth=2;fillColor={color};"
+            f"exitX=1;exitY=0.5;exitDx=0;exitDy=0;"
+            f"entryX=0;entryY=0.5;entryDx=0;entryDy=0;"
+            f"endArrow=block;endFill=1;"
+        )
+
+    # ── Watermark / generation note ──────────────────────────────────────────
+    nid = _nid()
+    cells.append(
+        f'<mxCell id="{nid}" value="Generated by Cohesity Health Check v{__version__}" '
+        f'style="text;html=1;align=right;verticalAlign=top;fontSize=9;fontColor=#AAAAAA;" '
+        f'vertex="1" parent="1">'
+        f'<mxGeometry x="{col_f + T_W + 20}" y="5" width="270" height="20" as="geometry"/>'
+        f'</mxCell>'
+    )
+
+    # ── Column headers ────────────────────────────────────────────────────────
+    _vertex(_nid(), _av("Source Clusters"), col_c, MARGIN_Y - 28, C_W, 24, _s_hdr(_DG_TEAL))
+    if repl_nodes:
+        _vertex(_nid(), _av("Replication Targets"), col_r, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_REPL))
+    if arch_nodes:
+        _vertex(_nid(), _av("Archival Vaults"), col_a, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_ARCH))
+    if fk_nodes:
+        _vertex(_nid(), _av("FortKnox / RPaaS"), col_f, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_FK))
+
+    # ── Source cluster nodes ──────────────────────────────────────────────────
+    for idx, cl in enumerate(clusters):
+        y   = _col_y(clusters, idx, C_H)
+        wls = ", ".join(cl["workloads"]) if cl["workloads"] else ""
+        det = f"{cl['groups']} groups"
+        if cl["sources"]: det += f" &bull; {cl['sources']} sources"
+        if cl["cap_tb"] > 0.01: det += f" &bull; {cl['cap_tb']:.1f} TB"
+        lbl = (f"<b>{_he(cl['name'])}</b><br>"
+               + (f"{_he(wls)}<br>" if wls else "")
+               + det)
+        _vertex(cl["id"], _av(lbl), col_c, y, C_W, C_H, S_CLUSTER)
+
+    # ── Replication target nodes ──────────────────────────────────────────────
+    for idx, n in enumerate(repl_nodes):
+        y   = _col_y(repl_nodes, idx, T_H)
+        lbl = f"<b>{_he(n['name'])}</b><br>Cluster"
+        _vertex(n["id"], _av(lbl), col_r, y, T_W, T_H, S_REPL)
+
+    # ── Archival vault nodes ──────────────────────────────────────────────────
+    for idx, n in enumerate(arch_nodes):
+        y   = _col_y(arch_nodes, idx, T_H)
+        lbl = f"<b>{_he(n['name'])}</b><br>Archival Vault"
+        _vertex(n["id"], _av(lbl), col_a, y, T_W, T_H, S_ARCH)
+
+    # ── FortKnox nodes ────────────────────────────────────────────────────────
+    for idx, n in enumerate(fk_nodes):
+        y   = _col_y(fk_nodes, idx, T_H)
+        lbl = f"&#x1F512; <b>{_he(n['name'])}</b><br>FortKnox / RPaaS"
+        _vertex(n["id"], _av(lbl), col_f, y, T_W, T_H, S_FK)
+
+    # ── Edges ─────────────────────────────────────────────────────────────────
+    for e in edges:
+        if e["type"] == "repl":
+            style = _s_edge(_DG_REPL)
+        elif e["type"] == "arch":
+            style = _s_edge(_DG_ARCH)
+        else:
+            style = _s_edge(_DG_FK, dashed=True)
+        _edge(_nid(), e["src"], e["tgt"], style)
+
+    # ── Canvas dimensions ─────────────────────────────────────────────────────
+    right_items = max(len(repl_nodes), len(arch_nodes), len(fk_nodes), 1)
+    canvas_h = MARGIN_Y + 30 + max(len(clusters), right_items) * (C_H + V_GAP) + 60
+    canvas_w = col_f + T_W + 60
+
+    # ── Assemble XML ──────────────────────────────────────────────────────────
+    cells_xml = "\n        ".join(cells)
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<mxfile host="app.diagrams.net" agent="Cohesity Health Check" '
+        f'version="21.7.5" type="device">\n'
+        '  <diagram id="cohesity-topology" name="Environment Topology">\n'
+        f'    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" '
+        f'guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" '
+        f'pageScale="1" pageWidth="{canvas_w}" pageHeight="{canvas_h}" '
+        f'math="0" shadow="0">\n'
+        '      <root>\n'
+        '        <mxCell id="0" />\n'
+        '        <mxCell id="1" parent="0" />\n'
+        f'        {cells_xml}\n'
+        '      </root>\n'
+        '    </mxGraphModel>\n'
+        '  </diagram>\n'
+        '</mxfile>\n'
+    )
+
+    try:
+        drawio_path = out_path + ".drawio"
+        with open(drawio_path, "w", encoding="utf-8") as fh:
+            fh.write(xml)
+        return drawio_path
+    except Exception as exc:
+        print(f"  WARN: Could not write topology diagram: {exc}")
+        return None
+
+
+# ── matplotlib PNG preview ────────────────────────────────────────────────────
+
+def _render_topology_png(all_data):
+    """Render the environment topology as a PNG byte-string using matplotlib.
+
+    Cohesity brand colors: teal clusters, blue replication, amber archival,
+    dark-green FortKnox. Returns PNG bytes, or None if matplotlib is unavailable.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
+        import io as _io
+    except ImportError:
+        return None
+
+    topo       = _topology_data(all_data)
+    clusters   = topo["clusters"]
+    repl_nodes = topo["repl_nodes"]
+    arch_nodes = topo["arch_nodes"]
+    fk_nodes   = topo["fk_nodes"]
+    edges      = topo["edges"]
+
+    # ── Figure setup ─────────────────────────────────────────────────────────
+    FIG_W, FIG_H = 16.0, 9.0
+    HEADER_H = 0.56
+    FOOTER_H = 0.60
+
+    CT = FIG_H - HEADER_H - 0.25   # content top
+    CB = FOOTER_H + 0.15            # content bottom
+    CH = CT - CB                    # content height
+
+    C_W, C_H = 2.80, 1.05          # cluster box
+    T_W, T_H = 2.30, 0.78          # target box
+
+    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=130)
+    fig.patch.set_facecolor("#F8F8F8")
+    ax.set_facecolor("#F8F8F8")
+    ax.set_xlim(0, FIG_W)
+    ax.set_ylim(0, FIG_H)
+    ax.axis("off")
+
+    # ── Determine active right columns ────────────────────────────────────────
+    right_cols = []
+    if repl_nodes: right_cols.append(("repl", repl_nodes, _DG_REPL, "#004A8A", "Replication Targets"))
+    if arch_nodes: right_cols.append(("arch", arch_nodes, _DG_ARCH, "#B05A00", "Archival Vaults"))
+    if fk_nodes:   right_cols.append(("fk",   fk_nodes,  _DG_FK,   "#0E3B25", "FortKnox / RPaaS"))
+
+    # Compute column X centers
+    X_CLUSTER = 1.85
+    RIGHT_START = X_CLUSTER + C_W / 2 + 1.4
+    RIGHT_END   = FIG_W - 0.35
+    n_right     = len(right_cols)
+    if n_right > 0:
+        step = (RIGHT_END - RIGHT_START - T_W) / max(n_right - 1, 1) if n_right > 1 else 0
+        col_xs = [RIGHT_START + T_W / 2 + i * step for i in range(n_right)]
+        # if only 1 column centre it in available space
+        if n_right == 1:
+            col_xs = [(RIGHT_START + RIGHT_END) / 2]
+    else:
+        col_xs = []
+
+    # Build (type → x_center) lookup
+    col_x_by_type = {}
+    col_info_by_type = {}
+    for idx, (ctype, nodes, fc, ec, header) in enumerate(right_cols):
+        col_x_by_type[ctype] = col_xs[idx]
+        col_info_by_type[ctype] = (nodes, fc, ec, header)
+
+    def _ys(n, box_h):
+        """Y-centers for n items, distributed evenly in the content area."""
+        if n == 0: return []
+        if n == 1: return [CB + CH / 2]
+        step = (CH - box_h) / (n - 1)
+        return [CT - box_h / 2 - i * step for i in range(n)]
+
+    cluster_ys = _ys(len(clusters), C_H)
+    type_ys    = {}
+    for ctype, nodes, *_ in right_cols:
+        type_ys[ctype] = _ys(len(nodes), T_H)
+
+    # Build id → (cx, cy)
+    pos = {}
+    for i, cl in enumerate(clusters):
+        pos[cl["id"]] = (X_CLUSTER, cluster_ys[i])
+    for ctype, nodes, *_ in right_cols:
+        cx = col_x_by_type[ctype]
+        for i, n in enumerate(nodes):
+            pos[n["id"]] = (cx, type_ys[ctype][i])
+
+    # ── Header bar ────────────────────────────────────────────────────────────
+    ax.add_patch(plt.Rectangle((0, FIG_H - HEADER_H), FIG_W, HEADER_H,
+                                color=_DG_NAVY, zorder=5))
+    # Cohesity "C" arc suggestion — two quarter-circle arcs using a wedge
+    from matplotlib.patches import Wedge, Arc
+    ax.add_patch(Wedge((0.4, FIG_H - HEADER_H / 2), 0.18, 30, 330,
+                        width=0.07, color=_DG_TEAL, zorder=6))
+    ax.text(0.68, FIG_H - HEADER_H / 2, "COHESITY",
+            fontsize=12, fontweight="bold", color=_DG_TEAL,
+            va="center", ha="left", zorder=6)
+    ax.text(2.5, FIG_H - HEADER_H / 2, "│  Environment Topology",
+            fontsize=10.5, color="white", va="center", ha="left", zorder=6)
+
+    # ── Footer / legend ───────────────────────────────────────────────────────
+    ax.add_patch(plt.Rectangle((0, 0), FIG_W, FOOTER_H, color="#EDEDED", zorder=1))
+    leg_items = [
+        (_DG_TEAL, "Source Cluster"),
+    ] + [(c[2], c[4]) for c in right_cols]
+    lx = 0.5
+    for col, lbl in leg_items:
+        ax.add_patch(plt.Rectangle((lx, 0.18), 0.35, 0.22,
+                                    color=col, zorder=2, linewidth=0))
+        ax.text(lx + 0.45, 0.29, lbl, va="center", fontsize=8.0, color="#444444", zorder=2)
+        lx += 2.8 if len(leg_items) <= 4 else 2.2
+
+    # ── Column headers ────────────────────────────────────────────────────────
+    def _col_hdr(x, label, color, bw):
+        y = CT + 0.12
+        ax.plot([x - bw / 2, x + bw / 2], [y - 0.05, y - 0.05],
+                color=color, lw=1.0, alpha=0.35, zorder=1)
+        ax.text(x, y + 0.02, label, ha="center", va="bottom",
+                fontsize=8.5, fontweight="bold", color=color, zorder=2)
+
+    _col_hdr(X_CLUSTER, "Source Clusters", _DG_TEAL, C_W)
+    for ctype, nodes, fc, ec, header in right_cols:
+        _col_hdr(col_x_by_type[ctype], header, fc, T_W)
+
+    # ── Vertical separator line ───────────────────────────────────────────────
+    sep_x = X_CLUSTER + C_W / 2 + 0.65
+    ax.plot([sep_x, sep_x], [CB, CT], color="#CCCCCC", lw=1.0,
+            linestyle="--", zorder=1)
+
+    # ── Edges (drawn before boxes so they appear underneath) ─────────────────
+    drawn_pairs = set()
+    for e in edges:
+        key = (e["src"], e["tgt"])
+        if key in drawn_pairs: continue
+        drawn_pairs.add(key)
+        sp, tp = pos.get(e["src"]), pos.get(e["tgt"])
+        if sp is None or tp is None: continue
+        if   e["type"] == "repl": col = _DG_REPL; bw = T_W
+        elif e["type"] == "arch": col = _DG_ARCH; bw = T_W
+        else:                     col = _DG_FK;   bw = T_W;
+        sx, sy = sp[0] + C_W / 2, sp[1]
+        tx, ty = tp[0] - bw / 2,  tp[1]
+        ax.annotate("", xy=(tx, ty), xytext=(sx, sy),
+                    arrowprops=dict(arrowstyle="-|>", color=col, lw=1.5,
+                                   mutation_scale=14,
+                                   connectionstyle="arc3,rad=0.0"),
+                    zorder=2)
+
+    # ── Box drawing helpers ───────────────────────────────────────────────────
+    def _box(cx, cy, bw, bh, fc, ec, lines, bold_first=True):
+        x0, y0 = cx - bw / 2, cy - bh / 2
+        # Drop shadow
+        ax.add_patch(FancyBboxPatch((x0 + 0.035, y0 - 0.035), bw, bh,
+                                    boxstyle="round,pad=0.06",
+                                    facecolor="#00000018", edgecolor="none", zorder=2))
+        # Main box
+        ax.add_patch(FancyBboxPatch((x0, y0), bw, bh,
+                                    boxstyle="round,pad=0.06",
+                                    facecolor=fc, edgecolor=ec,
+                                    linewidth=1.4, zorder=3))
+        # Text lines (top → bottom)
+        n = len(lines)
+        line_h = bh / (n + 0.3)
+        for j, line in enumerate(lines):
+            ty = cy + (n - 1) / 2 * line_h - j * line_h
+            fw = "bold" if (bold_first and j == 0) else "normal"
+            fs = 8.5 if j == 0 else 7.8
+            ax.text(cx, ty, line, ha="center", va="center",
+                    fontsize=fs, fontweight=fw, color="white", zorder=4,
+                    clip_on=True)
+
+    # ── Source cluster boxes ──────────────────────────────────────────────────
+    for i, cl in enumerate(clusters):
+        cx, cy = pos[cl["id"]]
+        wls = ", ".join(cl["workloads"]) if cl["workloads"] else ""
+        det = f"{cl['groups']} groups"
+        if cl["sources"]: det += f"  ·  {cl['sources']} sources"
+        if cl["cap_tb"] > 0.01: det += f"  ·  {cl['cap_tb']:.1f} TB"
+        lines = [cl["name"]] + ([wls] if wls else []) + [det]
+        _box(cx, cy, C_W, C_H, _DG_TEAL, _DG_TEAL_DK, lines)
+
+    # ── Replication target boxes ──────────────────────────────────────────────
+    if "repl" in col_x_by_type:
+        for i, n in enumerate(repl_nodes):
+            cx, cy = pos[n["id"]]
+            _box(cx, cy, T_W, T_H, _DG_REPL, "#004A8A",
+                 [n["name"], "Cluster"])
+
+    # ── Archival vault boxes ──────────────────────────────────────────────────
+    if "arch" in col_x_by_type:
+        for i, n in enumerate(arch_nodes):
+            cx, cy = pos[n["id"]]
+            _box(cx, cy, T_W, T_H, _DG_ARCH, "#B05A00",
+                 [n["name"], "Archival Vault"])
+
+    # ── FortKnox boxes ────────────────────────────────────────────────────────
+    if "fk" in col_x_by_type:
+        for i, n in enumerate(fk_nodes):
+            cx, cy = pos[n["id"]]
+            _box(cx, cy, T_W, T_H, _DG_FK, "#0E3B25",
+                 [n["name"], "FortKnox / RPaaS (indelible)"])
+
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    buf = _io.BytesIO()
+    plt.savefig(buf, format="png", dpi=130, bbox_inches="tight",
+                facecolor=fig.get_facecolor(), pad_inches=0.0)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXCEL ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3842,6 +4385,31 @@ def write_word(all_data, args):
         row_t[1].text = "\n".join(repl_names) if repl_names else "None"
         row_t[2].text = "\n".join(arch_names) if arch_names else "None"
         row_t[3].text = "\n".join(fk_names)   if fk_names   else "None"
+
+    # ── Topology diagram preview ──────────────────────────────────────────────
+    png_bytes = _render_topology_png(all_data)
+    if png_bytes:
+        from docx.shared import Inches
+        import io as _io
+        doc.add_paragraph("")
+        p_img = doc.add_paragraph()
+        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_img = p_img.add_run()
+        run_img.add_picture(_io.BytesIO(png_bytes), width=Inches(6.5))
+        cap = doc.add_paragraph(
+            "Figure: Environment Topology — clusters (teal), replication targets (blue), "
+            "archival vaults (amber), FortKnox/RPaaS (dark green). "
+            "An editable draw.io diagram is saved alongside this report "
+            "(.drawio — open with diagrams.net or draw.io desktop)."
+        )
+        cap.runs[0].font.size = Pt(8)
+        cap.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    else:
+        doc.add_paragraph(
+            "(Topology diagram preview requires matplotlib — "
+            "install with: pip install matplotlib)"
+        )
 
     doc.add_page_break()
 
@@ -4289,7 +4857,12 @@ def main():
     if not args.excel_only:
         write_word(all_data, args)
 
-    print(f"\nComplete.  Output: {args.output}.xlsx / {args.output}.docx")
+    # Generate editable topology diagram (draw.io)
+    drawio_path = _generate_topology_drawio(all_data, args.output)
+    if drawio_path:
+        print(f"\nComplete.  Output: {args.output}.xlsx / {args.output}.docx / {drawio_path}")
+    else:
+        print(f"\nComplete.  Output: {args.output}.xlsx / {args.output}.docx")
 
 
 if __name__ == "__main__":

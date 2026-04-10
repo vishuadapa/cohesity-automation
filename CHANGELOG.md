@@ -7,6 +7,31 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] feat(health_check): Editable environment topology diagram — draw.io + Word preview (v1.36)
+
+### Added — `health_check/health_check_report.py`
+
+- **`_topology_data(all_data)`**: extracts the topology graph — source clusters (with workload types, group count, source count, protected capacity), unique replication-target clusters, archival vault targets, and FortKnox/RPaaS vaults — from `all_data`. Builds deduplicated node and edge lists.
+
+- **`_generate_topology_drawio(all_data, out_path)`**: generates an editable draw.io XML file (`out_path + ".drawio"`) using Cohesity brand colors. Node types:
+  - Source clusters — Cohesity teal (`#00B388`) rounded rectangles; label shows name, workloads, group/source count, protected capacity
+  - Replication targets — Blue (`#0062B1`) rounded rectangles
+  - Archival vaults — Amber (`#E07A00`) cylinders (draw.io `cylinder3` shape)
+  - FortKnox/RPaaS — Dark green (`#1A5C3A`) rounded rectangles; dashed arrows, lock symbol prefix
+  - Directed edges color-matched to target type. Column headers per node type.
+  - File opens in [diagrams.net](https://app.diagrams.net) or draw.io desktop — fully editable.
+
+- **`_render_topology_png(all_data)`**: renders the same diagram as a 130-DPI PNG byte-string using `matplotlib` (optional dependency). Returns `None` gracefully if matplotlib is not installed. Header bar uses Cohesity navy + teal palette, Wedge arc approximates the Cohesity logo "C" shape.
+
+- **Word doc update**: topology PNG preview embedded in Word after the topology table (centered, 6.5" wide). Caption references the .drawio file. Falls back to a plain-text note if matplotlib is unavailable.
+
+- **`main()` update**: calls `_generate_topology_drawio()` after writing Excel/Word; prints the `.drawio` path in the completion message.
+
+### Dependencies
+- `matplotlib` is **optional** — install with `pip install matplotlib` to enable the PNG preview. Draw.io file is generated regardless.
+
+---
+
 ## [2026-04-10] fix(health_check): Quorum from Helios API, FortKnox DataLock, Admin MFA scoring (v1.35)
 
 ### Fixed — `health_check/health_check_report.py`
