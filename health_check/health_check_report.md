@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.43**
+**Current version: 1.44**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
@@ -225,6 +225,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.44 | 2026-04-10 | feat: Prereq check redesigned — always prints a full status table for all 5 packages (requests, openpyxl, python-docx, matplotlib, keyring) with installed/NOT FOUND and required/optional labels. Previously matplotlib and keyring only appeared as small NOTE lines when absent |
 | 1.43 | 2026-04-10 | fix: `ModuleNotFoundError: No module named 'urllib3'` on Windows — `requests` now imported first with try/except; warning suppression falls back to `requests.packages.urllib3`. fix: `cohesity_auth` and `formatters` imports wrapped with inline fallbacks so script runs as a single downloaded file without the repo's `utils/` directory |
 | 1.42 | 2026-04-10 | fix: Direct cluster auth — `get_auth_token()` tries v1 `/irisservices/api/v1/public/accessTokens` first (widest compat), falls back to v2. Fixes 400 "KValidationError Access denied" on some clusters. Direct mode `"mode"` key now propagated to `cd` dict for correct quorum/security handling. `cohesity_auth.py` v1.5 |
 | 1.41 | 2026-04-10 | feat: Startup prerequisite check — validates required packages at launch, reports missing with exact pip commands. README.md rewritten with full prerequisite table, all CLI flags, updated Word/topology descriptions |

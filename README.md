@@ -47,23 +47,23 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 **Python 3.7** or later.
 
-The script checks all prerequisites at startup and reports any missing packages with install commands. Install everything in one line:
+Install all packages before running:
 
 ```bash
-pip3 install requests openpyxl python-docx matplotlib keyring
+pip install requests openpyxl python-docx matplotlib keyring
 ```
 
-Or install only what you need:
+Full package list:
 
 | Package | Required? | Purpose | Install |
 |---------|-----------|---------|---------|
-| `requests` | **Yes** | HTTP client for Cohesity REST API calls | `pip3 install requests` |
-| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (19 sheets) | `pip3 install openpyxl` |
-| `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip3 install python-docx` |
-| `matplotlib` | Optional | Topology PNG fallback if native Word shapes fail | `pip3 install matplotlib` |
-| `keyring` | Optional | Securely store API key / passwords in OS keychain between runs | `pip3 install keyring` |
+| `requests` | **Yes** | HTTP client for Cohesity REST API calls | `pip install requests` |
+| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (19 sheets) | `pip install openpyxl` |
+| `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip install python-docx` |
+| `matplotlib` | Recommended | Topology PNG fallback if native Word shapes fail | `pip install matplotlib` |
+| `keyring` | Recommended | Securely store API key / passwords in OS keychain between runs | `pip install keyring` |
 
-If a required package is missing, the script exits with a clear error and the exact `pip install` command. Optional packages produce a note at startup but do not block execution.
+At startup the script prints a status table for **all five packages** — installed vs. NOT FOUND, required vs. optional. If a required package is missing, it exits with a clear `pip install` command. Optional packages that are absent are flagged but do not block execution.
 
 > **Standalone / single-file use**: `health_check_report.py` can be downloaded and run as a single file — all auth and formatting helpers are bundled inside it as fallbacks. The only external requirement is `pip install requests` (plus `openpyxl` / `python-docx` for report output).
 
@@ -133,9 +133,9 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.43_AcmeCorp_20260410_1430.xlsx
-cohesity_health_check_v1.43_AcmeCorp_20260410_1430.docx
-cohesity_health_check_v1.43_AcmeCorp_20260410_1430.drawio
+cohesity_health_check_v1.44_AcmeCorp_20260410_1430.xlsx
+cohesity_health_check_v1.44_AcmeCorp_20260410_1430.docx
+cohesity_health_check_v1.44_AcmeCorp_20260410_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.

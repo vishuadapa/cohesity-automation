@@ -7,6 +7,20 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] feat(health_check): Prereq check reports all 5 packages with full status table (v1.44)
+
+### Changed — `health_check/health_check_report.py`
+
+- **Prerequisite check redesigned**: Startup check now always prints a formatted status table covering **all five packages** — `requests`, `openpyxl`, `python-docx`, `matplotlib`, and `keyring` — with ✓/✗ status, installed/NOT FOUND label, and required/optional role. Previously `matplotlib` and `keyring` were only shown as small NOTE lines when absent; they were invisible in the output when installed and easy to miss when missing.
+- Missing required packages still exit with a clear install command. Missing optional packages produce a concise `pip install ...` hint but do not block.
+- When all packages are present, prints a single `[*] Prerequisites: all 5 packages OK` line.
+
+### Changed — `README.md`
+
+- Prerequisites table updated: all five packages listed with clear Required/Recommended labels and `pip install` commands. Added note that the startup check reports all packages.
+
+---
+
 ## [2026-04-10] fix(health_check): Standalone single-file distribution — bundled auth/format fallbacks (v1.43)
 
 ### Fixed — `health_check/health_check_report.py`

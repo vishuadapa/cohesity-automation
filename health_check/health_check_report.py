@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.43
+health_check_report.py  v1.44
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -84,6 +84,12 @@ Requirements
 
 Version history
 ───────────────
+  1.44 (2026-04-10) — feat: Prereq check now always reports ALL five packages
+                     (requests, openpyxl, python-docx, matplotlib, keyring)
+                     in a full status table — required vs optional, installed
+                     vs NOT FOUND. Previously matplotlib and keyring were only
+                     reported as small NOTE lines when missing; they are now
+                     first-class entries in the startup check every run.
   1.43 (2026-04-10) — fix: Standalone / single-file distribution on Windows.
                      import urllib3 failed with ModuleNotFoundError when
                      requests was not installed (urllib3 is a dep of requests,
@@ -5450,46 +5456,70 @@ def main():
         sys.exit(0)
 
     # ── Pre-requisite check ─────────────────────────────────────────────────
-    _missing = []
-    if not EXCEL_OK and not args.word_only:
-        _missing.append(("openpyxl", "pip install openpyxl",
-                         "Required for Excel workbook output"))
-    if not DOCX_OK and not args.excel_only:
-        _missing.append(("python-docx", "pip install python-docx",
-                         "Required for Word document output"))
-    # requests is imported at module level — if missing the script can't start
-    # so we don't need to check it here.
+    # Build a full status table covering all packages (required + optional).
+    # Always printed so the user can see at a glance what is and isn't available.
+    def _pkg_ok(name):
+        try:
+            __import__(name)
+            return True
+        except ImportError:
+            return False
 
-    # Optional packages — warn but don't block
-    _opt_warn = []
-    try:
-        import matplotlib       # noqa: F401
-    except ImportError:
-        _opt_warn.append(("matplotlib", "pip install matplotlib",
-                          "Topology PNG fallback in Word (optional)"))
-    try:
-        import keyring          # noqa: F401
-    except ImportError:
-        _opt_warn.append(("keyring", "pip install keyring",
-                          "Secure credential storage in OS keychain (optional)"))
+    # requests is guaranteed present here (checked at module import level).
+    # openpyxl / python-docx flags come from the module-level try/except.
+    _PKG_TABLE = [
+        # (name,          installed,    role,       description)
+        ("requests",      True,         "required", "HTTP client for Cohesity REST API"),
+        ("openpyxl",      EXCEL_OK,     "required", "Excel workbook output (skip with --word-only)"),
+        ("python-docx",   DOCX_OK,      "required", "Word document generation (skip with --excel-only)"),
+        ("matplotlib",    _pkg_ok("matplotlib"), "optional", "Topology PNG fallback for Word diagram"),
+        ("keyring",       _pkg_ok("keyring"),    "optional", "OS keychain credential storage"),
+    ]
 
-    if _missing:
-        print("\n" + "=" * 60)
-        print("  MISSING REQUIRED PACKAGES")
-        print("=" * 60)
-        for pkg, cmd, desc in _missing:
-            print(f"  ✗  {pkg:16s} — {desc}")
-            print(f"     Install:  {cmd}")
+    # Apply mode exemptions: some required packages are not needed in certain modes
+    _exempt = set()
+    if args.word_only:   _exempt.add("openpyxl")
+    if args.excel_only:  _exempt.add("python-docx")
+
+    _need_required = [(n, d) for n, ok, r, d in _PKG_TABLE
+                      if r == "required" and not ok and n not in _exempt]
+    _missing_opt   = [(n, d) for n, ok, r, d in _PKG_TABLE if r == "optional" and not ok]
+    _any_issue     = bool(_need_required or _missing_opt)
+
+    # Print the full status table whenever anything is missing or optional is absent
+    if _any_issue:
         print()
-        print("  Install all at once:")
-        print(f"     pip install {' '.join(p for p, _, _ in _missing)}")
-        print("=" * 60 + "\n")
+        print("  Prerequisites")
+        print("  " + "─" * 68)
+        for name, ok, role, desc in _PKG_TABLE:
+            if name in _exempt:
+                mark   = "–"
+                status = "skipped  "
+                note   = f"  (not needed with {'--word-only' if name == 'openpyxl' else '--excel-only'})"
+            else:
+                mark   = "✓" if ok else "✗"
+                status = "installed" if ok else "NOT FOUND"
+                note   = ""
+            role_tag = f"[{role}]"
+            print(f"  {mark}  {name:16s}  {status}  {role_tag:11s}  {desc}{note}")
+        print("  " + "─" * 68)
+    else:
+        print(f"[*] Prerequisites: all 5 packages OK")
+
+    if _need_required:
+        print()
+        print("  ERROR: Missing required package(s). Install and re-run:")
+        for n, d in _need_required:
+            print(f"    pip install {n}")
+        if len(_need_required) > 1:
+            print(f"  All at once:  pip install {' '.join(n for n, d in _need_required)}")
+        print()
         sys.exit(1)
 
-    if _opt_warn:
-        for pkg, cmd, desc in _opt_warn:
-            print(f"  NOTE: '{pkg}' not installed — {desc}")
-            print(f"        Install with:  {cmd}")
+    if _missing_opt:
+        print()
+        print("  Optional package(s) not installed — affected features will be skipped.")
+        print(f"  To install:  pip install {' '.join(n for n, d in _missing_opt)}")
         print()
 
     # Build output filename: include customer name (if given) + local timestamp
