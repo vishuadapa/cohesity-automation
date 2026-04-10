@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] feat(health_check): Security table coloring + native Word topology shapes (v1.40)
+
+### Added — `health_check/health_check_report.py`
+
+- **Security Posture table (Word section 5) — full color coding**: All 10 columns now color-coded: red for "No"/missing (encryption, vault, FK, DataLock, replication, quorum), amber for "Idle"/"Partial" (FK idle, DataLock partial), green for "Yes"/"Active"/"Full Compliance". Score column uses RAG thresholds (red <50, amber 50–74, green ≥75). Previously only the "Admins w/o MFA" column was highlighted.
+
+- **Native Word topology shapes**: Environment Topology diagram replaced with editable Word DrawingML shapes. Source clusters rendered as Cohesity green (#96C73D) rounded rectangles, FortKnox as dark-green cloud shapes, archival vaults as amber cylinders, replication targets as blue rounded rectangles. Straight connector arrows drawn from each source cluster to its targets (color-coded by type). All shapes fully editable in Word. matplotlib PNG retained as automatic fallback if python-docx OxmlElement is unavailable.
+
+### Changed — `health_check/health_check_report.py`
+
+- **Cluster color**: Updated from #00B388 (teal) to #96C73D (Cohesity green) globally — affects draw.io, matplotlib PNG fallback, and Word shapes.
+- **draw.io**: Font sizes increased (clusters 11→13, targets 10→12), FortKnox shape changed from rounded rectangle to cloud, box dimensions increased for readability.
+- **matplotlib fallback**: Dark blue header bar removed; replaced with centered title text. Box font sizes increased (8.5/7.8 → 10.5/9.0).
+
+---
+
 ## [2026-04-10] fix(health_check): Executive Summary 30d Success % matches Trends tab (v1.39)
 
 ### Fixed — `health_check/health_check_report.py`

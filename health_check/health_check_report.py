@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.39
+health_check_report.py  v1.40
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -81,6 +81,21 @@ Requirements
 
 Version history
 ───────────────
+  1.40 (2026-04-10) — feat: Word doc Security Posture table (section 5) now
+                     color-codes ALL columns: red for "No"/missing, amber for
+                     "Idle"/"Partial", green for "Yes"/"Active"/"Full"; score
+                     column uses RAG (red <50, amber 50-74, green 75+).
+                     feat: Environment Topology diagram replaced with native
+                     Word DrawingML shapes — editable rounded rectangles
+                     (#96C73D green) for source clusters, cloud shapes for
+                     FortKnox (#1A5C3A), cylinders for archival, rounded rects
+                     for replication (#0062B1). Connector arrows drawn between
+                     each cluster and its targets. matplotlib PNG kept as
+                     fallback only. Dark blue header bar removed from PNG.
+                     Cluster color updated from #00B388 (teal) to #96C73D
+                     (Cohesity green) globally. draw.io fonts 11→13 (clusters),
+                     10→12 (targets); FK shape changed to cloud; box sizes
+                     increased for readability.
   1.39 (2026-04-10) — fix: Executive Summary "30d Success %" now matches the
                      Trends tab. _success_stats() rebuilt to use the same data
                      source priority as _sheet_trends() (v1_runs → group_runs
@@ -377,7 +392,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.39"
+__version__ = "1.40"
 
 import argparse
 import datetime
@@ -3645,9 +3660,9 @@ def _sheet_user_security(wb, all_data):
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Cohesity brand palette used throughout:
-_DG_TEAL    = "#00B388"   # Cohesity primary teal  — source clusters
-_DG_TEAL_DK = "#008066"   # Darker teal            — cluster stroke
-_DG_NAVY    = "#1A3045"   # Dark navy              — header / background
+_DG_TEAL    = "#96C73D"   # Cohesity green          — source clusters
+_DG_TEAL_DK = "#6B8F2C"   # Darker green            — cluster stroke
+_DG_NAVY    = "#1A3045"   # Dark navy               — header / background
 _DG_REPL    = "#0062B1"   # Blue                   — replication targets
 _DG_ARCH    = "#E07A00"   # Amber                  — archival vaults
 _DG_FK      = "#1A5C3A"   # Dark green             — FortKnox vaults
@@ -3789,10 +3804,10 @@ def _generate_topology_drawio(all_data, out_path):
 
     # ── Layout constants (draw.io units, 1 unit ≈ 1 px at 100% zoom) ────────
     MARGIN_X, MARGIN_Y = 40, 70
-    C_W,  C_H  = 220, 95    # source cluster box
-    T_W,  T_H  = 200, 70    # target node box
-    V_GAP      = 18          # vertical gap between nodes in same column
-    COL_GAP    = 70          # horizontal gap between columns
+    C_W,  C_H  = 250, 110   # source cluster box
+    T_W,  T_H  = 220, 80    # target node box
+    V_GAP      = 22          # vertical gap between nodes in same column
+    COL_GAP    = 80          # horizontal gap between columns
 
     col_c  = MARGIN_X
     col_r  = col_c + C_W + COL_GAP
@@ -3828,28 +3843,28 @@ def _generate_topology_drawio(all_data, out_path):
     S_CLUSTER = (
         f"rounded=1;whiteSpace=wrap;html=1;"
         f"fillColor={_DG_TEAL};strokeColor={_DG_TEAL_DK};strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=11;fontStyle=1;align=left;"
+        f"fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;"
         f"spacingLeft=10;arcSize=6;"
     )
     S_REPL = (
         f"rounded=1;whiteSpace=wrap;html=1;"
         f"fillColor={_DG_REPL};strokeColor=#004A8A;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=10;align=center;arcSize=6;"
+        f"fontColor=#FFFFFF;fontSize=12;align=center;arcSize=6;"
     )
     S_ARCH = (
         f"shape=cylinder3;whiteSpace=wrap;html=1;direction=south;"
         f"fillColor={_DG_ARCH};strokeColor=#B05A00;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=10;align=center;size=12;"
+        f"fontColor=#FFFFFF;fontSize=12;align=center;size=12;"
     )
     S_FK = (
-        f"rounded=1;whiteSpace=wrap;html=1;"
+        f"shape=cloud;whiteSpace=wrap;html=1;"
         f"fillColor={_DG_FK};strokeColor=#0E3B25;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=10;fontStyle=1;align=center;arcSize=6;"
+        f"fontColor=#FFFFFF;fontSize=12;fontStyle=1;align=center;"
     )
 
     def _s_hdr(color):
         return (f"text;html=1;align=center;verticalAlign=middle;"
-                f"fontStyle=1;fontSize=12;fontColor={color};")
+                f"fontStyle=1;fontSize=14;fontColor={color};")
 
     def _s_edge(color, dashed=False):
         d = "dashed=1;dashPattern=8 4;" if dashed else ""
@@ -3956,7 +3971,309 @@ def _generate_topology_drawio(all_data, out_path):
         return None
 
 
-# ── matplotlib PNG preview ────────────────────────────────────────────────────
+# ── Native Word shapes topology ──────────────────────────────────────────────
+
+def _render_topology_word_shapes(doc, all_data):
+    """Render environment topology using native Word shapes (DrawingML).
+
+    Creates editable rounded rectangles (source clusters in Cohesity green),
+    cloud shapes (FortKnox), cylinders (archive), and connector arrows.
+    All shapes are anchored inside a single paragraph with wrapNone positioning.
+    Returns True on success, False if python-docx OxmlElement API is unavailable.
+    """
+    try:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from docx.shared import Emu, Pt
+    except ImportError:
+        return False
+
+    topo       = _topology_data(all_data)
+    clusters   = topo["clusters"]
+    repl_nodes = topo["repl_nodes"]
+    arch_nodes = topo["arch_nodes"]
+    fk_nodes   = topo["fk_nodes"]
+    edges      = topo["edges"]
+
+    if not clusters:
+        return False
+
+    # ── Constants (EMU: 914400 per inch) ─────────────────────────────────
+    EMU = 914400
+
+    CLR_CLUSTER = "96C73D";  CLR_CLUSTER_S = "6B8F2C"
+    CLR_REPL    = "0062B1";  CLR_REPL_S    = "004A8A"
+    CLR_ARCH    = "E07A00";  CLR_ARCH_S    = "B05A00"
+    CLR_FK      = "1A5C3A";  CLR_FK_S      = "0E3B25"
+
+    C_W  = int(2.05 * EMU);  C_H  = int(0.72 * EMU)
+    T_W  = int(1.55 * EMU);  T_H  = int(0.58 * EMU)
+    FK_W = int(1.70 * EMU);  FK_H = int(0.72 * EMU)
+    V_GAP = int(0.20 * EMU)
+    LABEL_H = int(0.28 * EMU)
+
+    # ── Layout ───────────────────────────────────────────────────────────
+    tcols = []  # (type, nodes, width, height, geom, fill, stroke, label)
+    if repl_nodes:
+        tcols.append(("repl", repl_nodes, T_W, T_H, "roundRect",
+                       CLR_REPL, CLR_REPL_S, "Replication Targets"))
+    if arch_nodes:
+        tcols.append(("arch", arch_nodes, T_W, T_H, "can",
+                       CLR_ARCH, CLR_ARCH_S, "Archival Vaults"))
+    if fk_nodes:
+        tcols.append(("fk", fk_nodes, FK_W, FK_H, "cloud",
+                       CLR_FK, CLR_FK_S, "FortKnox"))
+
+    # Column X positions (left edge)
+    col_x = {"cluster": 0}
+    x_cursor = C_W + int(0.55 * EMU)
+    for ct, nodes, tw, *_ in tcols:
+        col_x[ct] = x_cursor
+        x_cursor += tw + int(0.30 * EMU)
+
+    # Y positions
+    SHAPES_TOP = LABEL_H + int(0.08 * EMU)
+
+    def _ys(n, h):
+        return [SHAPES_TOP + i * (h + V_GAP) for i in range(n)]
+
+    cluster_ys = _ys(len(clusters), C_H)
+    c_total_h  = len(clusters) * (C_H + V_GAP) - V_GAP if clusters else C_H
+
+    tcol_ys = {}
+    for ct, nodes, tw, th, *_ in tcols:
+        ys = _ys(len(nodes), th)
+        t_total = len(nodes) * (th + V_GAP) - V_GAP if nodes else th
+        offset  = max((c_total_h - t_total) // 2, 0)
+        tcol_ys[ct] = [y + offset for y in ys]
+
+    max_right_h = max(
+        (len(nodes) * (th + V_GAP) - V_GAP
+         for _, nodes, _, th, *_ in tcols), default=0)
+    total_h = SHAPES_TOP + max(c_total_h, max_right_h) + int(0.20 * EMU)
+
+    # Position lookup: id → (left_x, top_y, width, height)
+    pos = {}
+    for i, cl in enumerate(clusters):
+        pos[cl["id"]] = (col_x["cluster"], cluster_ys[i], C_W, C_H)
+    for ct, nodes, tw, th, *_ in tcols:
+        for i, n in enumerate(nodes):
+            pos[n["id"]] = (col_x[ct], tcol_ys[ct][i], tw, th)
+
+    # ── Shape ID counter ─────────────────────────────────────────────────
+    _sid = [200]
+    def _nid():
+        _sid[0] += 1;  return _sid[0]
+
+    # ── XML element helper ───────────────────────────────────────────────
+    def _mk(tag, attrib=None, text=None):
+        el = OxmlElement(tag)
+        for k, v in (attrib or {}).items():
+            el.set(k if ':' not in k else qn(k), str(v))
+        if text is not None:
+            el.text = str(text)
+        return el
+
+    def _anchor_frame(sid, x, y, w, h, z=0):
+        """Build wp:anchor → a:graphic → a:graphicData; return (anchor, gd)."""
+        anc = _mk('wp:anchor', {
+            'distT': '0', 'distB': '0', 'distL': '0', 'distR': '0',
+            'simplePos': '0',
+            'relativeHeight': str(251660000 + z + sid),
+            'behindDoc': '0', 'locked': '0',
+            'layoutInCell': '1', 'allowOverlap': '1',
+        })
+        anc.append(_mk('wp:simplePos', {'x': '0', 'y': '0'}))
+        ph = _mk('wp:positionH', {'relativeFrom': 'column'})
+        ph.append(_mk('wp:posOffset', text=str(int(x))))
+        anc.append(ph)
+        pv = _mk('wp:positionV', {'relativeFrom': 'paragraph'})
+        pv.append(_mk('wp:posOffset', text=str(int(y))))
+        anc.append(pv)
+        anc.append(_mk('wp:extent', {'cx': str(int(w)), 'cy': str(int(h))}))
+        anc.append(_mk('wp:effectExtent',
+                        {'l': '0', 't': '0', 'r': '19050', 'b': '19050'}))
+        anc.append(_mk('wp:wrapNone'))
+        anc.append(_mk('wp:docPr', {'id': str(sid), 'name': f'Shape{sid}'}))
+        anc.append(_mk('wp:cNvGraphicFramePr'))
+        gr  = _mk('a:graphic')
+        gd  = _mk('a:graphicData', {
+            'uri': 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'})
+        gr.append(gd)
+        anc.append(gr)
+        return anc, gd
+
+    def _append_to_para(para, anchor):
+        r   = _mk('w:r')
+        dwg = _mk('w:drawing')
+        dwg.append(anchor)
+        r.append(dwg)
+        para._p.append(r)
+
+    # ── Add a filled shape with text ─────────────────────────────────────
+    def _shape(para, x, y, w, h, geom, fill, stroke,
+               text_lines, fsz=10, fclr="FFFFFF", z=100):
+        sid = _nid()
+        anc, gd = _anchor_frame(sid, x, y, w, h, z)
+
+        wsp = _mk('wps:wsp')
+        wsp.append(_mk('wps:cNvSpPr'))
+
+        spPr = _mk('wps:spPr')
+        xfrm = _mk('a:xfrm')
+        xfrm.append(_mk('a:off', {'x': '0', 'y': '0'}))
+        xfrm.append(_mk('a:ext', {'cx': str(int(w)), 'cy': str(int(h))}))
+        spPr.append(xfrm)
+        pg = _mk('a:prstGeom', {'prst': geom})
+        pg.append(_mk('a:avLst'))
+        spPr.append(pg)
+        sf = _mk('a:solidFill');  sf.append(_mk('a:srgbClr', {'val': fill}))
+        spPr.append(sf)
+        ln = _mk('a:ln', {'w': '12700'})
+        lf = _mk('a:solidFill');  lf.append(_mk('a:srgbClr', {'val': stroke}))
+        ln.append(lf);  spPr.append(ln)
+        wsp.append(spPr)
+
+        # Text body
+        txbx = _mk('wps:txbx')
+        tc   = _mk('w:txbxContent')
+        for idx, line in enumerate(text_lines):
+            wp  = _mk('w:p')
+            pPr = _mk('w:pPr')
+            pPr.append(_mk('w:jc', {'w:val': 'center'}))
+            sp = _mk('w:spacing')
+            sp.set(qn('w:after'), '0')
+            sp.set(qn('w:line'), '216')
+            sp.set(qn('w:lineRule'), 'auto')
+            pPr.append(sp)
+            wp.append(pPr)
+            wr  = _mk('w:r')
+            rPr = _mk('w:rPr')
+            rPr.append(_mk('w:color', {'w:val': fclr}))
+            fs = fsz if idx == 0 else max(fsz - 1, 7)
+            rPr.append(_mk('w:sz',   {'w:val': str(fs * 2)}))
+            rPr.append(_mk('w:szCs', {'w:val': str(fs * 2)}))
+            if idx == 0:
+                rPr.append(_mk('w:b'));  rPr.append(_mk('w:bCs'))
+            wr.append(rPr)
+            t = _mk('w:t')
+            t.set(qn('xml:space'), 'preserve')
+            t.text = line
+            wr.append(t)
+            wp.append(wr)
+            tc.append(wp)
+        txbx.append(tc)
+        wsp.append(txbx)
+
+        bPr = _mk('wps:bodyPr', {
+            'anchor': 'ctr', 'anchorCtr': '0', 'wrap': 'square',
+            'lIns': '91440', 'tIns': '36576',
+            'rIns': '91440', 'bIns': '36576',
+        })
+        wsp.append(bPr)
+        gd.append(wsp)
+        _append_to_para(para, anc)
+
+    # ── Add a connector arrow ────────────────────────────────────────────
+    def _connector(para, x1, y1, x2, y2, color, z=50):
+        sid  = _nid()
+        bx   = min(x1, x2)
+        by   = min(y1, y2)
+        cx   = abs(x2 - x1) or 1
+        cy   = abs(y2 - y1) or 1
+        anc, gd = _anchor_frame(sid, bx, by, cx, cy, z)
+
+        wsp = _mk('wps:wsp')
+        wsp.append(_mk('wps:cNvCnPr'))
+        spPr = _mk('wps:spPr')
+        xfrm = _mk('a:xfrm')
+        if x2 < x1: xfrm.set('flipH', '1')
+        if y2 < y1: xfrm.set('flipV', '1')
+        xfrm.append(_mk('a:off', {'x': '0', 'y': '0'}))
+        xfrm.append(_mk('a:ext', {'cx': str(int(cx)), 'cy': str(int(cy))}))
+        spPr.append(xfrm)
+        pg = _mk('a:prstGeom', {'prst': 'straightConnector1'})
+        pg.append(_mk('a:avLst'))
+        spPr.append(pg)
+        ln = _mk('a:ln', {'w': '19050'})
+        lf = _mk('a:solidFill');  lf.append(_mk('a:srgbClr', {'val': color}))
+        ln.append(lf)
+        ln.append(_mk('a:tailEnd', {'type': 'triangle', 'w': 'med', 'len': 'med'}))
+        spPr.append(ln)
+        wsp.append(spPr)
+        wsp.append(_mk('wps:bodyPr'))
+        gd.append(wsp)
+        _append_to_para(para, anc)
+
+    # ── Column label (no-fill text shape) ────────────────────────────────
+    def _label(para, x, w, text, color, z=200):
+        _shape(para, x, 0, w, LABEL_H, "rect", "FFFFFF", "FFFFFF",
+               [text], fsz=9, fclr=color, z=z)
+
+    # ── Build the diagram ────────────────────────────────────────────────
+    p_diag = doc.add_paragraph()
+    p_diag.paragraph_format.space_after = Emu(total_h + int(0.15 * EMU))
+
+    # Column labels
+    _label(p_diag, col_x["cluster"], C_W, "Source Clusters", CLR_CLUSTER)
+    for ct, _, tw, *rest in tcols:
+        _label(p_diag, col_x[ct], tw, rest[-1], rest[2])  # rest[-1]=label, rest[2]=fill
+
+    # Connectors (draw first → lower z-order)
+    drawn = set()
+    for e in edges:
+        key = (e["src"], e["tgt"])
+        if key in drawn:
+            continue
+        drawn.add(key)
+        sp = pos.get(e["src"])
+        tp = pos.get(e["tgt"])
+        if not sp or not tp:
+            continue
+        sx = sp[0] + sp[2]            # right edge of source
+        sy = sp[1] + sp[3] // 2       # vertical center
+        tx = tp[0]                     # left edge of target
+        ty = tp[1] + tp[3] // 2       # vertical center
+        clr = {"repl": CLR_REPL, "arch": CLR_ARCH, "fk": CLR_FK}[e["type"]]
+        _connector(p_diag, sx, sy, tx, ty, clr)
+
+    # Source cluster shapes
+    for i, cl in enumerate(clusters):
+        wls = ", ".join(cl["workloads"]) if cl["workloads"] else ""
+        det = f"{cl['groups']} groups"
+        if cl["sources"]:
+            det += f" \u00b7 {cl['sources']} sources"
+        if cl["cap_tb"] > 0.01:
+            det += f" \u00b7 {cl['cap_tb']:.1f} TB"
+        lines = [cl["name"]]
+        if wls:
+            lines.append(wls)
+        lines.append(det)
+        _shape(p_diag, col_x["cluster"], cluster_ys[i], C_W, C_H,
+               "roundRect", CLR_CLUSTER, CLR_CLUSTER_S, lines, fsz=10)
+
+    # Target shapes
+    for ct, nodes, tw, th, geom, fill, stroke, label in tcols:
+        sub = {"repl": "Replication Target", "arch": "Archival Vault",
+               "fk": "FortKnox (Indelible)"}[ct]
+        for i, n in enumerate(nodes):
+            _shape(p_diag, col_x[ct], tcol_ys[ct][i], tw, th,
+                   geom, fill, stroke, [n["name"], sub], fsz=9)
+
+    # Caption
+    cap = doc.add_paragraph(
+        "Figure: Environment Topology \u2014 source clusters (green), "
+        "replication targets (blue), archival vaults (amber), "
+        "FortKnox (dark-green cloud). All shapes are editable in Word. "
+        "An editable draw.io diagram is also saved alongside this report."
+    )
+    cap.runs[0].font.size = Pt(8)
+    cap.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    return True
+
+
+# ── matplotlib PNG preview (fallback) ────────────────────────────────────────
 
 def _render_topology_png(all_data):
     """Render the environment topology as a PNG byte-string using matplotlib.
@@ -3982,10 +4299,10 @@ def _render_topology_png(all_data):
 
     # ── Figure setup ─────────────────────────────────────────────────────────
     FIG_W, FIG_H = 16.0, 9.0
-    HEADER_H = 0.56
+    HEADER_H = 0.0
     FOOTER_H = 0.60
 
-    CT = FIG_H - HEADER_H - 0.25   # content top
+    CT = FIG_H - 0.30               # content top (no header)
     CB = FOOTER_H + 0.15            # content bottom
     CH = CT - CB                    # content height
 
@@ -4047,18 +4364,10 @@ def _render_topology_png(all_data):
         for i, n in enumerate(nodes):
             pos[n["id"]] = (cx, type_ys[ctype][i])
 
-    # ── Header bar ────────────────────────────────────────────────────────────
-    ax.add_patch(plt.Rectangle((0, FIG_H - HEADER_H), FIG_W, HEADER_H,
-                                color=_DG_NAVY, zorder=5))
-    # Cohesity "C" arc suggestion — two quarter-circle arcs using a wedge
-    from matplotlib.patches import Wedge, Arc
-    ax.add_patch(Wedge((0.4, FIG_H - HEADER_H / 2), 0.18, 30, 330,
-                        width=0.07, color=_DG_TEAL, zorder=6))
-    ax.text(0.68, FIG_H - HEADER_H / 2, "COHESITY",
-            fontsize=12, fontweight="bold", color=_DG_TEAL,
-            va="center", ha="left", zorder=6)
-    ax.text(2.5, FIG_H - HEADER_H / 2, "│  Environment Topology",
-            fontsize=10.5, color="white", va="center", ha="left", zorder=6)
+    # ── Title ─────────────────────────────────────────────────────────────────
+    ax.text(FIG_W / 2, FIG_H - 0.15, "Environment Topology",
+            fontsize=14, fontweight="bold", color="#333333",
+            va="center", ha="center", zorder=6)
 
     # ── Footer / legend ───────────────────────────────────────────────────────
     ax.add_patch(plt.Rectangle((0, 0), FIG_W, FOOTER_H, color="#EDEDED", zorder=1))
@@ -4126,7 +4435,7 @@ def _render_topology_png(all_data):
         for j, line in enumerate(lines):
             ty = cy + (n - 1) / 2 * line_h - j * line_h
             fw = "bold" if (bold_first and j == 0) else "normal"
-            fs = 8.5 if j == 0 else 7.8
+            fs = 10.5 if j == 0 else 9.0
             ax.text(cx, ty, line, ha="center", va="center",
                     fontsize=fs, fontweight=fw, color="white", zorder=4,
                     clip_on=True)
@@ -4467,30 +4776,24 @@ def write_word(all_data, args):
         elif fk_st_t == "idle":
             _cell_shade(row_t[3], "FFF2CC")   # amber/yellow
 
-    # ── Topology diagram preview ──────────────────────────────────────────────
-    png_bytes = _render_topology_png(all_data)
-    if png_bytes:
-        from docx.shared import Inches
-        import io as _io
-        doc.add_paragraph("")
-        p_img = doc.add_paragraph()
-        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_img = p_img.add_run()
-        run_img.add_picture(_io.BytesIO(png_bytes), width=Inches(6.5))
-        cap = doc.add_paragraph(
-            "Figure: Environment Topology — clusters (teal), replication targets (blue), "
-            "archival vaults (amber), FortKnox/RPaaS (dark green). "
-            "An editable draw.io diagram is saved alongside this report "
-            "(.drawio — open with diagrams.net or draw.io desktop)."
-        )
-        cap.runs[0].font.size = Pt(8)
-        cap.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
-        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    else:
-        doc.add_paragraph(
-            "(Topology diagram preview requires matplotlib — "
-            "install with: pip install matplotlib)"
-        )
+    # ── Topology diagram ─────────────────────────────────────────────────────
+    # Primary: native Word shapes (editable). Fallback: matplotlib PNG.
+    if not _render_topology_word_shapes(doc, all_data):
+        png_bytes = _render_topology_png(all_data)
+        if png_bytes:
+            from docx.shared import Inches
+            import io as _io
+            doc.add_paragraph("")
+            p_img = doc.add_paragraph()
+            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run_img = p_img.add_run()
+            run_img.add_picture(_io.BytesIO(png_bytes), width=Inches(6.5))
+            cap = doc.add_paragraph(
+                "Figure: Environment Topology (PNG fallback)."
+            )
+            cap.runs[0].font.size = Pt(8)
+            cap.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_page_break()
 
@@ -4604,12 +4907,53 @@ def write_word(all_data, args):
                                   admins_no_mfa_w,
                                   f"{cd['scores']['security']}/100"]):
             row[i].text = str(val)
-        # Highlight admin MFA cell red when non-zero
-        if admins_no_mfa_w > 0:
-            _cell_shade(row[8], "FF4C4C")
-            for run in row[8].paragraphs[0].runs:
-                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                run.font.bold = True
+
+        # ── Color-code every security column ──────────────────────────────
+        def _sec_red(cell):
+            _cell_shade(cell, "FF4C4C")
+            for _r in cell.paragraphs[0].runs:
+                _r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                _r.font.bold = True
+
+        def _sec_green(cell):
+            _cell_shade(cell, "E2EFDA")
+
+        def _sec_amber(cell):
+            _cell_shade(cell, "FFF2CC")
+            for _r in cell.paragraphs[0].runs:
+                _r.font.bold = True
+
+        # Col 1 — Cluster Encryption
+        (_sec_green if cluster_enc_s else _sec_red)(row[1])
+        # Col 2 — SD Encryption
+        if sd_enc_str_s == "Yes":   _sec_green(row[2])
+        elif sd_enc_str_s == "No":  _sec_red(row[2])
+        # Col 3 — Vault
+        (_sec_green if has_vault else _sec_red)(row[3])
+        # Col 4 — FortKnox (Indelible)
+        if fk_st_s == "active":   _sec_green(row[4])
+        elif fk_st_s == "idle":   _sec_amber(row[4])
+        else:                     _sec_red(row[4])
+        # Col 5 — DataLock (WORM)
+        if dl_status_s in ("full_compliance", "full_any"):
+            _sec_green(row[5])
+        elif dl_status_s == "partial":
+            _sec_amber(row[5])
+        else:
+            _sec_red(row[5])
+        # Col 6 — Replication
+        (_sec_green if repl else _sec_red)(row[6])
+        # Col 7 — Quorum
+        if quorum_str_s == "Yes":   _sec_green(row[7])
+        elif quorum_str_s == "No":  _sec_red(row[7])
+        # Col 8 — Admins w/o MFA
+        if admins_no_mfa_w > 0:     _sec_red(row[8])
+        else:                       _sec_green(row[8])
+        # Col 9 — Score
+        sec_val = cd["scores"]["security"]
+        if sec_val >= 75:      _sec_green(row[9])
+        elif sec_val >= 50:    _sec_amber(row[9])
+        else:                  _sec_red(row[9])
     doc.add_page_break()
 
     # ── 6. Agent Health & Source Coverage ────────────────────────────────────
