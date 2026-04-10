@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.32**
+**Current version: 1.34**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
@@ -15,7 +15,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | # | Sheet | Contents |
 |---|-------|----------|
 | 1 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, top finding |
-| 2 | Infrastructure | Software version, node count, healthy nodes, encryption, FIPS, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS |
+| 2 | Infrastructure | Software version, node count, healthy nodes, cluster encryption, SD encryption, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS |
 | 3 | Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status |
 | 4 | **Disk Health** | Per-disk status, type, model, serial, **SSD wear %**, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
 | 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes, **DataLock (WORM) per group** |
@@ -23,7 +23,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy, compliance gaps, group count |
 | 8 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
 | 9 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 10 | Security | **Expanded 18-column checklist**: encryption, FIPS, vault, FortKnox, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **DataLock (WORM)**, TLS cert expiry |
+| 10 | Security | **Expanded 19-column checklist**: cluster encryption, SD encryption, vault, FortKnox/indelible, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **Quorum**, **DataLock (WORM)**, TLS cert expiry |
 | 11 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
 | 12 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
 | 13 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
@@ -40,14 +40,14 @@ Narrative report suitable for printing or sharing with customers:
 
 - Cover page (customer name, date, confidential notice)
 - Executive Summary with per-cluster scorecard table
-- Environment Overview (infrastructure table)
+- Environment Overview — infrastructure table (cluster enc, SD enc) + software lifecycle + **Environment Topology** table (clusters → replication → archival → FortKnox)
 - Protection & Recovery Health
 - Storage & Capacity
-- Security Posture
-- **Agent Health & Source Coverage** — agent status summary, unprotected source count
+- Security Posture — updated table: cluster enc, SD enc, indelible (FK/DL), Quorum; FIPS removed
+- **Agent Health & Source Coverage** — agent status summary with compatibility doc reference; unprotected source count
 - **User Security** — per-cluster user table with MFA and locked account counts
 - Prioritized Recommendations table
-- Appendix: scoring methodology and thresholds
+- Appendix: scoring methodology and thresholds (updated 6-dimension security score)
 
 ---
 

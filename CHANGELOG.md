@@ -7,6 +7,27 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] feat(health_check): split encryption, DataLock per-group, Quorum, indelible language, topology (v1.34)
+
+### Changed — `health_check/health_check_report.py`
+- **Split Encryption**: FIPS column removed from Excel Security and Infrastructure sheets and Word doc Environment table. Replaced with two columns: "Cluster Encryption" (cluster-wide) and "SD Encryption" (all storage domains). New helper `_sd_enc_status(cd)` returns `(cluster_enc: bool, sd_enc: bool|None)`.
+- **DataLock per-group coverage**: `_cluster_datalock(policies, groups)` now returns a 4-tuple `(status, label, covered, total)`. Status can be `full_compliance`, `full_any`, `partial`, or `none`. Security sheet and Recommendations show "Partial — X/Y groups" when coverage is incomplete.
+- **Security score redesign**: 6 dimensions totalling 100 pts: cluster enc (15) + SD enc (15) + vault (15) + replication (15) + FortKnox/indelible (20) + DataLock (20). Partial DataLock earns proportional credit.
+- **Quorum column** added to Security sheet (col 16). Probes `info.quorumEnabled`, `info.quorumConfig.enabled`, `info.isQuorumEnabled`. Shows N/A for direct-cluster mode (Helios-only feature). "Quorum not enabled" added to Gaps when Quorum is No.
+- **Indelible language**: "FortKnox / Indelible" replaces all "Immutability"/"Immutable" references in Security sheet, Recommendations, and Word doc. Narrative explains the distinction between Cohesity's always-immutable filesystem and DataLock indelible snapshots.
+- **Agent compatibility recommendation**: now uses MEDIUM priority with soft language ("MAY cause issues") and references the Cohesity agent compatibility doc URL.
+- **Word doc**: Environment Overview table columns updated (Cluster Enc + SD Enc). Security table updated (8 cols: removed FIPS, added SD Enc + Quorum). New "Environment Topology" section with a 4-column table (Source Cluster → Replication Targets → Archival Targets → FortKnox Vaults). Appendix scoring model updated to describe 6-dimension security score.
+
+---
+
+## [2026-04-09] fix(health_check): hostname vs IP routing + domain name fix (v1.33)
+
+### Fixed — `health_check/health_check_report.py`
+- **Agent Health**: `_split_host_ip()` helper routes values to Host or IP Address column based on content (IPv4/IPv6 pattern detection), not field name. Fixes previously empty Host column.
+- **Infrastructure Domain** (col K): strips the cluster hostname prefix from `domainNames[0]` so only the domain suffix is shown.
+
+---
+
 ## [2026-04-09] feat(health_check): DataLock in Protection Health + FortKnox Data Transfer sheet (v1.32)
 
 ### Added — `health_check/health_check_report.py`

@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.33
+health_check_report.py  v1.34
 
 Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -80,6 +80,15 @@ Requirements
 
 Version history
 ───────────────
+  1.34 (2026-04-10) — feat: replace FIPS with split Cluster/SD Encryption columns
+                     across Excel Security sheet, Infrastructure sheet, and Word doc.
+                     DataLock coverage now per-group (partial compliance shown as
+                     "X/Y groups"). Security score redesigned: 6 dimensions totalling
+                     100 pts. Add Quorum column to Security sheet (N/A for direct
+                     mode). Rename "Immutability"→"Indelible" throughout. Agent
+                     upgrade recommendation uses softer "MAY cause issues" language
+                     with compatibility doc URL. Word doc gains Environment Topology
+                     table (clusters → replication → archival → FortKnox).
   1.33 (2026-04-09) — fix: Agent Health — hostname vs IP routing by content:
                      new _split_host_ip() helper inspects each value and routes
                      it to Host or IP Address column based on whether it matches
@@ -320,7 +329,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.33"
+__version__ = "1.34"
 
 import argparse
 import datetime
@@ -1089,31 +1098,58 @@ def _fk_status(cd):
 
 
 def _score_security(cd):
-    """0-100: 20 pts each for encryption, FIPS, vault, replication, immutability."""
-    info     = cd["info"]
+    """0-100 security score across 6 dimensions (no FIPS — requires cluster rebuild).
+
+    Cluster Encryption  15 pts — cluster-wide encryption at rest enabled
+    SD Encryption       15 pts — all storage domains encrypted (0 if any unencrypted)
+    Vault configured    15 pts — at least one archival target exists
+    Replication         15 pts — at least one replication target exists
+    FortKnox/Indelible  20 pts — 20=active, 10=configured-idle, 0=absent
+    DataLock (WORM)     20 pts — 20=full Compliance, 15=full any mode,
+                                  8=partial ≥50%, 3=partial <50%, 0=none
+    """
     vaults   = cd["vaults"]
     policies = cd["policies"]
+    groups   = cd["groups"]
     score    = 0
-    # Encryption
-    _enc_cfg_sc = info.get("encryptionConfig")
-    if info.get("encryptionEnabled") or \
-       (isinstance(_enc_cfg_sc, dict) and _enc_cfg_sc.get("encryptionEnabled")):
-        score += 20
-    # FIPS
-    if info.get("fipsCompliant") or info.get("fipsEnabled"):
-        score += 20
-    # Vault configured
+
+    # Cluster encryption (15 pts)
+    cluster_enc, sd_enc = _sd_enc_status(cd)
+    if cluster_enc:
+        score += 15
+
+    # Storage domain encryption (15 pts)
+    if sd_enc is True:
+        score += 15
+    elif sd_enc is None and cluster_enc:
+        score += 8   # No domain data but cluster enc is on — partial credit
+
+    # Vault (15 pts)
     if vaults:
-        score += 20
-    # Replication
+        score += 15
+
+    # Replication (15 pts)
     if any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
            for p in policies):
-        score += 20
-    fk = _fk_status({"vaults": vaults, "policies": policies, "groups": cd["groups"]})
+        score += 15
+
+    # FortKnox / Indelible archival (20 pts)
+    fk = _fk_status({"vaults": vaults, "policies": policies, "groups": groups})
     if fk == "active":
         score += 20
     elif fk == "idle":
-        score += 10   # Configured but not sending — partial credit
+        score += 10
+
+    # DataLock coverage (20 pts)
+    dl_status, _, covered, total = _cluster_datalock(policies, groups)
+    if dl_status == "full_compliance":
+        score += 20
+    elif dl_status == "full_any":
+        score += 15
+    elif dl_status == "partial" and total > 0:
+        pct = covered / total
+        score += 8 if pct >= 0.5 else 3
+
     return score
 
 
@@ -1240,20 +1276,23 @@ def _build_recommendations(cd):
                 "Continued growth risks backup failures within weeks"))
 
     # ── Security ─────────────────────────────────────────────────────────────
-    _enc_cfg_r = info.get("encryptionConfig")
-    enc = info.get("encryptionEnabled") or \
-          (isinstance(_enc_cfg_r, dict) and _enc_cfg_r.get("encryptionEnabled"))
-    if not enc:
+    cluster_enc, sd_enc = _sd_enc_status(cd)
+    if not cluster_enc:
         recs.append(_r("HIGH", "Security",
-            "Encryption at rest is not enabled",
-            "Enable data-at-rest encryption from cluster security settings",
-            "Physical media removal exposes customer data"))
-
-    if not (info.get("fipsCompliant") or info.get("fipsEnabled")):
+            "Cluster-wide encryption at rest is not enabled",
+            "Enable cluster-wide encryption during cluster setup (requires rebuild if "
+            "not done at creation time); enable storage domain encryption as an interim step",
+            "Unencrypted data on physical media is exposed if drives are removed or stolen"))
+    if sd_enc is False:
+        recs.append(_r("HIGH", "Security",
+            "One or more storage domains are not encrypted",
+            "Enable encryption on all storage domains under cluster security settings",
+            "Unencrypted storage domains expose data on physical media removal"))
+    elif sd_enc is None and not cluster_enc:
         recs.append(_r("MEDIUM", "Security",
-            "FIPS compliance mode is not enabled",
-            "Enable FIPS mode if required by security or compliance policy",
-            "May not satisfy regulated-industry compliance requirements"))
+            "Unable to verify storage domain encryption — cluster encryption is off",
+            "Review storage domain encryption settings and enable where missing",
+            "Unencrypted storage domains expose data if media is removed"))
 
     if not vaults:
         recs.append(_r("MEDIUM", "Security",
@@ -1264,34 +1303,41 @@ def _build_recommendations(cd):
     fk_st = _fk_status(cd)
     if fk_st == "none":
         recs.append(_r("MEDIUM", "Security",
-            "No immutable/FortKnox archival target detected",
+            "No indelible/FortKnox archival target detected",
             "Configure FortKnox or WORM archival to protect against ransomware",
-            "Without immutability, backups can be deleted or encrypted by attackers"))
+            "Without an indelible copy, all backups can be deleted or encrypted by attackers"))
     elif fk_st == "idle":
         recs.append(_r("HIGH", "Security",
             "FortKnox configured but no recent successful archival detected",
             "Verify protection group policies and schedules targeting FortKnox; "
             "check for failed archival runs and resolve blocking issues",
-            "Immutable copy is configured but data is not flowing — "
+            "Indelible copy is configured but data is not flowing — "
             "ransomware protection gap despite vault being present"))
 
-    dl_status, _ = _cluster_datalock(policies)
+    dl_status, dl_label, dl_covered, dl_total = _cluster_datalock(policies, groups)
     if dl_status == "none":
         recs.append(_r("MEDIUM", "Security",
-            "No policies have DataLock (WORM) enabled on local backup retention",
+            "No protection groups have DataLock (WORM) enabled",
             "Enable DataLock on protection policies — prefer Compliance mode to "
             "prevent any user or admin from deleting or shortening backup snapshots",
-            "Without DataLock, local backups can be deleted or modified by "
-            "ransomware or a compromised admin account; FortKnox alone does not "
-            "protect local snapshots"))
-    elif dl_status == "administrative":
+            "Without DataLock, local backups can be deleted or modified by ransomware "
+            "or a compromised admin; FortKnox alone does not protect local snapshots"))
+    elif dl_status == "partial":
+        ungrouped = dl_total - dl_covered
+        recs.append(_r("MEDIUM", "Security",
+            f"DataLock partially configured — {dl_covered}/{dl_total} groups protected; "
+            f"{ungrouped} group(s) have no DataLock on their governing policy",
+            "Review the Policy Audit tab and enable DataLock on policies covering "
+            "the unprotected groups; Compliance mode provides the strongest protection",
+            "Partial DataLock coverage leaves unprotected groups vulnerable to "
+            "admin-level or ransomware deletion of local snapshots"))
+    elif dl_status == "full_any":
         recs.append(_r("LOW", "Security",
-            "DataLock is set to Administrative mode on some policies — "
+            "DataLock covers all groups but some policies use Administrative mode — "
             "Compliance mode provides stronger protection",
-            "Upgrade DataLock from Administrative to Compliance mode on critical "
-            "policies to prevent admin-level deletion of backup snapshots",
+            "Upgrade DataLock from Administrative to Compliance mode on all policies",
             "Administrative mode DataLock can be overridden by a Cohesity admin; "
-            "Compliance mode is immutable even to admins"))
+            "Compliance mode is indelible even to admins"))
 
     has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
@@ -1432,6 +1478,27 @@ def _build_recommendations(cd):
             + (" and more" if len(unhealthy_agents) > 3 else ""),
             "Check agent connectivity, firewall rules, and reinstall if necessary",
             "Unhealthy agents silently prevent backups from running on affected hosts"))
+
+    upgradable_agents = []
+    for agent in (cd.get("agents") or []):
+        if not isinstance(agent, dict):
+            continue
+        upg = (agent.get("upgradability") or agent.get("upgradable") or "")
+        if "upgradable" in upg.lower():
+            _rh, _ri = _split_host_ip(
+                agent.get("hostName") or agent.get("host") or "",
+                agent.get("hostIp") or "")
+            upgradable_agents.append(_rh or _ri or "unknown")
+    if upgradable_agents:
+        examples = ", ".join(upgradable_agents[:3])
+        recs.append(_r("MEDIUM", "Agent Health",
+            f"{len(upgradable_agents)} agent(s) are running older versions and may be "
+            f"upgraded: {examples}" + (" and more" if len(upgradable_agents) > 3 else ""),
+            "Review agent compatibility matrix and upgrade agents where appropriate — "
+            "see https://docs.cohesity.com/7_4/Web/UserGuide/Content/ReleaseNotes/"
+            "agent-compatibility.htm for supported back-versions",
+            "Outdated agents MAY cause issues with newer cluster features; Cohesity "
+            "supports a limited range of back-versions — check compatibility docs"))
 
     # ── Disk health and SSD wear ──────────────────────────────────────────────
     failed_disks = [d for d in (cd.get("disks") or [])
@@ -1639,7 +1706,7 @@ def _sheet_infrastructure(wb, all_data):
     cols = ["Cluster", "Software Version", "SW Lifecycle Status", "SW EOS Date", "Days to EOS",
             "Cluster Type", "Cluster ID", "Node Count", "Healthy Nodes", "Disk Count",
             "Domain", "DNS Servers", "NTP Servers", "Timezone",
-            "Encryption", "FIPS", "Helios Status"]
+            "Cluster Encryption", "SD Encryption", "Helios Status"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -1660,10 +1727,7 @@ def _sheet_infrastructure(wb, all_data):
         days_to_eos = (sw_eos_date - today).days if sw_eos_date else ""
         eos_date_str = sw_eos_date.isoformat() if sw_eos_date else ("—" if sw_status == "current" else "Unknown")
 
-        _enc_cfg = info.get("encryptionConfig")
-        enc  = bool(info.get("encryptionEnabled") or
-                    (isinstance(_enc_cfg, dict) and _enc_cfg.get("encryptionEnabled")))
-        fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
+        cluster_enc, sd_enc = _sd_enc_status(cd)
         dns  = ", ".join(info.get("dnsServerIps") or [])
         # NTP: v1 API returns ntpSettings.ntpServers or a flat ntpServers list
         _ntp_s  = info.get("ntpSettings")
@@ -1684,13 +1748,14 @@ def _sheet_infrastructure(wb, all_data):
         else:
             domain = domain_raw
 
+        sd_enc_str = ("Yes" if sd_enc is True else "No" if sd_enc is False else "N/A")
         row = [cd["name"], sw_ver,
                sw_label, eos_date_str, days_to_eos,
                info.get("clusterType", ""), str(info.get("id", "")),
                len(nodes), healthy, disks if disks else "",
                domain, dns, ntp, info.get("timezone", ""),
-               "Yes" if enc else "No",
-               "Yes" if fips else "No",
+               "Yes" if cluster_enc else "No",
+               sd_enc_str,
                "Connected"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
@@ -1713,13 +1778,17 @@ def _sheet_infrastructure(wb, all_data):
             elif days_to_eos < SW_EOS_WARN_DAYS:
                 eos_cell.fill = _fill(ORANGE); eos_cell.font = _font(bold=True)
 
-        # color encryption / FIPS — now cols 15 and 16
+        # color Cluster Encryption (col 15) and SD Encryption (col 16)
         enc_cell = ws.cell(row=rn, column=15)
-        enc_cell.fill = _fill(LT_GREEN) if enc else _fill(RED)
-        enc_cell.font = _font(bold=True, color=WHITE if not enc else "000000")
-        fips_cell = ws.cell(row=rn, column=16)
-        fips_cell.fill = _fill(LT_GREEN) if fips else _fill(YELLOW)
-        fips_cell.font = _font(bold=True)
+        enc_cell.fill = _fill(LT_GREEN) if cluster_enc else _fill(RED)
+        enc_cell.font = _font(bold=True, color=WHITE if not cluster_enc else "000000")
+        sd_cell = ws.cell(row=rn, column=16)
+        if sd_enc is True:
+            sd_cell.fill = _fill(LT_GREEN); sd_cell.font = _font(bold=True)
+        elif sd_enc is False:
+            sd_cell.fill = _fill(RED);      sd_cell.font = _font(bold=True, color=WHITE)
+        else:
+            sd_cell.fill = _fill(YELLOW);   sd_cell.font = _font(bold=True)
 
         # Node health — now col 9
         if healthy < len(nodes):
@@ -2038,34 +2107,93 @@ def _policy_datalock_str(p):
     return "None"
 
 
-def _cluster_datalock(policies):
-    """Return (status, label) for the cluster-level DataLock rollup across all policies.
+def _sd_enc_status(cd):
+    """Return (cluster_enc, sd_enc) booleans for encryption state.
 
-    Checks both local retention dataLockConfig and archival target retention dataLockConfig.
-    status: "compliance" | "administrative" | "mixed" | "none"
+    cluster_enc: True if cluster-wide encryption is enabled.
+    sd_enc:      True if ALL storage domains have a non-empty encryptionType.
+                 None if no domain data is available (unknown).
     """
-    comp = False
-    adm  = False
+    info = cd["info"]
+    _enc_cfg = info.get("encryptionConfig")
+    cluster_enc = bool(info.get("encryptionEnabled") or
+                       (isinstance(_enc_cfg, dict) and _enc_cfg.get("encryptionEnabled")))
+    domains = [d for d in (cd.get("domains") or []) if isinstance(d, dict)]
+    if not domains:
+        return cluster_enc, None
+    sd_enc = all(
+        bool((d.get("storagePolicy") or {}).get("encryptionType", ""))
+        for d in domains
+    )
+    return cluster_enc, sd_enc
+
+
+def _cluster_datalock(policies, groups=None):
+    """Return (status, label, covered, total) for cluster-level DataLock coverage.
+
+    Computes coverage at the *protection group* level: a group is covered if its
+    governing policy has DataLock enabled (local retention or archival).
+
+    status: "full_compliance" | "full_any" | "partial" | "none"
+    label:  human-readable string, e.g. "Full Compliance" or "Partial — 8/15 groups"
+    covered: number of groups with DataLock
+    total:   total number of groups
+    """
+    # Build policy_id → datalock mode map
+    policy_dl = {}   # policy id → "compliance" | "administrative" | "none"
     for p in policies:
-        # Local retention
+        pid = p.get("id")
+        if not pid:
+            continue
+        # Check local retention
         s = _policy_datalock_str(p).lower()
-        if "compliance" in s:
-            comp = True
-        elif "admin" in s:
-            adm = True
-        # Archival target retention
-        for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
-            dlc = (t.get("retention") or {}).get("dataLockConfig")
-            if isinstance(dlc, dict):
-                m = (dlc.get("mode") or "").lower()
-                if "compliance" in m:
-                    comp = True
-                elif "admin" in m:
-                    adm = True
-    if comp and adm: return ("mixed",          "Mixed")
-    if comp:         return ("compliance",     "Compliance")
-    if adm:          return ("administrative", "Administrative")
-    return ("none", "None")
+        mode = ("compliance" if "compliance" in s
+                else "administrative" if "admin" in s else "none")
+        # Check archival target retention (upgrade to compliance if found)
+        if mode != "compliance":
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+                dlc = (t.get("retention") or {}).get("dataLockConfig")
+                if isinstance(dlc, dict):
+                    m = (dlc.get("mode") or "").lower()
+                    if "compliance" in m:
+                        mode = "compliance"; break
+                    elif "admin" in m and mode == "none":
+                        mode = "administrative"
+        policy_dl[pid] = mode
+
+    # Count group coverage
+    total   = len(groups) if groups else 0
+    covered_comp = 0
+    covered_any  = 0
+    if groups:
+        for g in groups:
+            pid  = g.get("policyId")
+            mode = policy_dl.get(pid, "none")
+            if mode == "compliance":
+                covered_comp += 1
+                covered_any  += 1
+            elif mode == "administrative":
+                covered_any += 1
+    covered = covered_any
+
+    if total == 0:
+        # No group data — fall back to policy-only detection
+        has_comp = any(v == "compliance" for v in policy_dl.values())
+        has_adm  = any(v == "administrative" for v in policy_dl.values())
+        if has_comp and not has_adm:
+            return ("full_compliance", "Compliance (all policies)", 0, 0)
+        if has_comp or has_adm:
+            return ("full_any", "Administrative / Mixed", 0, 0)
+        return ("none", "None", 0, 0)
+
+    if covered == 0:
+        return ("none", "None", 0, total)
+    if covered == total and covered_comp == total:
+        return ("full_compliance", "Full Compliance", covered, total)
+    if covered == total:
+        return ("full_any", f"Full — {covered_comp}/{total} Compliance mode", covered, total)
+    # Partial
+    return ("partial", f"Partial — {covered}/{total} groups", covered, total)
 
 
 def _sheet_policies(wb, all_data):
@@ -2260,15 +2388,16 @@ def _sheet_security(wb, all_data):
     import datetime as _dt
     ws = wb.create_sheet("Security")
     ws.freeze_panes = "A3"
-    _title(ws, "Security Posture — Checklist vs Best Practices", "R")
+    _title(ws, "Security Posture — Checklist vs Best Practices", "S")
 
-    cols = ["Cluster", "Encryption at Rest", "FIPS Mode",
-            "Vault Configured", "FortKnox / Immutable",
+    cols = ["Cluster", "Cluster Encryption", "SD Encryption",
+            "Vault Configured", "FortKnox / Indelible",
             "Replication", "Archival",
             "Min Local Retention", "Min Archival Retention",
             "Security Score /100",
             "Audit Log", "NTP Auth", "Remote Tunnel",
             "Cluster MFA", "SSO / IDP",
+            "Quorum",
             "DataLock (WORM)",
             "Soonest Cert Expiry",
             "Gaps"]
@@ -2307,10 +2436,7 @@ def _sheet_security(wb, all_data):
         policies = cd["policies"]
         scores   = cd["scores"]
 
-        _enc_cfg_s = info.get("encryptionConfig")
-        enc  = bool(info.get("encryptionEnabled") or
-                    (isinstance(_enc_cfg_s, dict) and _enc_cfg_s.get("encryptionEnabled")))
-        fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
+        cluster_enc, sd_enc = _sd_enc_status(cd)
         has_vault = bool(vaults)
         fk_st    = _fk_status(cd)
         has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
@@ -2345,6 +2471,17 @@ def _sheet_security(wb, all_data):
         )
         has_sso = bool(cd.get("idps"))
 
+        # Quorum — Helios feature; check info dict for known field names
+        # Only meaningful in Helios mode (direct-cluster mode shows N/A)
+        is_helios = cd.get("id") is not None and not cd.get("quick", False) or True
+        _quorum = (info.get("quorumEnabled")
+                   or info.get("quorumConfig", {}).get("enabled")
+                   or info.get("isQuorumEnabled"))
+        if cd.get("mode") == "direct":
+            quorum_str = "N/A"
+        else:
+            quorum_str = "Yes" if _quorum else "No"
+
         # Soonest TLS cert expiry
         cert_expiry_str = ""
         soonest_days    = None
@@ -2365,31 +2502,36 @@ def _sheet_security(wb, all_data):
                 soonest_days    = d
                 cert_expiry_str = f"{exp_dt.isoformat()} ({d}d)"
 
-        dl_status, dl_label = _cluster_datalock(policies)
+        dl_status, dl_label, dl_covered, dl_total = _cluster_datalock(policies,
+                                                                      cd["groups"])
 
         gaps = []
-        if not enc:              gaps.append("No encryption")
-        if not fips:             gaps.append("FIPS off")
-        if not has_vault:        gaps.append("No vault")
-        if fk_st == "none":      gaps.append("No immutability")
-        if fk_st == "idle":      gaps.append("FK configured — not sending data")
-        if not has_repl:         gaps.append("No replication")
-        if not has_arch:         gaps.append("No archival")
-        if dl_status == "none":  gaps.append("No DataLock")
-        if not audit_on:         gaps.append("Audit log off")
-        if not cluster_mfa:      gaps.append("No cluster MFA")
-        if not has_sso:          gaps.append("No SSO")
+        if not cluster_enc:           gaps.append("No cluster encryption")
+        if sd_enc is False:           gaps.append("SD encryption missing")
+        if not has_vault:             gaps.append("No vault")
+        if fk_st == "none":           gaps.append("No indelible copy")
+        if fk_st == "idle":           gaps.append("FK configured — not sending data")
+        if not has_repl:              gaps.append("No replication")
+        if not has_arch:              gaps.append("No archival")
+        if dl_status == "none":       gaps.append("No DataLock")
+        if dl_status == "partial":    gaps.append(f"DataLock partial ({dl_covered}/{dl_total})")
+        if not audit_on:              gaps.append("Audit log off")
+        if not cluster_mfa:           gaps.append("No cluster MFA")
+        if not has_sso:               gaps.append("No SSO")
+        if quorum_str == "No":        gaps.append("Quorum not enabled")
         if soonest_days is not None and soonest_days < CERT_WARN_DAYS:
             gaps.append(f"Cert expires {soonest_days}d")
 
         fk_label = {"active": "Active", "idle": "Configured — Idle", "none": "No"}[fk_st]
         yn = lambda v: "Yes" if v else "No"
-        row = [cd["name"], yn(enc), yn(fips), yn(has_vault), fk_label,
+        sd_enc_str = ("Yes" if sd_enc is True else "No" if sd_enc is False else "N/A")
+        row = [cd["name"], yn(cluster_enc), sd_enc_str, yn(has_vault), fk_label,
                yn(has_repl), yn(has_arch),
                _min_local_days(policies), _min_arch_days(policies),
                scores["security"],
                yn(audit_on), yn(ntp_auth), yn(tunnel_on),
                yn(cluster_mfa), yn(has_sso),
+               quorum_str,
                dl_label,
                cert_expiry_str or "—",
                "; ".join(gaps) if gaps else "OK"]
@@ -2397,7 +2539,19 @@ def _sheet_security(wb, all_data):
         for c, val in enumerate(row, 1):
             ws.cell(row=rn, column=c, value=val).font = _font()
 
-        for col, flag in [(2, enc), (3, fips), (4, has_vault), (6, has_repl), (7, has_arch)]:
+        # Cluster Encryption col 2, SD Encryption col 3
+        ce_cell = ws.cell(row=rn, column=2)
+        ce_cell.fill = _fill(LT_GREEN) if cluster_enc else _fill(RED)
+        ce_cell.font = _font(bold=True, color=WHITE if not cluster_enc else "000000")
+        sd_cell = ws.cell(row=rn, column=3)
+        if sd_enc is True:
+            sd_cell.fill = _fill(LT_GREEN); sd_cell.font = _font(bold=True)
+        elif sd_enc is False:
+            sd_cell.fill = _fill(RED);      sd_cell.font = _font(bold=True, color=WHITE)
+        else:
+            sd_cell.fill = _fill(YELLOW);   sd_cell.font = _font(bold=True)
+
+        for col, flag in [(4, has_vault), (6, has_repl), (7, has_arch)]:
             cell = ws.cell(row=rn, column=col)
             cell.fill = _fill(LT_GREEN) if flag else _fill(RED)
             cell.font = _font(bold=True, color=WHITE if not flag else "000000")
@@ -2419,7 +2573,7 @@ def _sheet_security(wb, all_data):
         # Extended controls: audit(11), NTP auth(12), tunnel(13), MFA(14), SSO(15)
         for col, flag, warn_if_off in [
             (11, audit_on,    True),
-            (12, ntp_auth,    False),   # NTP auth yellow warning, not red
+            (12, ntp_auth,    False),
             (13, tunnel_on,   False),   # tunnel: yellow if on (reduce attack surface)
             (14, cluster_mfa, True),
             (15, has_sso,     False),
@@ -2435,25 +2589,35 @@ def _sheet_security(wb, all_data):
                 cell.fill = _fill(LT_GREEN) if flag else _fill(YELLOW)
                 cell.font = _font(bold=True)
 
-        # DataLock col 16 — three-state coloring
-        dl_cell = ws.cell(row=rn, column=16)
-        if dl_status == "compliance":
+        # Quorum col 16 — N/A for direct mode
+        qc = ws.cell(row=rn, column=16)
+        if quorum_str == "Yes":
+            qc.fill = _fill(LT_GREEN); qc.font = _font(bold=True)
+        elif quorum_str == "No":
+            qc.fill = _fill(YELLOW);   qc.font = _font(bold=True)
+        # N/A: no fill
+
+        # DataLock col 17 — four-state coloring
+        dl_cell = ws.cell(row=rn, column=17)
+        if dl_status == "full_compliance":
             dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
-        elif dl_status in ("administrative", "mixed"):
+        elif dl_status == "full_any":
+            dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
+        elif dl_status == "partial":
             dl_cell.fill = _fill(YELLOW);   dl_cell.font = _font(bold=True)
         else:
             dl_cell.fill = _fill(RED);      dl_cell.font = _font(bold=True, color=WHITE)
 
-        # Cert expiry col 17
+        # Cert expiry col 18
         if soonest_days is not None:
-            cc = ws.cell(row=rn, column=17)
+            cc = ws.cell(row=rn, column=18)
             if soonest_days < CERT_CRIT_DAYS:
                 cc.fill = _fill(RED);    cc.font = _font(bold=True, color=WHITE)
             elif soonest_days < CERT_WARN_DAYS:
                 cc.fill = _fill(ORANGE); cc.font = _font(bold=True)
 
     auto_fit_columns(ws)
-    ws.column_dimensions["R"].width = 60
+    ws.column_dimensions["S"].width = 60
 
 
 def _sheet_replication(wb, all_data):
@@ -3521,23 +3685,23 @@ def write_word(all_data, args):
     )
     t2 = doc.add_table(rows=1, cols=7)
     t2.style = "Table Grid"
-    _tbl_header(t2, ["Cluster", "Version", "Nodes", "Healthy", "Encryption", "FIPS", "Status"])
+    _tbl_header(t2, ["Cluster", "Version", "Nodes", "Healthy",
+                     "Cluster Enc", "SD Enc", "Status"])
     for cd in all_data:
         info  = cd["info"]
         nodes = cd["nodes"]
         healthy = sum(1 for n in nodes
                       if ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
                           or n.get("removalState") in (None, "kDontRemove")))
-        _enc_cfg_w = info.get("encryptionConfig")
-        enc  = bool(info.get("encryptionEnabled") or
-                    (isinstance(_enc_cfg_w, dict) and _enc_cfg_w.get("encryptionEnabled")))
-        fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
+        cluster_enc_w, sd_enc_w = _sd_enc_status(cd)
+        sd_enc_str_w = ("Yes" if sd_enc_w is True else
+                        "No"  if sd_enc_w is False else "N/A")
         status = "OK" if healthy == len(nodes) else f"WARN: {len(nodes)-healthy} node(s)"
         row = t2.add_row().cells
         for i, val in enumerate([cd["name"], info.get("clusterSoftwareVersion", ""),
                                   len(nodes), healthy,
-                                  "Yes" if enc else "No",
-                                  "Yes" if fips else "No", status]):
+                                  "Yes" if cluster_enc_w else "No",
+                                  sd_enc_str_w, status]):
             row[i].text = str(val)
 
     _h2("Software & Hardware Lifecycle")
@@ -3574,6 +3738,59 @@ def write_word(all_data, args):
         "service until February 2027. See the Node Hardware sheet in the Excel workbook for "
         "per-node EOL status."
     )
+
+    _h2("Environment Topology")
+    doc.add_paragraph(
+        "The table below shows each source cluster with its configured replication targets "
+        "and archival/vault destinations, including FortKnox vaults."
+    )
+    t_topo = doc.add_table(rows=1, cols=4)
+    t_topo.style = "Table Grid"
+    _tbl_header(t_topo, ["Source Cluster", "Replication Targets",
+                          "Archival Targets", "FortKnox Vaults"])
+    for cd in all_data:
+        policies_t = cd["policies"]
+        vaults_t   = cd["vaults"]
+
+        # Collect unique replication target names across all policies
+        repl_names = sorted({
+            (t.get("targetName")
+             or (t.get("remoteTargetConfig") or {}).get("clusterName")
+             or (t.get("remoteTargetConfig") or {}).get("name")
+             or "Unknown")
+            for p in policies_t
+            for t in ((p.get("remoteTargetPolicy") or {}).get("replicationTargets") or [])
+        })
+        # Collect unique archival target names (non-FortKnox)
+        arch_names = sorted({
+            (t.get("targetName")
+             or (t.get("archivalTargetConfig") or {}).get("name")
+             or (t.get("archivalTargetConfig") or {}).get("vaultName")
+             or "Unknown")
+            for p in policies_t
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
+            if (t.get("archivalTargetConfig") or {}).get("targetType", "") != "kFortKnox"
+        })
+        # FortKnox vault names from vaults list + policies
+        fk_names = sorted({
+            v.get("name") or "FortKnox"
+            for v in vaults_t
+            if v.get("vaultType") in ("kFortKnox", "kS3Compatible")
+        } | {
+            (t.get("targetName")
+             or (t.get("archivalTargetConfig") or {}).get("name")
+             or "FortKnox")
+            for p in policies_t
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
+            if (t.get("archivalTargetConfig") or {}).get("targetType") == "kFortKnox"
+        })
+
+        row_t = t_topo.add_row().cells
+        row_t[0].text = cd["name"]
+        row_t[1].text = "\n".join(repl_names) if repl_names else "None"
+        row_t[2].text = "\n".join(arch_names) if arch_names else "None"
+        row_t[3].text = "\n".join(fk_names)   if fk_names   else "None"
+
     doc.add_page_break()
 
     # ── 3. Protection & Recovery ───────────────────────────────────────────
@@ -3642,34 +3859,42 @@ def write_word(all_data, args):
     _h1("5. Security Posture")
     doc.add_paragraph(
         "The following checklist evaluates each cluster against Cohesity security "
-        "best practices. A fully hardened deployment enables encryption, FIPS, "
-        "at least one vault for archival, replication to a secondary cluster, "
-        "and FortKnox or WORM archival for immutable backups."
+        "best practices. A fully hardened deployment enables cluster-wide and "
+        "storage-domain encryption, at least one vault for archival, replication "
+        "to a secondary cluster, and FortKnox or DataLock archival for indelible "
+        "backups. Note: Cohesity's distributed filesystem is always immutable by "
+        "design; DataLock (WORM) makes individual snapshots indelible — permanently "
+        "retained even against administrator deletion."
     )
-    t5 = doc.add_table(rows=1, cols=7)
+    t5 = doc.add_table(rows=1, cols=8)
     t5.style = "Table Grid"
-    _tbl_header(t5, ["Cluster", "Encryption", "FIPS", "Vault",
-                      "Immutability", "Replication", "Score /100"])
+    _tbl_header(t5, ["Cluster", "Cluster Enc", "SD Enc", "Vault",
+                      "Indelible (FK/DL)", "Replication", "Quorum", "Score /100"])
     for cd in all_data:
-        info     = cd["info"]
         vaults   = cd["vaults"]
         policies = cd["policies"]
-        _enc_cfg_w2 = info.get("encryptionConfig")
-        enc  = bool(info.get("encryptionEnabled") or
-                    (isinstance(_enc_cfg_w2, dict) and _enc_cfg_w2.get("encryptionEnabled")))
-        fips = bool(info.get("fipsCompliant") or info.get("fipsEnabled"))
+        cluster_enc_s, sd_enc_s = _sd_enc_status(cd)
+        sd_enc_str_s = ("Yes" if sd_enc_s is True else
+                        "No"  if sd_enc_s is False else "N/A")
         has_vault = bool(vaults)
-        fk_v  = [v for v in vaults if v.get("vaultType") in ("kFortKnox", "kS3Compatible")]
-        immut = bool(fk_v) or any(
-            any((t.get("archivalTargetSettings") or {}).get("targetType") == "kFortKnox"
-                for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []))
-            for p in policies)
+        fk_st_s   = _fk_status(cd)
+        indelible = fk_st_s in ("active", "idle")
         repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
+        _info_s  = cd["info"]
+        _quorum_s = (_info_s.get("quorumEnabled")
+                     or (_info_s.get("quorumConfig") or {}).get("enabled")
+                     or _info_s.get("isQuorumEnabled"))
+        if cd.get("mode") == "direct":
+            quorum_str_s = "N/A"
+        else:
+            quorum_str_s = "Yes" if _quorum_s else "No"
         row = t5.add_row().cells
         yn  = lambda v: "Yes" if v else "No"
-        for i, val in enumerate([cd["name"], yn(enc), yn(fips),
-                                  yn(has_vault), yn(immut), yn(repl),
+        for i, val in enumerate([cd["name"],
+                                  yn(cluster_enc_s), sd_enc_str_s,
+                                  yn(has_vault), yn(indelible), yn(repl),
+                                  quorum_str_s,
                                   f"{cd['scores']['security']}/100"]):
             row[i].text = str(val)
     doc.add_page_break()
@@ -3698,7 +3923,10 @@ def write_word(all_data, args):
         f"The environment has {total_agents} registered host agent(s) across all clusters. "
         f"{unhealthy_ag} agent(s) are unhealthy or unreachable. "
         f"{upgradable_ag} agent(s) are eligible for upgrade. "
-        "Unhealthy or outdated agents silently prevent backups from running. "
+        "Unhealthy agents should be remediated promptly as they will prevent backups "
+        "from running. Agents running older versions MAY cause issues with newer cluster "
+        "features; Cohesity supports a limited range of back-versions — review the agent "
+        "compatibility matrix at docs.cohesity.com before upgrading. "
         "Refer to the Agent Health sheet in the Excel workbook for per-host detail."
     )
 
@@ -3796,7 +4024,11 @@ def write_word(all_data, args):
         "Health scores (0-100) are computed from five weighted dimensions: "
         "Protection success rate (25%), SLA compliance (20%), "
         "Infrastructure health (15%), Storage capacity (15%), "
-        "Security posture (15%), Alert health (10%)."
+        "Security posture (15%), Alert health (10%). "
+        "Within the Security posture dimension, the 100-point security score is "
+        "calculated across six areas: cluster encryption (15 pts), storage-domain "
+        "encryption (15 pts), vault configured (15 pts), replication (15 pts), "
+        "FortKnox/indelible copy (20 pts), and DataLock/WORM (20 pts)."
     )
     _h2("Thresholds")
     notes = [
@@ -3807,8 +4039,9 @@ def write_word(all_data, args):
         f"(e.g. some objects skipped) and are shown separately in the Warning column "
         f"for visibility.",
         f"RPO: Warning >{RPO_WARN_HOURS}h, Critical >{RPO_CRIT_HOURS}h since last success",
-        (f"Security: 20 pts each for encryption, FIPS, vault, "
-         f"replication, FortKnox/immutability"),
+        ("Security: cluster enc (15) + SD enc (15) + vault (15) + replication (15) "
+         "+ FortKnox/indelible (20) + DataLock (20) = 100 pts. "
+         "Partial DataLock coverage earns proportional credit."),
         f"Alert penalty: −10 pts per open critical, −2 pts per open warning",
         f"View quota: Warning ≥{VIEW_QUOTA_WARN_PCT}%, Critical ≥{VIEW_QUOTA_CRIT_PCT}%",
         f"Lookback period used for this report: {args.days} days",
