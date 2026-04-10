@@ -133,9 +133,9 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.44_AcmeCorp_20260410_1430.xlsx
-cohesity_health_check_v1.44_AcmeCorp_20260410_1430.docx
-cohesity_health_check_v1.44_AcmeCorp_20260410_1430.drawio
+cohesity_health_check_v1.45_AcmeCorp_20260410_1430.xlsx
+cohesity_health_check_v1.45_AcmeCorp_20260410_1430.docx
+cohesity_health_check_v1.45_AcmeCorp_20260410_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.

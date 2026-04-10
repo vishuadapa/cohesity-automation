@@ -7,6 +7,18 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): auth v1 failure visible + troubleshooting hints (v1.45)
+
+### Fixed — `utils/cohesity_auth.py` (v1.6) and `health_check/health_check_report.py` (inline fallback)
+
+- **v1 auth failure now visible**: `get_auth_token()` was silently catching the v1 `HTTPError` and falling through to v2 with no output. Now prints `[!] v1 endpoint failed (HTTP NNN) — trying v2 ...` so the user can see that both endpoints were tried.
+- **Final error message improved**: When both v1 and v2 fail, the error output now shows both responses and three actionable troubleshooting hints:
+  - `--clear-credentials` to wipe a stale stored password (most common cause)
+  - `--domain <AD_DOMAIN>` for Active Directory accounts (vs. LOCAL default)
+  - Check account status in Cohesity Access Management if locked/disabled
+
+---
+
 ## [2026-04-10] feat(health_check): Prereq check reports all 5 packages with full status table (v1.44)
 
 ### Changed — `health_check/health_check_report.py`

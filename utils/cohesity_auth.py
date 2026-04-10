@@ -34,6 +34,11 @@ Typical import pattern:
   )
 
 Version history:
+  1.6 (2026-04-10) — fix: get_auth_token() v1 failure is now printed as
+                     "[!] v1 endpoint failed (HTTP NNN) — trying v2 ..."
+                     instead of being silently swallowed. Final error message
+                     includes the v1 response and actionable troubleshooting
+                     hints (--clear-credentials, --domain, account locked).
   1.5 (2026-04-10) — fix: get_auth_token() now tries v1 endpoint first
                      (POST /irisservices/api/v1/public/accessTokens) then
                      falls back to v2 (POST /v2/users/sessions). The v1
@@ -60,7 +65,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.5"
+__version__ = "1.6"
 
 import getpass
 import sys
@@ -215,6 +220,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
     # ── Attempt 1 — v1 /public/accessTokens (works on all versions) ──────
     url_v1     = f"https://{cluster}/irisservices/api/v1/public/accessTokens"
     payload_v1 = {"username": username, "password": password, "domain": domain}
+    _v1_note   = ""
     try:
         r = requests.post(url_v1, json=payload_v1, headers=hdrs,
                           verify=False, timeout=30)
@@ -229,7 +235,8 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
         sys.exit(1)
     except requests.exceptions.HTTPError:
-        pass  # fall through to v2
+        _v1_note = f"HTTP {r.status_code}: {r.text[:120]}"
+        print(f"  [!] v1 endpoint failed ({r.status_code}) — trying v2 ...")
 
     # ── Attempt 2 — v2 /users/sessions ───────────────────────────────────
     url_v2     = f"https://{cluster}/v2/users/sessions"
@@ -249,9 +256,18 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         if r.status_code == 401 and "otp" in body.lower():
             print("ERROR: Cluster requires an MFA code. Re-run with --mfa-code <code>.")
             sys.exit(1)
-        print(f"ERROR: Authentication failed on both v1 and v2 endpoints.\n"
-              f"       v2 response: {e}\n       Body: {body}\n"
-              f"       Check username/password/domain and that the account is active.")
+        print(f"ERROR: Authentication failed on both endpoints.")
+        if _v1_note:
+            print(f"  v1: {_v1_note}")
+        print(f"  v2: {e}")
+        print(f"      {body}")
+        print()
+        print("  Troubleshooting:")
+        print("    • Wrong password?   Run --clear-credentials to wipe the stored")
+        print("      password, then retry (you will be prompted for the correct one).")
+        print(f"    • Wrong domain?    Use --domain <AD_DOMAIN> for AD accounts")
+        print(f"      (current: {domain}). Use LOCAL for local cluster accounts.")
+        print("    • Account locked?  Check Access Management in the Cohesity UI.")
         sys.exit(1)
     data         = r.json()
     access_token = data.get("accessToken", "")

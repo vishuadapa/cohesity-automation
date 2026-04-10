@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.44
+health_check_report.py  v1.45
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -84,6 +84,14 @@ Requirements
 
 Version history
 ───────────────
+  1.45 (2026-04-10) — fix: get_auth_token() v1 failure is no longer silently
+                     swallowed. Now prints "[!] v1 endpoint failed (HTTP NNN)
+                     — trying v2 ..." so the user can see both failures.
+                     Final error message includes v1 response details and
+                     actionable troubleshooting hints: run --clear-credentials
+                     to reset a stale stored password, use --domain for AD
+                     accounts, or check account status in the Cohesity UI.
+                     cohesity_auth.py v1.6.
   1.44 (2026-04-10) — feat: Prereq check now always reports ALL five packages
                      (requests, openpyxl, python-docx, matplotlib, keyring)
                      in a full status table — required vs optional, installed
@@ -560,8 +568,9 @@ except ImportError:
                 print("[*] No stored Helios API key found — nothing to clear.")
 
     def get_auth_token(cluster, username, password, domain, mfa_code=None):
-        _hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
+        _hdrs  = {"Content-Type": "application/json", "Accept": "application/json"}
         url_v1 = f"https://{cluster}/irisservices/api/v1/public/accessTokens"
+        _v1_note = ""
         try:
             r = requests.post(url_v1,
                               json={"username": username, "password": password,
@@ -577,7 +586,8 @@ except ImportError:
             print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
             sys.exit(1)
         except requests.exceptions.HTTPError:
-            pass
+            _v1_note = f"HTTP {r.status_code}: {r.text[:120]}"
+            print(f"  [!] v1 endpoint failed ({r.status_code}) — trying v2 ...")
         url_v2 = f"https://{cluster}/v2/users/sessions"
         pl2 = {"username": username, "password": password, "domain": domain}
         if mfa_code:
@@ -594,7 +604,18 @@ except ImportError:
             if r.status_code == 401 and "otp" in body.lower():
                 print("ERROR: Cluster requires MFA. Re-run with --mfa-code <code>.")
                 sys.exit(1)
-            print(f"ERROR: Authentication failed.\n  {e}\n  {body}")
+            print(f"ERROR: Authentication failed on both endpoints.")
+            if _v1_note:
+                print(f"  v1: {_v1_note}")
+            print(f"  v2: {e}")
+            print(f"      {body}")
+            print()
+            print("  Troubleshooting:")
+            print("    • Wrong password?   Run --clear-credentials to wipe the stored")
+            print("      password, then retry (you will be prompted for the correct one).")
+            print(f"    • Wrong domain?    Use --domain <AD_DOMAIN> for AD accounts")
+            print(f"      (current: {domain}). Use LOCAL for local cluster accounts.")
+            print("    • Account locked?  Check Access Management in the Cohesity UI.")
             sys.exit(1)
         data = r.json()
         token_val = data.get("accessToken", "")
