@@ -7,6 +7,19 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): Quorum from Helios API, FortKnox DataLock, Admin MFA scoring (v1.35)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **Quorum detection** (bug fix): the previous code probed `info.quorumEnabled` / `info.quorumConfig.enabled` / `info.isQuorumEnabled` from the per-cluster `/public/cluster` response — these fields don't exist there, so Quorum always showed "No". Fixed by fetching `GET /v2/mcm/quorum/groups` (Helios-level endpoint) once before per-cluster collection. New helper `_helios_quorum_groups(session, api_key, debug)` reads enabled quorum groups and their `clusterIdentifiers`. Each cluster is tagged `quorum_enabled=True/False` in the clusters list; this propagates to `cd["quorum_enabled"]`. `_sheet_security()` and `write_word()` now use `cd.get("quorum_enabled")` instead of the broken info-dict probe.
+
+### Added — `health_check/health_check_report.py`
+
+- **FortKnox implicit DataLock**: `_policy_datalock_str()` now returns `"FortKnox (Indelible)"` when a policy has a FortKnox/RPaaS archival target and no explicit WORM DataLock configured. FortKnox targets are indelible by design. In the Policy Audit sheet, these policies show green (same as Compliance) and do **not** receive a "No DataLock" gap flag.
+- **Admin MFA as security scoring dimension**: admin accounts without MFA now trigger a **HIGH** (previously MEDIUM) recommendation with updated description. Security score now applies a **−10 pt penalty** when any admin account lacks MFA, capping at 0. Score docstring updated to document the penalty.
+
+---
+
 ## [2026-04-10] feat(health_check): split encryption, DataLock per-group, Quorum, indelible language, topology (v1.34)
 
 ### Changed — `health_check/health_check_report.py`

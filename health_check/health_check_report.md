@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.34**
+**Current version: 1.35**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
 
@@ -20,7 +20,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 4 | **Disk Health** | Per-disk status, type, model, serial, **SSD wear %**, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
 | 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes, **DataLock (WORM) per group** |
 | 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
-| 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy, compliance gaps, group count |
+| 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy; FortKnox/RPaaS policies show **"FortKnox (Indelible)"** in green — not flagged as "No DataLock" |
 | 8 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
 | 9 | Alerts | All open alerts sorted by severity, with age, description, and entity |
 | 10 | Security | **Expanded 19-column checklist**: cluster encryption, SD encryption, vault, FortKnox/indelible, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **Quorum**, **DataLock (WORM)**, TLS cert expiry |
@@ -43,11 +43,11 @@ Narrative report suitable for printing or sharing with customers:
 - Environment Overview — infrastructure table (cluster enc, SD enc) + software lifecycle + **Environment Topology** table (clusters → replication → archival → FortKnox)
 - Protection & Recovery Health
 - Storage & Capacity
-- Security Posture — updated table: cluster enc, SD enc, indelible (FK/DL), Quorum; FIPS removed
+- Security Posture — table: cluster enc, SD enc, indelible (FK/DL), Quorum (live from Helios quorum API); FIPS removed
 - **Agent Health & Source Coverage** — agent status summary with compatibility doc reference; unprotected source count
-- **User Security** — per-cluster user table with MFA and locked account counts
+- **User Security** — per-cluster user table with MFA and locked account counts; admins without MFA flagged HIGH
 - Prioritized Recommendations table
-- Appendix: scoring methodology and thresholds (updated 6-dimension security score)
+- Appendix: scoring methodology and thresholds (security score: 6 dimensions + −10 admin MFA penalty)
 
 ---
 

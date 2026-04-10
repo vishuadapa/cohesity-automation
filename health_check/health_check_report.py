@@ -80,6 +80,15 @@ Requirements
 
 Version history
 ───────────────
+  1.35 (2026-04-10) — fix: Quorum detection now fetches Helios-level quorum groups
+                     via GET /v2/mcm/quorum/groups instead of probing per-cluster
+                     info dict (which never had quorum fields). quorum_enabled is
+                     resolved once for all clusters and stored in cd.
+                     feat: FortKnox implicit DataLock — policies archiving to
+                     FortKnox/RPaaS now show "FortKnox (Indelible)" (green) in
+                     Policy Audit DataLock column and are not flagged as "No DataLock".
+                     feat: Admin MFA elevated from MEDIUM → HIGH recommendation;
+                     missing admin MFA now deducts 10 pts from security score.
   1.34 (2026-04-10) — feat: replace FIPS with split Cluster/SD Encryption columns
                      across Excel Security sheet, Infrastructure sheet, and Word doc.
                      DataLock coverage now per-group (partial compliance shown as
@@ -329,7 +338,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.34"
+__version__ = "1.35"
 
 import argparse
 import datetime
@@ -690,6 +699,24 @@ def _vaults(session, h, debug):
              params={"includeFortKnoxVault": "true"}, debug=debug)
     return d or []
 
+
+def _helios_quorum_groups(session, api_key, debug):
+    """Fetch Helios-level quorum groups from /v2/mcm/quorum/groups.
+
+    This is a Helios-scoped endpoint — do NOT include accessClusterId in headers.
+    Returns a list of group dicts, each with:
+      isEnabled          — True/False
+      clusterIdentifiers — list of {"clusterId": <int>, ...}
+    """
+    h = make_helios_headers(api_key)   # no cluster_id — Helios-level call
+    d = _get(session, h, "/v2/mcm/quorum/groups", debug=debug, silent=True)
+    if isinstance(d, dict):
+        return d.get("quorumGroups") or []
+    if isinstance(d, list):
+        return d
+    return []
+
+
 def _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, debug):
     # API expects milliseconds; also requires vaultIds filter to return results
     params = {"startTimeMsecs": start_usecs // 1000,
@@ -904,11 +931,12 @@ def collect_cluster(session, api_key, cluster, args):
         "users":       users,
         "idps":        idps,
         "tenants":     tenants,
-        "start_usecs": start_usecs,
-        "end_usecs":   end_usecs,
-        "days":        args.days,
-        "quick":       args.quick,
-        "fk_data_1d":  fk_data_1d,
+        "start_usecs":    start_usecs,
+        "end_usecs":      end_usecs,
+        "days":           args.days,
+        "quick":          args.quick,
+        "fk_data_1d":     fk_data_1d,
+        "quorum_enabled": cluster.get("quorum_enabled", False),
     }
     cd["scores"]          = _compute_scores(cd, args.quick)
     cd["recommendations"] = _build_recommendations(cd)
@@ -1107,6 +1135,7 @@ def _score_security(cd):
     FortKnox/Indelible  20 pts — 20=active, 10=configured-idle, 0=absent
     DataLock (WORM)     20 pts — 20=full Compliance, 15=full any mode,
                                   8=partial ≥50%, 3=partial <50%, 0=none
+    Admin MFA penalty   -10 pts — deducted if any admin account lacks MFA
     """
     vaults   = cd["vaults"]
     policies = cd["policies"]
@@ -1149,6 +1178,16 @@ def _score_security(cd):
     elif dl_status == "partial" and total > 0:
         pct = covered / total
         score += 8 if pct >= 0.5 else 3
+
+    # Admin MFA penalty (-10 pts if any admin lacks MFA)
+    admin_roles = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
+    if any(
+        isinstance(u, dict)
+        and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+        and bool(set(u.get("roles") or []) & admin_roles)
+        for u in (cd.get("users") or [])
+    ):
+        score = max(0, score - 10)
 
     return score
 
@@ -1562,11 +1601,12 @@ def _build_recommendations(cd):
     ]
     if users_no_mfa:
         examples = ", ".join(users_no_mfa[:3])
-        recs.append(_r("MEDIUM", "Security",
+        recs.append(_r("HIGH", "Security",
             f"{len(users_no_mfa)} admin user(s) without MFA: {examples}"
             + (" and more" if len(users_no_mfa) > 3 else ""),
             "Enable MFA for all administrator accounts in Helios → Access Management",
-            "Admin accounts without MFA are vulnerable to credential theft attacks"))
+            "Admin accounts without MFA are the most common ransomware entry point; "
+            "a stolen credential gives full cluster access without MFA as a second factor"))
 
     # ── Audit log ─────────────────────────────────────────────────────────────
     info_local = cd["info"]
@@ -2090,10 +2130,14 @@ def _sched_str(s):
     return unit or ""
 
 def _policy_datalock_str(p):
-    """Return a display string for a single policy's local DataLock config.
+    """Return a display string for a single policy's DataLock / indelible config.
 
-    Reads backupPolicy.regular.retention.dataLockConfig (v2 API).
-    Returns e.g. "Compliance / 14 Days", "Administrative / 30 Days", or "None".
+    Priority:
+      1. Explicit local DataLock (backupPolicy.regular.retention.dataLockConfig).
+         Returns e.g. "Compliance / 14 Days" or "Administrative / 30 Days".
+      2. FortKnox / RPaaS archival target — indelible by design.
+         Returns "FortKnox (Indelible)".
+      3. Neither configured → "None".
     """
     bp  = p.get("backupPolicy") or {}
     reg = bp.get("regular") or {}
@@ -2104,6 +2148,14 @@ def _policy_datalock_str(p):
         dur  = dlc.get("duration")
         unit = dlc.get("unit", "Days")
         return f"{mode} / {dur} {unit}" if dur else mode
+    # No explicit WORM — check for FortKnox/RPaaS archival (implicit indelible)
+    _fk = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+    for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+        cfg   = t.get("archivalTargetConfig") or {}
+        tt    = (cfg.get("targetType") or t.get("targetType") or "").lower()
+        tname = (t.get("targetName") or cfg.get("name") or "").lower()
+        if any(x in tt for x in _fk) or "fortknox" in tt or "fortknox" in tname:
+            return "FortKnox (Indelible)"
     return "None"
 
 
@@ -2277,6 +2329,8 @@ def _sheet_policies(wb, all_data):
                 dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
             elif "admin" in dl_low:
                 dl_cell.fill = _fill(YELLOW);   dl_cell.font = _font(bold=True)
+            elif "fortknox" in dl_low:
+                dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
             else:
                 dl_cell.fill = _fill(RED);      dl_cell.font = _font(bold=True, color=WHITE)
 
@@ -2472,15 +2526,13 @@ def _sheet_security(wb, all_data):
         has_sso = bool(cd.get("idps"))
 
         # Quorum — Helios feature; check info dict for known field names
-        # Only meaningful in Helios mode (direct-cluster mode shows N/A)
-        is_helios = cd.get("id") is not None and not cd.get("quick", False) or True
-        _quorum = (info.get("quorumEnabled")
-                   or info.get("quorumConfig", {}).get("enabled")
-                   or info.get("isQuorumEnabled"))
+        # Quorum is a Helios-level feature (Security Center → Quorum).
+        # Data comes from GET /v2/mcm/quorum/groups fetched once before cluster
+        # collection and stored in cd["quorum_enabled"]. Direct mode = N/A.
         if cd.get("mode") == "direct":
             quorum_str = "N/A"
         else:
-            quorum_str = "Yes" if _quorum else "No"
+            quorum_str = "Yes" if cd.get("quorum_enabled") else "No"
 
         # Soonest TLS cert expiry
         cert_expiry_str = ""
@@ -3881,14 +3933,10 @@ def write_word(all_data, args):
         indelible = fk_st_s in ("active", "idle")
         repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
-        _info_s  = cd["info"]
-        _quorum_s = (_info_s.get("quorumEnabled")
-                     or (_info_s.get("quorumConfig") or {}).get("enabled")
-                     or _info_s.get("isQuorumEnabled"))
         if cd.get("mode") == "direct":
             quorum_str_s = "N/A"
         else:
-            quorum_str_s = "Yes" if _quorum_s else "No"
+            quorum_str_s = "Yes" if cd.get("quorum_enabled") else "No"
         row = t5.add_row().cells
         yn  = lambda v: "Yes" if v else "No"
         for i, val in enumerate([cd["name"],
@@ -4186,6 +4234,19 @@ def main():
             print("ERROR: No clusters returned from Helios.")
             sys.exit(1)
         auth_desc = "Helios API key"
+        # Fetch Helios-level quorum configuration and tag each cluster
+        _quorum_ids: set = set()
+        try:
+            for _qg in _helios_quorum_groups(session, api_key, args.debug):
+                if _qg.get("isEnabled"):
+                    for _ci in (_qg.get("clusterIdentifiers") or []):
+                        _cid = _ci.get("clusterId")
+                        if _cid is not None:
+                            _quorum_ids.add(int(_cid))
+        except Exception:
+            pass
+        for _c in clusters:
+            _c["quorum_enabled"] = _c.get("clusterId") in _quorum_ids
 
     # Apply --cluster name filter (Helios modes only)
     if args.cluster and not args.cluster_host:
