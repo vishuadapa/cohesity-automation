@@ -7,6 +7,20 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] feat(health_check): Startup prerequisite check + full documentation update (v1.41)
+
+### Added — `health_check/health_check_report.py`
+
+- **Startup prerequisite check**: `main()` now validates all required packages (`requests`, `openpyxl`, `python-docx`) before execution. Missing required packages produce a clear error with exact `pip install` commands and a combined install-all line. Optional packages (`matplotlib`, `keyring`) produce a NOTE but do not block execution.
+
+### Changed — Documentation
+
+- **README.md**: Complete prerequisite table (required vs optional, purpose, install command). Added all CLI options including direct-cluster auth flags (`--cluster-host`, `--username`, `--password`, `--domain`, `--mfa-code`, `--clear-credentials`). Updated Word output description (native shapes + RAG security table). Updated global Requirements section with package-by-script table.
+- **health_check_report.py docstring**: Updated Requirements block to list required vs optional packages and note the startup check.
+- **CLAUDE.md**: Version reference updated to v1.41.
+
+---
+
 ## [2026-04-10] feat(health_check): Security table coloring + native Word topology shapes (v1.40)
 
 ### Added — `health_check/health_check_report.py`

@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.40
+health_check_report.py  v1.41
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -76,11 +76,24 @@ Options
 
 Requirements
 ────────────
-  pip install requests openpyxl python-docx
-  pip install matplotlib   # optional — topology PNG preview in Word
+  Required:  pip install requests openpyxl python-docx
+  Optional:  pip install matplotlib keyring
+
+  The script checks all prerequisites at startup and reports missing
+  packages with exact install commands.
 
 Version history
 ───────────────
+  1.41 (2026-04-10) — feat: Startup prerequisite check. main() now validates
+                     all required packages (requests, openpyxl, python-docx)
+                     before execution and prints clear error messages with
+                     exact pip install commands for any missing package.
+                     Optional packages (matplotlib, keyring) produce a NOTE
+                     at startup but do not block. README.md fully rewritten
+                     with complete prerequisite table, all CLI options
+                     (including direct-cluster auth flags), and updated
+                     descriptions for Word topology (native shapes) and
+                     security table (full RAG coloring).
   1.40 (2026-04-10) — feat: Word doc Security Posture table (section 5) now
                      color-codes ALL columns: red for "No"/missing, amber for
                      "Idle"/"Partial", green for "Yes"/"Active"/"Full"; score
@@ -392,7 +405,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.40"
+__version__ = "1.41"
 
 import argparse
 import datetime
@@ -5197,12 +5210,48 @@ def main():
         )
         sys.exit(0)
 
+    # ── Pre-requisite check ─────────────────────────────────────────────────
+    _missing = []
     if not EXCEL_OK and not args.word_only:
-        print("ERROR: openpyxl is required.  pip install openpyxl")
+        _missing.append(("openpyxl", "pip install openpyxl",
+                         "Required for Excel workbook output"))
+    if not DOCX_OK and not args.excel_only:
+        _missing.append(("python-docx", "pip install python-docx",
+                         "Required for Word document output"))
+    # requests is imported at module level — if missing the script can't start
+    # so we don't need to check it here.
+
+    # Optional packages — warn but don't block
+    _opt_warn = []
+    try:
+        import matplotlib       # noqa: F401
+    except ImportError:
+        _opt_warn.append(("matplotlib", "pip install matplotlib",
+                          "Topology PNG fallback in Word (optional)"))
+    try:
+        import keyring          # noqa: F401
+    except ImportError:
+        _opt_warn.append(("keyring", "pip install keyring",
+                          "Secure credential storage in OS keychain (optional)"))
+
+    if _missing:
+        print("\n" + "=" * 60)
+        print("  MISSING REQUIRED PACKAGES")
+        print("=" * 60)
+        for pkg, cmd, desc in _missing:
+            print(f"  ✗  {pkg:16s} — {desc}")
+            print(f"     Install:  {cmd}")
+        print()
+        print("  Install all at once:")
+        print(f"     pip install {' '.join(p for p, _, _ in _missing)}")
+        print("=" * 60 + "\n")
         sys.exit(1)
-    if not DOCX_OK and args.word_only:
-        print("ERROR: python-docx is required.  pip install python-docx")
-        sys.exit(1)
+
+    if _opt_warn:
+        for pkg, cmd, desc in _opt_warn:
+            print(f"  NOTE: '{pkg}' not installed — {desc}")
+            print(f"        Install with:  {cmd}")
+        print()
 
     # Build output filename: include customer name (if given) + local timestamp
     if args.output == "cohesity_health_check":

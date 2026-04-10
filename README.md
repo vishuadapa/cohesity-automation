@@ -16,8 +16,8 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 | Output | Description |
 |--------|-------------|
 | Excel workbook | **19 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, and **environment topology** |
-| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, **10-column security posture table** (cluster enc, SD enc, vault, FortKnox, DataLock WORM, replication, quorum, **admins without MFA**, score), **agent health & source coverage**, **user security table**, topology PNG preview, recommendations, and scoring methodology appendix — ready to share with customers |
-| Topology diagram | **Editable `.drawio` file** (opens in diagrams.net / draw.io) with clusters, workload counts, frontend capacity, replication partners, archive targets, and FortKnox vaults — arrows color-coded by target type. PNG preview embedded in the Word document. |
+| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, **fully color-coded security posture table** (10 columns, red/amber/green per finding), **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
+| Topology diagram | **Editable `.drawio` file** (opens in diagrams.net / draw.io) with clusters (green), replication targets (blue), archive targets (amber), and FortKnox vaults (dark-green cloud) — arrows color-coded by target type. Native Word shapes also embedded in the Word document (editable in-place). |
 
 ### Sheet reference (19 sheets)
 
@@ -43,21 +43,27 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 | 18 | Source Coverage | Registered sources with protected/unprotected counts |
 | 19 | User Security | Per-user MFA status, locked state, roles, last login |
 
-### Requirements
+### Prerequisites
 
-Python 3.7 or later. Install core dependencies with:
+**Python 3.7** or later.
 
-```bash
-pip3 install requests openpyxl python-docx
-```
-
-`python-docx` is required only for Word output. If it is not installed the script still produces the Excel file and skips Word with a warning.
-
-`matplotlib` is required for the topology PNG preview embedded in the Word document. If not installed the PNG is skipped (the `.drawio` file is always produced):
+The script checks all prerequisites at startup and reports any missing packages with install commands. Install everything in one line:
 
 ```bash
-pip3 install matplotlib
+pip3 install requests openpyxl python-docx matplotlib keyring
 ```
+
+Or install only what you need:
+
+| Package | Required? | Purpose | Install |
+|---------|-----------|---------|---------|
+| `requests` | **Yes** | HTTP client for Cohesity REST API calls | `pip3 install requests` |
+| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (19 sheets) | `pip3 install openpyxl` |
+| `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip3 install python-docx` |
+| `matplotlib` | Optional | Topology PNG fallback if native Word shapes fail | `pip3 install matplotlib` |
+| `keyring` | Optional | Securely store API key / passwords in OS keychain between runs | `pip3 install keyring` |
+
+If a required package is missing, the script exits with a clear error and the exact `pip install` command. Optional packages produce a note at startup but do not block execution.
 
 ### Where to run from
 
@@ -101,8 +107,16 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--apikey KEY` | env `HELIOS_API_KEY` | Helios API key |
+| **Helios auth** | | |
+| `--apikey KEY` | env `HELIOS_API_KEY` | Helios API key (stored in keychain after first use) |
 | `--cluster NAME` | all | Limit to one cluster (partial name match) |
+| **Direct cluster auth** | | |
+| `--cluster-host HOST` | *(none)* | Bypass Helios — connect directly to a cluster IP/hostname |
+| `--username USER` | *(none)* | Cluster username (required with `--cluster-host`) |
+| `--password PASS` | *(prompted)* | Password (prompted securely if omitted; saved to keychain) |
+| `--domain DOMAIN` | `LOCAL` | Auth domain — `LOCAL` or AD domain name |
+| `--mfa-code CODE` | *(none)* | TOTP code for MFA-enabled cluster accounts |
+| **Report options** | | |
 | `--days N` | 30 | Lookback window for alerts and run history |
 | `--customer NAME` | *(blank)* | Customer name on Word cover page and output filename |
 | `--output PATH` | auto-generated | Base path for output files (no extension added) |
@@ -110,15 +124,16 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 | `--excel-only` | off | Skip Word document generation |
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
+| `--clear-credentials` | off | Remove stored credentials from OS keychain and exit |
 
 ### Output files
 
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.40_AcmeCorp_20260410_1430.xlsx
-cohesity_health_check_v1.40_AcmeCorp_20260410_1430.docx
-cohesity_health_check_v1.40_AcmeCorp_20260410_1430.drawio
+cohesity_health_check_v1.41_AcmeCorp_20260410_1430.xlsx
+cohesity_health_check_v1.41_AcmeCorp_20260410_1430.docx
+cohesity_health_check_v1.41_AcmeCorp_20260410_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.
@@ -179,18 +194,21 @@ python3 <script>.py --cluster <ip-or-hostname> --username admin --domain LOCAL
 
 ## Requirements
 
+All scripts require `requests`. The health check report has additional dependencies. Install everything:
+
 ```bash
-pip3 install requests openpyxl keyring
+pip3 install requests openpyxl python-docx matplotlib keyring
 ```
 
-For the health check report, also install:
-```bash
-# Word document output
-pip3 install python-docx
+| Package | Scripts | Required? |
+|---------|---------|-----------|
+| `requests` | All scripts | **Yes** — core HTTP client |
+| `openpyxl` | health_check | **Yes** — Excel workbook output |
+| `python-docx` | health_check | **Yes** — Word document output (skip with `--excel-only`) |
+| `matplotlib` | health_check | Optional — topology PNG fallback |
+| `keyring` | All scripts | Optional — OS keychain credential storage |
 
-# Topology PNG preview in Word (optional — .drawio file is always produced)
-pip3 install matplotlib
-```
+The health check script validates all dependencies at startup and tells you exactly what to install if anything is missing.
 
 ---
 
