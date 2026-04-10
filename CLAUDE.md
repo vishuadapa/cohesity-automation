@@ -21,17 +21,22 @@
 ```
 cohesity-automation/
 ├── health_check/
-│   ├── health_check_report.py   # Main health check script (currently v1.34)
+│   ├── health_check_report.py   # Main health check script (currently v1.37)
 │   └── health_check_report.md   # Documentation
 ├── utils/
 │   ├── formatters.py            # Shared formatting helpers
 │   └── cohesity_auth.py         # Authentication helpers
 ├── CHANGELOG.md                 # All version history
+├── README.md                    # Project overview and usage reference
 └── CLAUDE.md                    # This file
 ```
 
 ## General Guidelines
 
 - Run `python3 -c "import ast; ast.parse(open('health_check/health_check_report.py').read()); print('OK')"` after every edit to catch syntax errors before committing.
-- Update `CHANGELOG.md` and the `.md` doc file alongside every version bump.
+- With **every version bump**, update all four of these in the same commit:
+  1. `README.md` — sheet count, filename examples, feature list, requirements
+  2. `CHANGELOG.md` — new version entry with date and bullet points
+  3. `health_check/health_check_report.md` — full sheet reference and version history
+  4. In-file version header — `__version__` constant and the docstring version block
 - Do not push to any branch other than `dev` without explicit user approval.

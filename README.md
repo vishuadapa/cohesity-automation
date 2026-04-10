@@ -9,24 +9,55 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces an **18-sheet Excel workbook** and a **Word document**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook**, a **Word document**, and an **editable topology diagram**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | **18 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit, alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, and a prioritized recommendations list |
-| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, security posture, **agent health & source coverage**, **user security table**, recommendations, and scoring methodology appendix — ready to share with customers |
+| Excel workbook | **19 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, and **environment topology** |
+| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, **10-column security posture table** (cluster enc, SD enc, vault, FortKnox, DataLock WORM, replication, quorum, **admins without MFA**, score), **agent health & source coverage**, **user security table**, topology PNG preview, recommendations, and scoring methodology appendix — ready to share with customers |
+| Topology diagram | **Editable `.drawio` file** (opens in diagrams.net / draw.io) with clusters, workload counts, frontend capacity, replication partners, archive targets, and FortKnox vaults — arrows color-coded by target type. PNG preview embedded in the Word document. |
+
+### Sheet reference (19 sheets)
+
+| # | Sheet | Key content |
+|---|-------|-------------|
+| 1 | Summary | Scorecard, cluster counts, overall health |
+| 2 | Infrastructure | Cluster versions, nodes, software lifecycle |
+| 3 | Node Hardware | Per-node hardware model, EOL status |
+| 4 | Disk Health | Disk state, SSD wear %, failed/degraded flags |
+| 5 | Protection Health | Per-group pass/fail/miss rates, SLA status |
+| 6 | Storage Capacity | Used/available by storage domain and cluster |
+| 7 | Policy Audit | Policy list, retention, DataLock (WORM + FortKnox), replication |
+| 8 | Alerts | Critical/warning alerts in the lookback window |
+| 9 | Security | Security checklist per cluster (MFA, encryption, quorum, TLS, …) |
+| 10 | Agent Health | Agent version, connectivity, last backup |
+| 11 | Source Coverage | Source coverage ratio, unprotected sources |
+| 12 | FortKnox / Replication | Vault status, replication targets, transfer stats |
+| 13 | Data Services | Views, NFS/SMB shares, S3 buckets |
+| 14 | Coverage Gaps | Objects with no recent successful backup |
+| 15 | User Security | Per-user MFA status, locked state, roles |
+| 16 | Trends | 30-day backup success/failure trends with charts |
+| 17 | Recommendations | Prioritized action list (HIGH / MEDIUM / LOW) |
+| 18 | Topology Table | Environment topology — clusters, workloads, targets |
+| 19 | Topology Diagram | Embedded PNG preview of the `.drawio` topology |
 
 ### Requirements
 
-Python 3.7 or later. Install dependencies with:
+Python 3.7 or later. Install core dependencies with:
 
 ```bash
 pip3 install requests openpyxl python-docx
 ```
 
 `python-docx` is required only for Word output. If it is not installed the script still produces the Excel file and skips Word with a warning.
+
+`matplotlib` is required for the topology PNG preview embedded in the Word document. If not installed the PNG is skipped (the `.drawio` file is always produced):
+
+```bash
+pip3 install matplotlib
+```
 
 ### Where to run from
 
@@ -50,7 +81,7 @@ Generate your key in Helios → Settings → Access Management → API Keys. The
 ### Common usage
 
 ```bash
-# Full report — all clusters, 30-day window, Excel + Word
+# Full report — all clusters, 30-day window, Excel + Word + topology diagram
 python3 health_check_report.py --apikey abc123 --customer "Acme Corp"
 
 # Target a single cluster
@@ -80,14 +111,33 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
 
-### Output filename
+### Output files
 
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.21_AcmeCorp_20260408_1430.xlsx
-cohesity_health_check_v1.21_AcmeCorp_20260408_1430.docx
+cohesity_health_check_v1.37_AcmeCorp_20260410_1430.xlsx
+cohesity_health_check_v1.37_AcmeCorp_20260410_1430.docx
+cohesity_health_check_v1.37_AcmeCorp_20260410_1430.drawio
 ```
+
+The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.
+
+### Security scoring
+
+Each cluster receives a score out of 100. Key deductions include:
+
+| Finding | Severity | Points |
+|---------|----------|--------|
+| No cluster encryption | HIGH | −20 |
+| No storage domain encryption | HIGH | −15 |
+| Admin accounts without MFA | HIGH | −10 |
+| No DataLock (WORM) on any policies | HIGH | −10 |
+| No FortKnox vault | MEDIUM | −5 |
+| No replication | MEDIUM | −5 |
+| Quorum not enabled | MEDIUM | −5 |
+| Audit logging disabled | MEDIUM | −5 |
+| TLS certificate expired/near expiry | MEDIUM | −5 |
 
 See [health_check/health_check_report.md](health_check/health_check_report.md) for the full sheet reference, scoring model, and version history.
 
@@ -97,7 +147,7 @@ See [health_check/health_check_report.md](health_check/health_check_report.md) f
 
 | Folder | Purpose |
 |--------|---------|
-| [health_check/](health_check/) | **Multi-cluster health check** — 18-sheet Excel + Word report for CBRs and SE engagements |
+| [health_check/](health_check/) | **Multi-cluster health check** — 19-sheet Excel + Word report + editable topology diagram for CBRs and SE engagements |
 | [reporting/](reporting/) | Protection group run reports and FortKnox vault data transfer reports |
 | [protection/](protection/) | Protection group management — run, pause, clone jobs |
 | [recovery/](recovery/) | Restore automation — VMs, files, file/folder recovery |
@@ -135,7 +185,11 @@ pip3 install requests openpyxl keyring
 
 For the health check report, also install:
 ```bash
+# Word document output
 pip3 install python-docx
+
+# Topology PNG preview in Word (optional — .drawio file is always produced)
+pip3 install matplotlib
 ```
 
 ---
