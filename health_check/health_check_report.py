@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.34
+health_check_report.py  v1.37
 
-Multi-cluster Cohesity health check — 18-sheet Excel workbook + Word document.
+Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -77,6 +77,7 @@ Options
 Requirements
 ────────────
   pip install requests openpyxl python-docx
+  pip install matplotlib   # optional — topology PNG preview in Word
 
 Version history
 ───────────────

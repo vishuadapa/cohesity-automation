@@ -23,25 +23,25 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 | # | Sheet | Key content |
 |---|-------|-------------|
-| 1 | Summary | Scorecard, cluster counts, overall health |
+| 1 | Executive Summary | Per-cluster health score, grade, and scorecard |
 | 2 | Infrastructure | Cluster versions, nodes, software lifecycle |
-| 3 | Node Hardware | Per-node hardware model, EOL status |
+| 3 | Node Hardware | Per-node hardware model, serial, EOL status |
 | 4 | Disk Health | Disk state, SSD wear %, failed/degraded flags |
-| 5 | Protection Health | Per-group pass/fail/miss rates, SLA status |
-| 6 | Storage Capacity | Used/available by storage domain and cluster |
-| 7 | Policy Audit | Policy list, retention, DataLock (WORM + FortKnox), replication |
-| 8 | Alerts | Critical/warning alerts in the lookback window |
-| 9 | Security | Security checklist per cluster (MFA, encryption, quorum, TLS, …) |
-| 10 | Agent Health | Agent version, connectivity, last backup |
-| 11 | Source Coverage | Source coverage ratio, unprotected sources |
-| 12 | FortKnox / Replication | Vault status, replication targets, transfer stats |
-| 13 | Data Services | Views, NFS/SMB shares, S3 buckets |
-| 14 | Coverage Gaps | Objects with no recent successful backup |
-| 15 | User Security | Per-user MFA status, locked state, roles |
-| 16 | Trends | 30-day backup success/failure trends with charts |
-| 17 | Recommendations | Prioritized action list (HIGH / MEDIUM / LOW) |
-| 18 | Topology Table | Environment topology — clusters, workloads, targets |
-| 19 | Topology Diagram | Embedded PNG preview of the `.drawio` topology |
+| 5 | Protection Health | Per-group pass/fail/miss rates, SLA status, DataLock |
+| 6 | Storage & Capacity | Utilization, data reduction, runway by storage domain |
+| 7 | Policy Audit | Policy list, retention, DataLock WORM + FortKnox, replication |
+| 8 | Policy → Groups | Every protection group with the policy governing it |
+| 9 | Alerts | Open critical/warning alerts with age |
+| 10 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, … |
+| 11 | Replication & Archive | Replication targets, last transfer, archival vaults |
+| 12 | FortKnox Data Transfer | Per-group transfer to FortKnox/external targets (30d / 1d) |
+| 13 | Data Services | NAS views, quota utilization |
+| 14 | Coverage Gaps | Protection groups with no recent successful backup |
+| 15 | Recommendations | Prioritized action list (HIGH / MEDIUM / LOW) |
+| 16 | Disk Health | Per-disk status and SSD endurance |
+| 17 | Agent Health | Per-host agent version, status, upgrade readiness |
+| 18 | Source Coverage | Registered sources with protected/unprotected counts |
+| 19 | User Security | Per-user MFA status, locked state, roles, last login |
 
 ### Requirements
 
