@@ -7,6 +7,17 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-10] fix(health_check): FortKnox Vaults column in Word topology table (v1.38)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **Environment Topology table (Word) — FortKnox Vaults column**: Previously used a narrow vault-type whitelist (`kFortKnox`, `kS3Compatible`) and checked only `archivalTargetConfig.targetType`, causing the column to show "No" even when FortKnox was configured. Now uses `_fk_status(cd)` (the authoritative function) for active/idle/none classification, and collects vault names using the same comprehensive `_is_fk` detection logic (`krpaas`, `kfortknox`, `kfort_knox`, `krpaasarchival`, `"fortknox"` substring in type or name) applied consistently across vaults list and all policy archival targets.
+  - **Active** (data flowing in lookback window): vault name(s), light-green cell
+  - **Idle** (configured but no recent FK archival): vault name + `(Configured — not sending data)`, amber cell
+  - **None** (not configured): `No` (no special colour)
+
+---
+
 ## [2026-04-10] fix(health_check): Quorum detection, DataLock "No" label, Word security table (v1.37)
 
 ### Fixed — `health_check/health_check_report.py`

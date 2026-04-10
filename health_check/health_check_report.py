@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.37
+health_check_report.py  v1.38
 
 Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -81,6 +81,15 @@ Requirements
 
 Version history
 ───────────────
+  1.38 (2026-04-10) — fix: Environment Topology table (Word) FortKnox Vaults
+                     column now uses _fk_status() (active/idle/none) instead of
+                     a narrow vault-type check. FK vault names collected via the
+                     same comprehensive _is_fk logic used elsewhere (krpaas,
+                     kfortknox, kfort_knox, krpaasarchival, "fortknox" in name).
+                     Configured-but-idle vaults now show vault name +
+                     "(Configured — not sending data)" in amber. Active vaults
+                     show vault name(s) on green background. "No" only when FK
+                     is genuinely not configured.
   1.37 (2026-04-10) — fix: Quorum detection revised — Quorum is a Helios control-
                      plane feature; any enabled quorum group now marks ALL Helios-
                      connected clusters as quorum-enabled (per-cluster ID matching
@@ -362,7 +371,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.37"
+__version__ = "1.38"
 
 import argparse
 import datetime
@@ -4372,25 +4381,43 @@ def write_word(all_data, args):
             for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
             if (t.get("archivalTargetConfig") or {}).get("targetType", "") != "kFortKnox"
         })
-        # FortKnox vault names from vaults list + policies
-        fk_names = sorted({
-            v.get("name") or "FortKnox"
-            for v in vaults_t
-            if v.get("vaultType") in ("kFortKnox", "kS3Compatible")
-        } | {
-            (t.get("targetName")
-             or (t.get("archivalTargetConfig") or {}).get("name")
-             or "FortKnox")
-            for p in policies_t
-            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
-            if (t.get("archivalTargetConfig") or {}).get("targetType") == "kFortKnox"
-        })
+        # FortKnox: use _fk_status() for active/idle/none, then collect
+        # vault names using the same comprehensive detection logic.
+        fk_st_t   = _fk_status(cd)
+        _fkt_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
+        def _is_fk_t(tt, tname=""):
+            tl = (tt or "").lower(); nl = (tname or "").lower()
+            return any(x in tl for x in _fkt_types) or "fortknox" in tl or "fortknox" in nl
+        fk_name_set = set()
+        for v in vaults_t:
+            vt = v.get("vaultType") or ""; vn = v.get("name") or ""
+            if _is_fk_t(vt, vn):
+                fk_name_set.add(vn or "FortKnox")
+        for p in policies_t:
+            for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or []):
+                cfg   = t.get("archivalTargetConfig") or {}
+                tt    = cfg.get("targetType") or t.get("targetType") or ""
+                tname = t.get("targetName") or cfg.get("name") or cfg.get("vaultName") or ""
+                if tname and _is_fk_t(tt, tname):
+                    fk_name_set.add(tname)
+        if fk_st_t == "none":
+            fk_cell_text = "No"
+        elif fk_st_t == "active":
+            fk_cell_text = "\n".join(sorted(fk_name_set)) if fk_name_set else "Active"
+        else:  # idle — configured but no successful FK archival in lookback window
+            fk_cell_text = (("\n".join(sorted(fk_name_set)) + "\n(Configured — not sending data)")
+                            if fk_name_set else "Configured — not sending data")
 
         row_t = t_topo.add_row().cells
         row_t[0].text = cd["name"]
         row_t[1].text = "\n".join(repl_names) if repl_names else "None"
         row_t[2].text = "\n".join(arch_names) if arch_names else "None"
-        row_t[3].text = "\n".join(fk_names)   if fk_names   else "None"
+        row_t[3].text = fk_cell_text
+        # Colour-code the FK cell: green=active, yellow=idle, no fill=none
+        if fk_st_t == "active":
+            _cell_shade(row_t[3], "E2EFDA")   # light green
+        elif fk_st_t == "idle":
+            _cell_shade(row_t[3], "FFF2CC")   # amber/yellow
 
     # ── Topology diagram preview ──────────────────────────────────────────────
     png_bytes = _render_topology_png(all_data)
