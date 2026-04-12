@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.45
+health_check_report.py  v1.46
 
-Multi-cluster Cohesity health check — 19-sheet Excel workbook + Word document + editable topology diagram.
+Multi-cluster Cohesity health check — 21-sheet Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -36,6 +36,8 @@ cluster) and produces:
   17 User Security           — user accounts, MFA, locked status, roles, last login
   18 Trends (30d)            — daily success rate + storage growth charts
   19 Recommendations         — prioritized action list
+  20 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
+  21 Audit Log               — 30-day configuration change summary and detail log
 
   Word document
   ─────────────
@@ -84,6 +86,29 @@ Requirements
 
 Version history
 ───────────────
+  1.46 (2026-04-12) — feat: Ransomware Readiness Score (0-100) computed per
+                     cluster from DataLock coverage, FortKnox vault activity,
+                     recovery window depth, quorum, and admin MFA. Displayed
+                     in Executive Summary, Security sheet, and Word Security
+                     Posture table (now 11 columns) with a pre-table environment
+                     average callout.
+                     feat: Predictive Capacity Runway — linear regression on
+                     30-day daily usage from /v1/public/statistics/timeSeriesStats
+                     projects how many days until 80% utilization. Shown in
+                     Storage sheet (cols 13-15), Executive Summary (col 14),
+                     and Word Storage section with a runway forecast paragraph.
+                     feat: Per-Workload Risk Heatmap (sheet 20) — all protection
+                     groups scored 0-100 on composite risk (last-run status,
+                     SLA, RPO gap, DataLock); sorted worst-first with full-row
+                     RAG coloring. Top 5 Critical/High groups also appear in the
+                     Word Executive Summary as a "Top At-Risk Workloads" table.
+                     feat: Audit Log / Change Summary (sheet 21) — last 30 days
+                     of configuration changes from /v1/public/auditLog, grouped
+                     by category (policy, group, user, vault/security, cluster
+                     config) with high-risk event highlighting. Word Security
+                     section adds a "Governance & Change Activity" summary with
+                     high-risk event warnings.
+                     Sheet count: 19 → 21.
   1.45 (2026-04-10) — fix: get_auth_token() v1 failure is no longer silently
                      swallowed. Now prints "[!] v1 endpoint failed (HTTP NNN)
                      — trying v2 ..." so the user can see both failures.
@@ -441,7 +466,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.43"
+__version__ = "1.46"
 
 import argparse
 import datetime
@@ -1173,6 +1198,55 @@ def _tenants(session, h, debug):
     return d or []
 
 
+def _capacity_timeseries(session, h, cluster_id, debug):
+    """Fetch 30-day daily capacity time series for the cluster.
+
+    Uses /irisservices/api/v1/public/statistics/timeSeriesStats with
+    metric kMorphedUsageBytes (total physical bytes stored on cluster).
+    Returns a list of {"timestampMsecs": int, "data": {"int64Value": int}}
+    points, or [] on any error or when cluster_id is unavailable.
+    """
+    if not cluster_id:
+        return []
+    now_ms   = int(time.time() * 1000)
+    start_ms = now_ms - 30 * 86400 * 1000
+    d = _get(session, h,
+             "/irisservices/api/v1/public/statistics/timeSeriesStats",
+             params={
+                 "schemaName":         "kBridgeClusterStats",
+                 "metricName":         "kMorphedUsageBytes",
+                 "entityId":           str(cluster_id),
+                 "rollupIntervalSecs": 86400,
+                 "rollupFunction":     "latest",
+                 "startTimeMsecs":     start_ms,
+                 "endTimeMsecs":       now_ms,
+             },
+             debug=debug, silent=True)
+    if not d:
+        return []
+    return d.get("dataPointVec") or []
+
+
+def _fetch_audit_log(session, h, days, debug):
+    """Fetch recent audit log events (last N days).
+
+    Returns a list of event dicts, or [] if the endpoint is unavailable
+    (e.g. 403 when the calling account lacks audit-log read permission).
+    """
+    d = _get(session, h,
+             "/irisservices/api/v1/public/auditLog",
+             params={
+                 "numLogs":        1000,
+                 "startTimeUsecs": _days_ago_usecs(days),
+             },
+             debug=debug, silent=True)
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return (d.get("auditLogs") or d.get("events") or d.get("logs") or [])
+    return []
+
+
 def collect_cluster(session, api_key, cluster, args):
     """Collect all health-check data for one cluster. Returns a dict.
 
@@ -1225,6 +1299,10 @@ def collect_cluster(session, api_key, cluster, args):
     users    = _users(session, h, dbg)
     idps     = _idps(session, h, dbg)
     tenants  = _tenants(session, h, dbg)
+    print(" cap-trend...", end="", flush=True)
+    cap_ts   = _capacity_timeseries(session, h, cid, dbg)
+    print(" audit-log...", end="", flush=True)
+    audit_events = _fetch_audit_log(session, h, args.days, dbg)
 
     group_runs = {}
     if not args.quick:
@@ -1270,9 +1348,12 @@ def collect_cluster(session, api_key, cluster, args):
         "quick":          args.quick,
         "fk_data_1d":     fk_data_1d,
         "quorum_enabled": cluster.get("quorum_enabled", False),
+        "cap_timeseries": cap_ts,
+        "audit_events":   audit_events,
     }
-    cd["scores"]          = _compute_scores(cd, args.quick)
-    cd["recommendations"] = _build_recommendations(cd)
+    cd["scores"]           = _compute_scores(cd, args.quick)
+    cd["capacity_runway"]  = _capacity_runway(cd)       # must precede recommendations
+    cd["recommendations"]  = _build_recommendations(cd)
     return cd
 
 
@@ -1533,6 +1614,280 @@ def _score_alerts(cd):
     return max(0, 100 - crits * 10 - warns * 2)
 
 
+def _ransomware_score(cd):
+    """Return (score 0-100, label, gaps) measuring ransomware recovery readiness.
+
+    Dimensions:
+      DataLock (WORM) coverage  30 pts
+      FortKnox / indelible vault 25 pts
+      Clean recovery window      20 pts  (oldest successful snapshot age)
+      Quorum                     10 pts
+      Admin MFA                  15 pts
+
+    Labels: Strong (>=80) / Moderate (60-79) / High Risk (40-59) / Critical (<40)
+    """
+    gaps     = []
+    policies = cd.get("policies") or []
+    groups   = cd.get("groups")   or []
+
+    # ── DataLock coverage (30 pts) ────────────────────────────────────────
+    dl_status, dl_label, dl_covered, dl_total = _cluster_datalock(policies, groups)
+    if dl_status == "full_compliance":
+        dl_pts = 30
+    elif dl_status == "full_any":
+        dl_pts = 20
+    elif dl_status == "partial":
+        pct    = dl_covered / dl_total if dl_total else 0
+        dl_pts = 15 if pct >= 0.5 else 8
+        gaps.append(f"DataLock partial ({dl_label})")
+    else:
+        dl_pts = 0
+        gaps.append("No DataLock/WORM protection on any group")
+
+    # ── FortKnox / indelible vault (25 pts) ──────────────────────────────
+    fk = _fk_status(cd)
+    if fk == "active":
+        fk_pts = 25
+    elif fk == "idle":
+        fk_pts = 10
+        gaps.append("FortKnox configured but not actively receiving data")
+    else:
+        fk_pts = 0
+        gaps.append("No indelible/FortKnox vault configured")
+
+    # ── Recovery window (20 pts) — oldest clean successful snapshot ───────
+    _success_st = {"kSuccess", "Succeeded", "kSuccessWithWarning",
+                   "SucceededWithWarning", "kWarning"}
+    oldest_clean = None
+
+    for run in (cd.get("v1_runs") or []):
+        br = run.get("backupRun") or {}
+        st = br.get("status", "")
+        su = (br.get("stats") or {}).get("startTimeUsecs") or 0
+        if st in _success_st and su:
+            if oldest_clean is None or su < oldest_clean:
+                oldest_clean = su
+
+    if oldest_clean is None:
+        for runs in (cd.get("group_runs") or {}).values():
+            for run in runs:
+                lb = run.get("localBackupInfo") or {}
+                st = lb.get("status", "")
+                su = lb.get("startTimeUsecs") or 0
+                if st in _success_st and su:
+                    if oldest_clean is None or su < oldest_clean:
+                        oldest_clean = su
+
+    if oldest_clean is None:
+        rw_pts = 0
+        gaps.append("No successful backup history found in lookback window")
+    else:
+        days_old = (_now_usecs() - oldest_clean) / (86_400 * 1_000_000)
+        if days_old >= 30:   rw_pts = 20
+        elif days_old >= 14: rw_pts = 15
+        elif days_old >= 7:  rw_pts = 10
+        elif days_old >= 2:  rw_pts = 5
+        else:
+            rw_pts = 2
+            gaps.append("Recovery window is less than 2 days — limited clean restore points")
+
+    # ── Quorum (10 pts) ───────────────────────────────────────────────────
+    if cd.get("mode") == "direct":
+        q_pts = 10   # Quorum is a Helios control-plane concept; N/A in direct mode
+    elif cd.get("quorum_enabled"):
+        q_pts = 10
+    else:
+        q_pts = 0
+        gaps.append("Quorum not enabled (change-approval enforcement absent)")
+
+    # ── Admin MFA (15 pts) ────────────────────────────────────────────────
+    _admin_roles = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
+    all_admins = [u for u in (cd.get("users") or [])
+                  if isinstance(u, dict)
+                  and bool(set(u.get("roles") or []) & _admin_roles)]
+    if not all_admins:
+        mfa_pts = 15   # no admin accounts returned — no penalty
+    elif all(u.get("mfaEnabled") or u.get("isMfaEnabled") for u in all_admins):
+        mfa_pts = 15
+    elif any(u.get("mfaEnabled") or u.get("isMfaEnabled") for u in all_admins):
+        n_mfa = sum(1 for u in all_admins
+                    if u.get("mfaEnabled") or u.get("isMfaEnabled"))
+        mfa_pts = 8
+        gaps.append(f"Partial admin MFA ({n_mfa}/{len(all_admins)} admins enabled)")
+    else:
+        mfa_pts = 0
+        gaps.append("No admin accounts have MFA enabled")
+
+    score = dl_pts + fk_pts + rw_pts + q_pts + mfa_pts
+    label = ("Strong"    if score >= 80 else
+             "Moderate"  if score >= 60 else
+             "High Risk" if score >= 40 else "Critical")
+    return score, label, gaps
+
+
+def _ransomware_rag_fill(score):
+    """Fill color for ransomware readiness score cells."""
+    if score >= 80: return _fill(LT_GREEN)
+    if score >= 60: return _fill(YELLOW)
+    if score >= 40: return _fill(ORANGE)
+    return _fill(RED)
+
+
+def _capacity_runway(cd):
+    """Fit a linear regression to 30-day daily capacity time series.
+
+    Returns a dict:
+      days_to_80       int or None  — days until cluster reaches 80% used;
+                                      None if stable/shrinking or data unavailable
+      projected_80     date or None — calendar date of projected 80% threshold
+      daily_growth_tb  float        — TB/day growth rate (may be negative = shrinking)
+      data_quality     str          — "regression" | "insufficient" | "no_data"
+    """
+    import datetime as _dt
+
+    ts_points = cd.get("cap_timeseries") or []
+    valid = []
+    for pt in ts_points:
+        t = pt.get("timestampMsecs") or 0
+        dv = pt.get("data") or {}
+        v  = (dv.get("int64Value") or dv.get("doubleValue")
+              or pt.get("value") or 0)
+        if t and v:
+            valid.append((t, int(v)))
+    valid.sort(key=lambda x: x[0])
+
+    info   = cd.get("info") or {}
+    usage  = ((info.get("stats") or {}).get("usagePerfStats") or {})
+    total_bytes = usage.get("physicalCapacityBytes") or 0
+    used_bytes  = usage.get("totalPhysicalUsageBytes") or 0
+    total_tb = total_bytes / 1e12
+    used_tb  = used_bytes  / 1e12
+
+    _no_data = {
+        "days_to_80": None, "projected_80": None,
+        "daily_growth_tb": 0.0, "data_quality": "no_data"
+    }
+    if total_tb <= 0:
+        return _no_data
+    if len(valid) < 3:
+        _no_data["data_quality"] = "no_data" if not valid else "insufficient"
+        return _no_data
+
+    # Least-squares linear regression: x=days from first point, y=TB used
+    t0 = valid[0][0]
+    xs = [(t - t0) / (86_400 * 1_000) for t, _ in valid]
+    ys = [v / 1e12                     for _, v in valid]
+    n  = len(xs)
+    sx = sum(xs); sy = sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    denom = n * sxx - sx * sx
+    slope = (n * sxy - sx * sy) / denom if denom else 0.0  # TB/day
+
+    if slope <= 0:
+        return {"days_to_80": None, "projected_80": None,
+                "daily_growth_tb": round(slope, 6), "data_quality": "regression"}
+
+    target_80_tb = total_tb * 0.80
+    remaining_tb = max(0.0, target_80_tb - used_tb)
+    days_to_80   = int(remaining_tb / slope)
+    proj_date    = _dt.date.today() + _dt.timedelta(days=days_to_80)
+    return {
+        "days_to_80":      days_to_80,
+        "projected_80":    proj_date,
+        "daily_growth_tb": round(slope, 6),
+        "data_quality":    "regression",
+    }
+
+
+def _group_risk_score(group, cd):
+    """Return (score 0-100, level) for a single protection group.
+
+    Higher score = lower risk (consistent with health scoring convention).
+
+    Dimensions:
+      Last run status   35 pts
+      SLA compliance    25 pts
+      RPO gap           25 pts
+      DataLock          15 pts
+
+    Levels: Low (>=75) / Medium (50-74) / High (25-49) / Critical (<25)
+    """
+    lr = group.get("lastRun") or {}
+    lb = lr.get("localBackupInfo") or {}
+
+    # Last run status (35 pts)
+    status = lb.get("status", "")
+    if status in ("kSuccess", "Succeeded"):                   run_pts = 35
+    elif status in ("kWarning", "SucceededWithWarning"):      run_pts = 25
+    elif status in ("kRunning", "Running"):                   run_pts = 20
+    elif status in ("kSkipped", "Skipped"):                   run_pts = 10
+    elif group.get("isPaused"):                               run_pts = 5
+    else:                                                      run_pts = 0
+
+    # SLA compliance (25 pts)
+    sla_violated = bool(lb.get("isSlaViolated") or lr.get("isSlaViolated"))
+    sla_pts = 0 if sla_violated else 25
+
+    # RPO gap (25 pts)
+    start_u = lb.get("startTimeUsecs") or 0
+    if not start_u:
+        rpo_pts = 0
+    else:
+        rpo_hrs = (_now_usecs() - start_u) / 3_600_000_000
+        if   rpo_hrs <=  4: rpo_pts = 25
+        elif rpo_hrs <=  8: rpo_pts = 20
+        elif rpo_hrs <= 24: rpo_pts = 15
+        elif rpo_hrs <= 48: rpo_pts =  8
+        else:               rpo_pts =  0
+
+    # DataLock (15 pts)
+    policy_by_id = {p.get("id"): p for p in (cd.get("policies") or []) if p.get("id")}
+    policy = policy_by_id.get(group.get("policyId"), {})
+    dl_str = _policy_datalock_str(policy).lower()
+    if "compliance" in dl_str:                dl_pts = 15
+    elif "administrative" in dl_str:          dl_pts = 10
+    elif "fortknox" in dl_str or "indelible" in dl_str: dl_pts = 15
+    else:                                     dl_pts = 0
+
+    score = run_pts + sla_pts + rpo_pts + dl_pts
+    level = ("Low"      if score >= 75 else
+             "Medium"   if score >= 50 else
+             "High"     if score >= 25 else "Critical")
+    return score, level
+
+
+def _audit_category(event):
+    """Map an audit log event to a display category, or None for read-only ops."""
+    entity = (event.get("entityType") or "").lower()
+    action = (event.get("action") or event.get("type") or "").lower()
+
+    _read_ops = {"view", "list", "get", "read", "login", "logout", "search"}
+    if any(op in action for op in _read_ops):
+        return None
+
+    if "policy" in entity:                                    return "Policy Changes"
+    if "protection job" in entity or "protectiongroup" in entity: return "Group Changes"
+    if "user" in entity or "role" in entity:                  return "User Changes"
+    if "vault" in entity or "externaltarget" in entity:       return "Vault/Security Changes"
+    if "cluster" in entity or "settings" in entity:           return "Cluster Config Changes"
+    return "Other"
+
+
+def _audit_high_risk(event):
+    """Return True if this audit event represents a high-risk operation."""
+    entity  = (event.get("entityType") or "").lower()
+    action  = (event.get("action")     or "").lower()
+    details = str(event.get("details") or event.get("description") or "").lower()
+
+    if "vault" in entity          and "delete" in action:  return True
+    if "user" in entity           and "delete" in action:  return True
+    if "encryption" in details    and "disable" in action: return True
+    if ("admin" in details or "superadmin" in details) and (
+            "grant" in action or "create" in action or "modify" in action): return True
+    return False
+
+
 def _compute_scores(cd, quick):
     s = {
         "protection": _score_protection(cd, quick),
@@ -1544,6 +1899,10 @@ def _compute_scores(cd, quick):
     }
     s["overall"] = round(sum(s[k] * _W[k] for k in _W), 1)
     s["grade"]   = grade(s["overall"])
+    rw_score, rw_label, rw_gaps = _ransomware_score(cd)
+    s["ransomware"]       = rw_score
+    s["ransomware_label"] = rw_label
+    s["ransomware_gaps"]  = rw_gaps
     return s
 
 
@@ -1646,6 +2005,28 @@ def _build_recommendations(cd):
                 f"Cluster at {cap_pct:.1f}% capacity — approaching limit",
                 "Plan capacity expansion or data archival within 30-60 days",
                 "Continued growth risks backup failures within weeks"))
+
+    # Predictive capacity runway based on 30-day growth trend
+    runway = cd.get("capacity_runway") or {}
+    d80 = runway.get("days_to_80")
+    if isinstance(d80, int):
+        proj = runway.get("projected_80")
+        proj_str = proj.isoformat() if proj else "soon"
+        growth   = runway.get("daily_growth_tb", 0)
+        if d80 < 30:
+            recs.append(_r("CRITICAL", "Capacity",
+                f"Cluster projected to reach 80% capacity in {d80} day(s) "
+                f"(est. {proj_str} at {growth:.4f} TB/day growth rate)",
+                "Expand cluster capacity immediately or accelerate data archival/deletion",
+                "Backup jobs fail when storage is exhausted — less than 30 days "
+                "to projected 80% threshold based on current growth trend"))
+        elif d80 < 90:
+            recs.append(_r("HIGH", "Capacity",
+                f"Cluster projected to reach 80% capacity in {d80} day(s) "
+                f"(est. {proj_str} at {growth:.4f} TB/day growth rate)",
+                "Plan capacity expansion or data archival within the next 90 days",
+                f"At the current growth rate of {growth:.4f} TB/day, storage will "
+                "reach 80% utilization within 3 months — plan ahead to avoid disruption"))
 
     # ── Security ─────────────────────────────────────────────────────────────
     cluster_enc, sd_enc = _sd_enc_status(cd)
@@ -2070,13 +2451,16 @@ def _cap_stats(cd):
 def _sheet_summary(wb, all_data):
     ws = wb.create_sheet("Executive Summary")
     ws.freeze_panes = "A3"
-    _title(ws, "Cohesity Health Check — Executive Summary", "M")
+    _title(ws, "Cohesity Health Check — Executive Summary", "O")
 
     cols = ["Cluster", "Software Version", "Node Count",
             "Health Score", "Grade",
             "30d Success %", "SLA Pass %", "Capacity Used %",
             "Open Criticals", "Open Warnings",
-            "Security Score /100", "Recommendations", "Top Finding"]
+            "Security Score /100",
+            "Ransomware Readiness", "Ransomware Score /100",
+            "Capacity Runway",
+            "Recommendations", "Top Finding"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -2089,17 +2473,32 @@ def _sheet_summary(wb, all_data):
         succ_pct, sla_pct = _success_stats(cd)
         top = cd["recommendations"][0]["finding"] if cd["recommendations"] else "None identified"
 
+        # Capacity runway display
+        runway  = cd.get("capacity_runway") or {}
+        dq      = runway.get("data_quality", "no_data")
+        d80     = runway.get("days_to_80")
+        if dq in ("no_data", "insufficient"):
+            runway_val = "Insufficient data"
+        elif d80 is None:
+            runway_val = "N/A — stable"
+        else:
+            runway_val = f"{d80}d"
+
         row = [cd["name"],
                info.get("clusterSoftwareVersion", ""), len(cd["nodes"]),
                scores["overall"], scores["grade"],
                succ_pct, sla_pct, cap_pct,
                crits, warns,
-               scores["security"], len(cd["recommendations"]), top]
+               scores["security"],
+               scores.get("ransomware_label", "—"),
+               scores.get("ransomware", "—"),
+               runway_val,
+               len(cd["recommendations"]), top]
         r = ws.max_row + 1
         for c, val in enumerate(row, 1):
             ws.cell(row=r, column=c, value=val).font = _font()
 
-        # RAG color on score + grade
+        # RAG color on overall score + grade
         for col in (4, 5):
             ws.cell(row=r, column=col).fill = _rag_fill(scores["overall"])
             ws.cell(row=r, column=col).font = _font(bold=True)
@@ -2109,8 +2508,25 @@ def _sheet_summary(wb, all_data):
             ws.cell(row=r, column=9).fill = _fill(RED)
             ws.cell(row=r, column=9).font = _font(bold=True, color=WHITE)
 
+        # Ransomware score RAG (col 13)
+        rw_score = scores.get("ransomware")
+        if isinstance(rw_score, int):
+            ws.cell(row=r, column=13).fill = _ransomware_rag_fill(rw_score)
+            ws.cell(row=r, column=13).font = _font(bold=True)
+            ws.cell(row=r, column=12).fill = _ransomware_rag_fill(rw_score)
+
+        # Capacity runway RAG (col 14)
+        if isinstance(d80, int):
+            rc = ws.cell(row=r, column=14)
+            if d80 < 30:
+                rc.fill = _fill(RED);    rc.font = _font(bold=True, color=WHITE)
+            elif d80 < 90:
+                rc.fill = _fill(ORANGE); rc.font = _font(bold=True)
+            else:
+                rc.fill = _fill(LT_GREEN)
+
     auto_fit_columns(ws)
-    ws.column_dimensions[ws.cell(row=2, column=13).column_letter].width = 55
+    ws.column_dimensions[ws.cell(row=2, column=16).column_letter].width = 55
 
 
 def _sheet_infrastructure(wb, all_data):
@@ -2402,12 +2818,13 @@ def _sheet_protection(wb, all_data):
 def _sheet_storage(wb, all_data):
     ws = wb.create_sheet("Storage & Capacity")
     ws.freeze_panes = "A3"
-    _title(ws, "Storage & Capacity — Utilization & Data Reduction", "L")
+    _title(ws, "Storage & Capacity — Utilization & Data Reduction", "O")
 
     cols = ["Cluster", "Storage Domain", "Usable (TB)", "Used (TB)",
             "Free (TB)", "Used %", "Logical Data (TB)",
             "Data Reduction Ratio", "Dedup Ratio", "Compression Ratio",
-            "Savings (TB)", "Status"]
+            "Savings (TB)", "Status",
+            "Runway (days to 80%)", "Est. 80% Full Date", "Daily Growth (TB/d)"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -2434,13 +2851,33 @@ def _sheet_storage(wb, all_data):
         elif cap_pct == "N/A":
             flag = "N/A"
 
+        # Capacity runway columns
+        runway     = cd.get("capacity_runway") or {}
+        d80        = runway.get("days_to_80")
+        proj_80    = runway.get("projected_80")
+        daily_gr   = runway.get("daily_growth_tb")
+        dq         = runway.get("data_quality", "no_data")
+        if dq == "no_data":
+            runway_str = "N/A"
+        elif dq == "insufficient":
+            runway_str = "Insufficient data"
+        elif d80 is None:
+            runway_str = "N/A — stable"
+        elif d80 == 0:
+            runway_str = "Already >80%"
+        else:
+            runway_str = d80
+        proj_str   = proj_80.isoformat() if proj_80 else ""
+        growth_str = round(daily_gr, 4) if daily_gr is not None else ""
+
         row = [cd["name"], "(Cluster Total)",
                round(bytes_to_tb(usable), 2) or "",
                round(bytes_to_tb(used), 2) or "",
                round(bytes_to_tb(free), 2) or "",
                cap_pct,
                round(bytes_to_tb(logical), 2),
-               dr_ratio, dedup_ratio, comp_ratio, savings, flag]
+               dr_ratio, dedup_ratio, comp_ratio, savings, flag,
+               runway_str, proj_str, growth_str]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
             cell = ws.cell(row=rn, column=c, value=val)
@@ -2454,6 +2891,18 @@ def _sheet_storage(wb, all_data):
         elif flag == "OK":
             sc.fill = _fill(LT_GREEN)
 
+        # Runway col 13 coloring
+        if isinstance(d80, int):
+            rc = ws.cell(row=rn, column=13)
+            if d80 == 0:
+                rc.fill = _fill(RED);    rc.font = _font(bold=True, color=WHITE)
+            elif d80 < 30:
+                rc.fill = _fill(RED);    rc.font = _font(bold=True, color=WHITE)
+            elif d80 < 90:
+                rc.fill = _fill(ORANGE); rc.font = _font(bold=True)
+            else:
+                rc.fill = _fill(LT_GREEN); rc.font = _font(bold=True)
+
         # Per-domain rows
         for d in cd["domains"]:
             ds = d.get("stats") or {}
@@ -2466,7 +2915,8 @@ def _sheet_storage(wb, all_data):
                     round(ld / ph, 2) if ph else 0,
                     round(ld / da, 2) if da else 0,
                     round(da / ph, 2) if ph else 0,
-                    round(bytes_to_tb(ld - ph), 2) if ld > ph else 0, ""]
+                    round(bytes_to_tb(ld - ph), 2) if ld > ph else 0, "",
+                    "", "", ""]
             rn2 = ws.max_row + 1
             for c, val in enumerate(drow, 1):
                 ws.cell(row=rn2, column=c, value=val).font = _font()
@@ -2811,7 +3261,7 @@ def _sheet_security(wb, all_data):
     import datetime as _dt
     ws = wb.create_sheet("Security")
     ws.freeze_panes = "A3"
-    _title(ws, "Security Posture — Checklist vs Best Practices", "S")
+    _title(ws, "Security Posture — Checklist vs Best Practices", "U")
 
     cols = ["Cluster", "Cluster Encryption", "SD Encryption",
             "Vault Configured", "FortKnox / Indelible",
@@ -2823,6 +3273,8 @@ def _sheet_security(wb, all_data):
             "Quorum",
             "DataLock (WORM)",
             "Soonest Cert Expiry",
+            "Ransomware Score /100",
+            "Ransomware Readiness",
             "Gaps"]
     _hdr(ws, 2, cols)
 
@@ -2955,6 +3407,8 @@ def _sheet_security(wb, all_data):
                quorum_str,
                dl_label,
                cert_expiry_str or "—",
+               scores.get("ransomware", ""),
+               scores.get("ransomware_label", ""),
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
@@ -3037,8 +3491,15 @@ def _sheet_security(wb, all_data):
             elif soonest_days < CERT_WARN_DAYS:
                 cc.fill = _fill(ORANGE); cc.font = _font(bold=True)
 
+        # Ransomware Score col 19
+        rw_score = scores.get("ransomware")
+        if rw_score is not None:
+            rc = ws.cell(row=rn, column=19)
+            rc.fill = _ransomware_rag_fill(rw_score)
+            rc.font = _font(bold=True)
+
     auto_fit_columns(ws)
-    ws.column_dimensions["S"].width = 60
+    ws.column_dimensions["U"].width = 60
 
 
 def _sheet_replication(wb, all_data):
@@ -4784,6 +5245,262 @@ def _render_topology_png(all_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SHEET 20 — PER-WORKLOAD RISK HEATMAP
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_risk_heatmap(wb, all_data):
+    """Sheet 20: every protection group scored and sorted worst-first."""
+    from openpyxl.styles import PatternFill, Font, Alignment
+
+    RISK_COLORS = {
+        "Critical": ("FF4C4C", "FFFFFF", True),
+        "High":     ("FF8C42", "FFFFFF", True),
+        "Medium":   ("FFF2CC", "000000", False),
+        "Low":      ("E2EFDA", "000000", False),
+    }
+
+    ws = wb.create_sheet("Workload Risk Heatmap")
+    ws.freeze_panes = "A4"
+    _title(ws, "Per-Workload Risk Heatmap — Protection Groups Scored by Recovery Risk", "L")
+
+    hdr_cols = ["Cluster", "Group Name", "Policy", "Risk Level", "Risk Score /100",
+                "Last Run Status", "SLA Violated", "RPO Gap (h)",
+                "DataLock", "Last Success", "Objects Failed", "Recommendation"]
+    _hdr(ws, 2, hdr_cols)
+
+    # Collect and score all groups across all clusters
+    all_rows = []
+    counts   = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+
+    for cd in all_data:
+        policy_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+
+        for grp in (cd.get("groups") or []):
+            score, level = _group_risk_score(grp, cd)
+            counts[level] = counts.get(level, 0) + 1
+
+            name      = grp.get("name", "")
+            pol_id    = grp.get("policyId") or (grp.get("policy") or {}).get("id") or ""
+            pol_name  = (policy_by_id.get(pol_id) or {}).get("name", pol_id or "—")
+            policy    = policy_by_id.get(pol_id) or {}
+            dl_str    = _policy_datalock_str(policy) if policy else "—"
+
+            # Last run info
+            last_run   = grp.get("lastRun") or {}
+            run_status = ""
+            sla_viol   = ""
+            rpo_gap_h  = ""
+            last_succ  = ""
+            obj_fail   = ""
+            run_sum    = last_run.get("backupRun") or last_run.get("protectionRun") or last_run
+            if run_sum:
+                run_status = (run_sum.get("status") or run_sum.get("runStatus")
+                              or run_sum.get("localRun", {}).get("status", ""))
+                sla_viol   = "Yes" if run_sum.get("isLocalSnapshotsDeleted") is False \
+                              and run_sum.get("slaViolated") else \
+                             "Yes" if run_sum.get("slaViolated") else "No"
+                stats_local = (run_sum.get("localRun") or {}).get("stats") or \
+                               run_sum.get("stats") or {}
+                obj_fail    = stats_local.get("numFailedObjects") or \
+                               stats_local.get("numFailed") or ""
+                # Last success timestamp
+                end_ts = (run_sum.get("endTimeUsecs")
+                           or run_sum.get("localRun", {}).get("endTimeUsecs") or 0)
+                if end_ts:
+                    try:
+                        import datetime as _dtt
+                        last_succ = _dtt.datetime.fromtimestamp(
+                            end_ts / 1_000_000).strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        last_succ = ""
+
+            # RPO gap from run history (hours since last success)
+            rpo_hours = None
+            _runs_list = cd.get("v1_runs") or {}
+            grp_runs = _runs_list.get(name, []) if isinstance(_runs_list, dict) else []
+            if not grp_runs:
+                grp_runs = (cd.get("group_runs") or {}).get(name, [])
+            now_usecs = int(time.time() * 1_000_000)
+            for r in grp_runs:
+                st = (r.get("status") or "").lower()
+                if any(x in st for x in ("success", "warning")):
+                    end_u = r.get("endTimeUsecs") or 0
+                    if end_u:
+                        rpo_hours = round((now_usecs - end_u) / 3_600_000_000, 1)
+                        break
+            rpo_gap_h = rpo_hours if rpo_hours is not None else ""
+
+            # Recommendation
+            if level == "Critical":
+                rec = "Investigate immediately — backup protection severely degraded"
+            elif level == "High":
+                rec = "Review soon — recovery risk elevated"
+            elif level == "Medium":
+                rec = "Monitor — partial compliance issues detected"
+            else:
+                rec = "No immediate action required"
+
+            all_rows.append({
+                "cluster":    cd["name"],
+                "name":       name,
+                "policy":     pol_name,
+                "level":      level,
+                "score":      score,
+                "status":     run_status,
+                "sla":        sla_viol,
+                "rpo":        rpo_gap_h,
+                "datalock":   dl_str,
+                "last_succ":  last_succ,
+                "obj_fail":   obj_fail,
+                "rec":        rec,
+            })
+
+    # Summary counts row (row 3)
+    summary_str = "  |  ".join(
+        f"{counts.get(lv, 0)} {lv}" for lv in ("Critical", "High", "Medium", "Low")
+    )
+    ws.merge_cells(f"A3:L3")
+    sc = ws.cell(row=3, column=1, value=summary_str)
+    sc.fill = PatternFill("solid", fgColor=LIGHT_GRAY)
+    sc.font = Font(name="Calibri", size=10, bold=True)
+    sc.alignment = Alignment(horizontal="center")
+
+    # Sort worst first (ascending score)
+    all_rows.sort(key=lambda x: x["score"])
+
+    if not all_rows:
+        ws.cell(row=4, column=1, value="No protection groups found").font = _font()
+    else:
+        for row_data in all_rows:
+            level = row_data["level"]
+            bg, fg, bold = RISK_COLORS.get(level, (LIGHT_GRAY, "000000", False))
+            rn = ws.max_row + 1
+            vals = [row_data["cluster"], row_data["name"], row_data["policy"],
+                    row_data["level"], row_data["score"], row_data["status"],
+                    row_data["sla"], row_data["rpo"], row_data["datalock"],
+                    row_data["last_succ"], row_data["obj_fail"], row_data["rec"]]
+            for c, val in enumerate(vals, 1):
+                cell = ws.cell(row=rn, column=c, value=val)
+                cell.fill = PatternFill("solid", fgColor=bg)
+                cell.font = Font(name="Calibri", size=9, bold=bold,
+                                 color=fg)
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["B"].width = 40
+    ws.column_dimensions["L"].width = 50
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHEET 21 — AUDIT LOG / CHANGE SUMMARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_audit_log(wb, all_data):
+    """Sheet 21: 30-day change summary and detail log from the audit trail."""
+    from openpyxl.styles import PatternFill, Font, Alignment
+
+    CAT_COLORS = {
+        "Policy Changes":         ("BDD7EE", "000000"),
+        "Group Changes":          ("E2EFDA", "000000"),
+        "User Changes":           ("FFF2CC", "000000"),
+        "Vault/Security Changes": ("FF4C4C", "FFFFFF"),
+        "Cluster Config Changes": ("CCFFFF", "000000"),
+        "Other":                  ("F2F2F2", "000000"),
+    }
+    HIGH_RISK_COLOR = ("FF4C4C", "FFFFFF")
+
+    ws = wb.create_sheet("Audit Log")
+    ws.freeze_panes = "A3"
+    _title(ws, "Audit Log — Configuration & Change Activity (30 days)", "G")
+
+    # ── Summary section ──────────────────────────────────────────────────────
+    sum_hdr = ["Category", "Event Count", "Notable Events"]
+    _hdr(ws, 2, sum_hdr)
+
+    # Aggregate across all clusters
+    cat_counts  = {}
+    cat_notable = {}
+    detail_rows = []
+
+    for cd in all_data:
+        cluster_name = cd["name"]
+        for event in (cd.get("audit_events") or []):
+            cat = _audit_category(event)
+            if cat is None:
+                continue
+            cat_counts[cat]  = cat_counts.get(cat, 0) + 1
+            high_risk = _audit_high_risk(event)
+            action    = event.get("action") or event.get("entityType") or ""
+            entity    = event.get("entityName") or event.get("objectName") or ""
+            if high_risk:
+                notable = f"[HIGH RISK] {action}: {entity}"
+                cat_notable.setdefault(cat, []).append(notable)
+
+            ts_u  = (event.get("timestampUsecs")
+                     or event.get("startTimestampUsecs") or 0)
+            ts_dt = usecs_to_datetime(ts_u) if ts_u else ""
+            detail_rows.append({
+                "cluster":   cluster_name,
+                "ts":        ts_dt,
+                "user":      event.get("username") or event.get("user") or "",
+                "domain":    event.get("domain") or "",
+                "action":    action,
+                "etype":     event.get("entityType") or "",
+                "ename":     entity,
+                "details":   event.get("details") or event.get("description") or "",
+                "cat":       cat,
+                "high_risk": high_risk,
+            })
+
+    for cat in ["Policy Changes", "Group Changes", "User Changes",
+                "Vault/Security Changes", "Cluster Config Changes", "Other"]:
+        if cat not in cat_counts:
+            continue
+        notable_str = "; ".join((cat_notable.get(cat) or [])[:3])
+        rn = ws.max_row + 1
+        bg, fg = CAT_COLORS.get(cat, ("F2F2F2", "000000"))
+        for c, val in enumerate([cat, cat_counts[cat], notable_str or "—"], 1):
+            cell = ws.cell(row=rn, column=c, value=val)
+            cell.fill = PatternFill("solid", fgColor=bg)
+            cell.font = Font(name="Calibri", size=9, color=fg)
+
+    # Divider
+    divider_rn = ws.max_row + 1
+    ws.merge_cells(f"A{divider_rn}:G{divider_rn}")
+    dc = ws.cell(row=divider_rn, column=1, value="─── Detail Log ───")
+    dc.font = Font(name="Calibri", size=9, bold=True, italic=True)
+    dc.fill = PatternFill("solid", fgColor=LIGHT_GRAY)
+    dc.alignment = Alignment(horizontal="center")
+
+    # Detail header
+    det_hdr = ["Timestamp", "Cluster", "User", "Domain",
+               "Action", "Entity Type", "Entity Name"]
+    _hdr(ws, ws.max_row + 1, det_hdr)
+
+    # Detail rows — newest first
+    detail_rows.sort(key=lambda x: x["ts"] or "", reverse=True)
+
+    if not detail_rows:
+        ws.cell(row=ws.max_row + 1, column=1,
+                value="No audit log data available (may require elevated permissions)").font = _font()
+    else:
+        for ev in detail_rows:
+            rn = ws.max_row + 1
+            vals = [str(ev["ts"]) if ev["ts"] else "",
+                    ev["cluster"], ev["user"], ev["domain"],
+                    ev["action"], ev["etype"], ev["ename"]]
+            bg, fg = HIGH_RISK_COLOR if ev["high_risk"] else CAT_COLORS.get(ev["cat"], ("FFFFFF", "000000"))
+            bold = ev["high_risk"]
+            for c, val in enumerate(vals, 1):
+                cell = ws.cell(row=rn, column=c, value=val)
+                cell.fill = PatternFill("solid", fgColor=bg)
+                cell.font = Font(name="Calibri", size=9, bold=bold, color=fg)
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["G"].width = 40
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXCEL ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -4816,6 +5533,8 @@ def write_excel(all_data, args):
     _sheet_user_security(wb, all_data)     # 17
     _sheet_trends(wb, all_data)            # 18
     _sheet_recommendations(wb, all_data)   # 19
+    _sheet_risk_heatmap(wb, all_data)      # 20
+    _sheet_audit_log(wb, all_data)         # 21
 
     out = f"{args.output}.xlsx"
     wb.save(out)
@@ -4945,6 +5664,66 @@ def write_word(all_data, args):
         for para in row[1].paragraphs:
             for run in para.runs:
                 run.font.bold = True
+
+    # ── Top At-Risk Workloads ──────────────────────────────────────────────
+    _h2("Top At-Risk Workloads")
+    doc.add_paragraph(
+        "The following protection groups have the highest recovery risk across the "
+        "environment, scored by last-run status, SLA compliance, RPO gap, and "
+        "DataLock coverage. Groups are sorted by risk level (Critical and High "
+        "shown here; full detail in the Workload Risk Heatmap sheet)."
+    )
+
+    # Collect and score all groups; take top 5 Critical/High
+    _risk_rows = []
+    for cd in all_data:
+        pol_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+        for grp in (cd.get("groups") or []):
+            score, level = _group_risk_score(grp, cd)
+            if level in ("Critical", "High"):
+                pol_id   = grp.get("policyId") or (grp.get("policy") or {}).get("id") or ""
+                pol_name = (pol_by_id.get(pol_id) or {}).get("name", pol_id or "—")
+                last_run = grp.get("lastRun") or {}
+                run_sum  = last_run.get("backupRun") or last_run.get("protectionRun") or last_run
+                status   = (run_sum.get("status") or run_sum.get("runStatus") or "Unknown")
+                # Primary issue
+                if score < 10:
+                    issue = "Multiple critical failures"
+                elif level == "Critical":
+                    issue = "Backup failing / no recent successful run"
+                else:
+                    issue = "SLA or RPO violation detected"
+                _risk_rows.append((score, cd["name"], grp.get("name", ""), pol_name, level, issue))
+
+    _risk_rows.sort(key=lambda x: x[0])  # worst first
+    _risk_top = _risk_rows[:5]
+
+    if _risk_top:
+        t_risk = doc.add_table(rows=1, cols=5)
+        t_risk.style = "Table Grid"
+        _tbl_header(t_risk, ["Cluster", "Group Name", "Policy", "Risk Level", "Primary Issue"])
+        for _, cl_name, grp_name, pol_n, lvl, iss in _risk_top:
+            row = t_risk.add_row().cells
+            row[0].text = cl_name
+            row[1].text = grp_name
+            row[2].text = pol_n
+            row[3].text = lvl
+            row[4].text = iss
+            if lvl == "Critical":
+                _cell_shade(row[3], "FF4C4C")
+                for para in row[3].paragraphs:
+                    for run in para.runs:
+                        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                        run.font.bold = True
+            elif lvl == "High":
+                _cell_shade(row[3], "FF8C42")
+                for para in row[3].paragraphs:
+                    for run in para.runs:
+                        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                        run.font.bold = True
+    else:
+        doc.add_paragraph("No critical or high-risk protection groups identified.")
+
     doc.add_page_break()
 
     # ── 2. Environment Overview ────────────────────────────────────────────
@@ -5160,6 +5939,49 @@ def write_word(all_data, args):
                                   round(bytes_to_tb(free), 2) or "N/A",
                                   pct_str, f"{dr}x", status]):
             row[i].text = str(val)
+
+    # Capacity runway alerts
+    _runway_alerts = []
+    for cd in all_data:
+        rw   = cd.get("capacity_runway") or {}
+        d80  = rw.get("days_to_80")
+        dq   = rw.get("data_quality", "no_data")
+        proj = rw.get("projected_80")
+        gr   = rw.get("daily_growth_tb")
+        if dq in ("no_data", "insufficient"):
+            continue
+        if d80 is None:
+            continue
+        if isinstance(d80, int) and d80 < 90:
+            proj_str = proj.isoformat() if proj else "soon"
+            gr_str   = f"{round(gr, 3)} TB/d" if gr is not None else "unknown growth rate"
+            if d80 == 0:
+                _runway_alerts.append(
+                    f"{cd['name']}: already above 80% utilization — immediate capacity "
+                    f"review required (growth: {gr_str})."
+                )
+            elif d80 < 30:
+                _runway_alerts.append(
+                    f"{cd['name']}: projected to reach 80% capacity in {d80} days "
+                    f"(est. {proj_str}, growth: {gr_str}) — urgent action required."
+                )
+            else:
+                _runway_alerts.append(
+                    f"{cd['name']}: projected to reach 80% capacity in {d80} days "
+                    f"(est. {proj_str}, growth: {gr_str})."
+                )
+
+    if _runway_alerts:
+        _h2("Capacity Runway Forecast")
+        doc.add_paragraph(
+            "Based on 30-day usage trends, the following cluster(s) are forecast to "
+            "reach 80% storage utilization within 90 days. Plan capacity expansion or "
+            "data management actions accordingly."
+        )
+        for alert in _runway_alerts:
+            p = doc.add_paragraph(style="List Bullet")
+            p.add_run(alert)
+
     doc.add_page_break()
 
     # ── 5. Security ────────────────────────────────────────────────────────
@@ -5173,11 +5995,38 @@ def write_word(all_data, args):
         "design; DataLock (WORM) makes individual snapshots indelible — permanently "
         "retained even against administrator deletion."
     )
-    t5 = doc.add_table(rows=1, cols=10)
+
+    # Pre-table: Ransomware readiness summary callout
+    _rw_scores = [cd["scores"].get("ransomware") for cd in all_data
+                  if cd["scores"].get("ransomware") is not None]
+    if _rw_scores:
+        _rw_avg  = round(sum(_rw_scores) / len(_rw_scores), 1)
+        _rw_lbl  = ("Strong" if _rw_avg >= 80 else
+                    "Moderate" if _rw_avg >= 60 else
+                    "High Risk" if _rw_avg >= 40 else "Critical")
+        _rw_para = doc.add_paragraph()
+        _rw_run  = _rw_para.add_run(
+            f"Ransomware Readiness (avg across {len(_rw_scores)} cluster(s)): "
+            f"{_rw_avg}/100 — {_rw_lbl}. "
+        )
+        _rw_run.font.bold = True
+        if _rw_avg < 60:
+            _rw_run.font.color.rgb = RGBColor(0xFF, 0x4C, 0x4C)
+        elif _rw_avg < 80:
+            _rw_run.font.color.rgb = RGBColor(0xFF, 0x8C, 0x00)
+        _rw_para.add_run(
+            "This score measures how well-prepared the environment is to recover "
+            "from a ransomware event, based on DataLock coverage, FortKnox vault "
+            "status, recovery window depth, quorum, and admin MFA. "
+            "Full detail is in the Security sheet of the Excel workbook."
+        )
+
+    t5 = doc.add_table(rows=1, cols=11)
     t5.style = "Table Grid"
     _tbl_header(t5, ["Cluster", "Cluster Enc", "SD Enc", "Vault",
                       "Indelible (FK)", "DataLock (WORM)",
-                      "Replication", "Quorum", "Admins w/o MFA", "Score /100"])
+                      "Replication", "Quorum", "Admins w/o MFA",
+                      "Score /100", "Ransomware Score"])
     _admin_roles_w = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
     for cd in all_data:
         vaults   = cd["vaults"]
@@ -5201,6 +6050,10 @@ def write_word(all_data, args):
             and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
             and bool(set(u.get("roles") or []) & _admin_roles_w)
         )
+        rw_score_w = cd["scores"].get("ransomware", "")
+        rw_label_w = cd["scores"].get("ransomware_label", "")
+        rw_disp    = f"{rw_score_w}/100 ({rw_label_w})" if rw_score_w != "" else "N/A"
+
         row = t5.add_row().cells
         yn  = lambda v: "Yes" if v else "No"
         for i, val in enumerate([cd["name"],
@@ -5208,7 +6061,8 @@ def write_word(all_data, args):
                                   yn(has_vault), fk_label_s, dl_label_s,
                                   yn(repl), quorum_str_s,
                                   admins_no_mfa_w,
-                                  f"{cd['scores']['security']}/100"]):
+                                  f"{cd['scores']['security']}/100",
+                                  rw_disp]):
             row[i].text = str(val)
 
         # ── Color-code every security column ──────────────────────────────
@@ -5252,11 +6106,77 @@ def write_word(all_data, args):
         # Col 8 — Admins w/o MFA
         if admins_no_mfa_w > 0:     _sec_red(row[8])
         else:                       _sec_green(row[8])
-        # Col 9 — Score
+        # Col 9 — Security Score
         sec_val = cd["scores"]["security"]
         if sec_val >= 75:      _sec_green(row[9])
         elif sec_val >= 50:    _sec_amber(row[9])
         else:                  _sec_red(row[9])
+        # Col 10 — Ransomware Score
+        if rw_score_w != "":
+            if rw_score_w >= 80:   _sec_green(row[10])
+            elif rw_score_w >= 60: _sec_amber(row[10])
+            else:                  _sec_red(row[10])
+
+    # ── Governance & Change Activity ───────────────────────────────────────
+    _h2("Governance & Change Activity")
+
+    # Aggregate audit data across all clusters
+    _gov_cat_counts  = {}
+    _gov_high_risk   = []
+    _gov_available   = False
+    for cd in all_data:
+        events = cd.get("audit_events") or []
+        if events:
+            _gov_available = True
+        for ev in events:
+            cat = _audit_category(ev)
+            if cat is None:
+                continue
+            _gov_cat_counts[cat] = _gov_cat_counts.get(cat, 0) + 1
+            if _audit_high_risk(ev):
+                action = ev.get("action") or ev.get("entityType") or ""
+                entity = ev.get("entityName") or ev.get("objectName") or ""
+                _gov_high_risk.append(f"{cd['name']}: {action} — {entity}")
+
+    if not _gov_available:
+        doc.add_paragraph(
+            "Audit log data is not available. This may occur when the account used "
+            "to run the health check does not have audit read permissions, or when "
+            "audit logging is disabled on the cluster."
+        )
+    else:
+        total_changes = sum(_gov_cat_counts.values())
+        if total_changes == 0:
+            doc.add_paragraph(
+                "No configuration change events were recorded in the audit log during "
+                "the reporting period. Read-only access events are excluded."
+            )
+        else:
+            gov_summary = (
+                f"The audit log recorded {total_changes} configuration change event(s) "
+                f"over the past {args.days} day(s) across all clusters. "
+            )
+            cat_parts = ", ".join(
+                f"{cnt} {cat.lower()}" for cat, cnt in sorted(
+                    _gov_cat_counts.items(), key=lambda x: -x[1])
+            )
+            if cat_parts:
+                gov_summary += f"By category: {cat_parts}. "
+            doc.add_paragraph(gov_summary)
+
+        if _gov_high_risk:
+            _hr_para = doc.add_paragraph()
+            _hr_run  = _hr_para.add_run(
+                f"Warning: {len(_gov_high_risk)} high-risk event(s) detected "
+                f"(vault deletion, user deletion, admin privilege grant, or encryption "
+                f"configuration change). Review these events immediately: "
+            )
+            _hr_run.font.bold  = True
+            _hr_run.font.color.rgb = RGBColor(0xFF, 0x8C, 0x00)
+            for hr_item in _gov_high_risk[:5]:
+                p = doc.add_paragraph(style="List Bullet")
+                p.add_run(hr_item)
+
     doc.add_page_break()
 
     # ── 6. Agent Health & Source Coverage ────────────────────────────────────

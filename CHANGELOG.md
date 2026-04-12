@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-12] feat(health_check): Ransomware readiness, capacity runway, workload risk heatmap, audit log (v1.46)
+
+### Added — `health_check/health_check_report.py`
+
+- **Ransomware Readiness Score**: A dedicated 0–100 score per cluster measuring recovery readiness in the event of a ransomware attack. Scored on DataLock coverage (30 pts), FortKnox vault activity (25 pts), recovery window depth (20 pts), quorum (10 pts), and admin MFA (15 pts). Labels: Strong (≥80), Moderate (60–79), High Risk (40–59), Critical (<40). Appears in the Executive Summary sheet (col 12–13), Security sheet (cols 19–20), and the Word Security Posture table (11th column) with an environment-average callout before the table.
+
+- **Predictive Capacity Runway**: Linear regression over a 30-day daily usage time series (from `/v1/public/statistics/timeSeriesStats`) projects how many days until each cluster reaches 80% storage utilization. Shown in the Storage sheet (three new columns: "Runway (days to 80%)", "Est. 80% Full Date", "Daily Growth (TB/d)"), the Executive Summary (col 14), and the Word Storage section with a forecast paragraph listing any clusters within 90 days of 80% capacity. Generates CRITICAL and HIGH recommendations when runway is <30 and <90 days respectively. Gracefully returns "Insufficient data" or "N/A — stable" when trends are flat or data is unavailable.
+
+- **Per-Workload Risk Heatmap (Sheet 20)**: All protection groups across all clusters scored 0–100 on composite recovery risk, sorted worst-first with full-row RAG coloring (Critical/High/Medium/Low). Scoring factors: last-run status (35 pts), SLA compliance (25 pts), RPO gap (25 pts), and DataLock coverage (15 pts). A summary counts row shows the environment-wide breakdown. The top 5 Critical and High groups also appear in the Word Executive Summary as a "Top At-Risk Workloads" table with colored Risk Level cells.
+
+- **Audit Log / Change Summary (Sheet 21)**: Last 30 days of configuration changes fetched from `/v1/public/auditLog`, categorized into Policy Changes, Group Changes, User Changes, Vault/Security Changes, and Cluster Config Changes. A summary section shows per-category counts and notable events. The detail log lists individual events newest-first with high-risk events (vault deletion, user deletion, admin privilege grant, encryption changes) highlighted in red. The Word Security Posture section adds a "Governance & Change Activity" paragraph with a high-risk warning if applicable. Gracefully handles clusters where audit log access is restricted.
+
+- **Sheet count**: 19 → 21.
+
+---
+
 ## [2026-04-10] fix(health_check): auth v1 failure visible + troubleshooting hints (v1.45)
 
 ### Fixed — `utils/cohesity_auth.py` (v1.6) and `health_check/health_check_report.py` (inline fallback)

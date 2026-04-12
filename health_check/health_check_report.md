@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.45**
+**Current version: 1.46**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook** and a **Word document**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **21-sheet Excel workbook** and a **Word document**.
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,20 +10,20 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (19 sheets)
+### Excel Workbook (21 sheets)
 
 | # | Sheet | Contents |
 |---|-------|----------|
-| 1 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, top finding |
+| 1 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, ransomware readiness score, capacity runway, top finding |
 | 2 | Infrastructure | Software version, node count, healthy nodes, cluster encryption, SD encryption, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS |
 | 3 | Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status |
 | 4 | **Disk Health** | Per-disk status, type, model, serial, **SSD wear %**, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
 | 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes, **DataLock (WORM) per group** |
-| 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio |
+| 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio, **predictive runway to 80% utilization** |
 | 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy; FortKnox/RPaaS policies show **"FortKnox (Indelible)"** in green — not flagged as "No DataLock" |
 | 8 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
 | 9 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 10 | Security | **Expanded 19-column checklist**: cluster encryption, SD encryption, vault, FortKnox/indelible, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **Quorum**, **DataLock (WORM)**, TLS cert expiry |
+| 10 | Security | **Expanded 21-column checklist**: cluster encryption, SD encryption, vault, FortKnox/indelible, replication, archival, audit log, NTP auth, remote tunnel, cluster MFA, SSO/IDP, **Quorum**, **DataLock (WORM)**, TLS cert expiry, **Ransomware Score** |
 | 11 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
 | 12 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
 | 13 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB) |
@@ -33,6 +33,8 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 17 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login — RED for admins without MFA |
 | 18 | Trends (30d) | Daily backup success rate aggregated per cluster with embedded line chart |
 | 19 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+| 20 | **Workload Risk Heatmap** | All protection groups scored 0–100 by recovery risk (last-run status 35pts, SLA 25pts, RPO gap 25pts, DataLock 15pts); sorted worst-first with full-row RAG coloring — Critical/High/Medium/Low |
+| 21 | **Audit Log** | Last 30 days of configuration changes from the cluster audit trail; categorized by type (policy, group, user, vault/security, cluster config); high-risk events highlighted in red |
 
 ### Word Document
 
@@ -205,6 +207,8 @@ The engine evaluates all collected data and generates a prioritized finding list
 | `GET /irisservices/api/v1/public/users` | User accounts, MFA status, roles, last login |
 | `GET /irisservices/api/v1/public/idps` | SSO / IDP configuration |
 | `GET /irisservices/api/v1/public/tenants` | Tenant / organization inventory |
+| `GET /irisservices/api/v1/public/statistics/timeSeriesStats` | 30-day daily capacity time series (kMorphedUsageBytes) for runway regression |
+| `GET /irisservices/api/v1/public/auditLog` | Last 30 days of configuration change events |
 
 ---
 
@@ -225,6 +229,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.46 | 2026-04-12 | feat: Ransomware Readiness Score (0–100) per cluster — scored on DataLock, FortKnox activity, recovery window, quorum, admin MFA; shown in Executive Summary, Security sheet, and Word security table (11 cols). feat: Predictive Capacity Runway — 30-day linear regression via `/v1/public/statistics/timeSeriesStats`; shown in Storage sheet, Executive Summary, and Word Storage section with forecast paragraph. feat: Workload Risk Heatmap (sheet 20) — all protection groups scored worst-first with RAG coloring; top 5 Critical/High in Word Executive Summary. feat: Audit Log sheet (sheet 21) — 30-day change summary by category with high-risk event highlighting; governance paragraph in Word Security section. Sheet count 19→21 |
 | 1.45 | 2026-04-10 | fix: `get_auth_token()` v1 failure no longer silently swallowed — prints `[!] v1 endpoint failed (HTTP NNN) — trying v2...`. Final error shows both v1 and v2 responses plus troubleshooting hints: `--clear-credentials`, `--domain`, account locked. `cohesity_auth.py` v1.6 |
 | 1.44 | 2026-04-10 | feat: Prereq check redesigned — always prints a full status table for all 5 packages (requests, openpyxl, python-docx, matplotlib, keyring) with installed/NOT FOUND and required/optional labels. Previously matplotlib and keyring only appeared as small NOTE lines when absent |
 | 1.43 | 2026-04-10 | fix: `ModuleNotFoundError: No module named 'urllib3'` on Windows — `requests` now imported first with try/except; warning suppression falls back to `requests.packages.urllib3`. fix: `cohesity_auth` and `formatters` imports wrapped with inline fallbacks so script runs as a single downloaded file without the repo's `utils/` directory |

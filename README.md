@@ -9,39 +9,41 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **19-sheet Excel workbook**, a **Word document**, and an **editable topology diagram**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **21-sheet Excel workbook**, a **Word document**, and an **editable topology diagram**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | **19 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, and **environment topology** |
-| Word document | Narrative report with cover page, executive scorecard, environment overview, software & hardware lifecycle, protection health, storage, **fully color-coded security posture table** (10 columns, red/amber/green per finding), **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
+| Excel workbook | **21 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, **per-workload risk heatmap**, and **30-day audit log** |
+| Word document | Narrative report with cover page, executive scorecard with **top at-risk workloads table**, environment overview, software & hardware lifecycle, protection health, storage with **capacity runway forecast**, **fully color-coded security posture table** (11 columns including **ransomware readiness score**, red/amber/green per finding) with **governance & change activity summary**, **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
 | Topology diagram | **Editable `.drawio` file** (opens in diagrams.net / draw.io) with clusters (green), replication targets (blue), archive targets (amber), and FortKnox vaults (dark-green cloud) — arrows color-coded by target type. Native Word shapes also embedded in the Word document (editable in-place). |
 
-### Sheet reference (19 sheets)
+### Sheet reference (21 sheets)
 
 | # | Sheet | Key content |
 |---|-------|-------------|
-| 1 | Executive Summary | Per-cluster health score, grade, and scorecard |
+| 1 | Executive Summary | Per-cluster health score, grade, ransomware readiness score, and capacity runway |
 | 2 | Infrastructure | Cluster versions, nodes, software lifecycle |
 | 3 | Node Hardware | Per-node hardware model, serial, EOL status |
 | 4 | Disk Health | Disk state, SSD wear %, failed/degraded flags |
 | 5 | Protection Health | Per-group pass/fail/miss rates, SLA status, DataLock |
-| 6 | Storage & Capacity | Utilization, data reduction, runway by storage domain |
+| 6 | Storage & Capacity | Utilization, data reduction, runway by storage domain, predictive 80% full date |
 | 7 | Policy Audit | Policy list, retention, DataLock WORM + FortKnox, replication |
 | 8 | Policy → Groups | Every protection group with the policy governing it |
 | 9 | Alerts | Open critical/warning alerts with age |
-| 10 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, … |
+| 10 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, ransomware score, … |
 | 11 | Replication & Archive | Replication targets, last transfer, archival vaults |
 | 12 | FortKnox Data Transfer | Per-group transfer to FortKnox/external targets (30d / 1d) |
 | 13 | Data Services | NAS views, quota utilization |
 | 14 | Coverage Gaps | Protection groups with no recent successful backup |
-| 15 | Recommendations | Prioritized action list (HIGH / MEDIUM / LOW) |
+| 15 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) |
 | 16 | Disk Health | Per-disk status and SSD endurance |
 | 17 | Agent Health | Per-host agent version, status, upgrade readiness |
 | 18 | Source Coverage | Registered sources with protected/unprotected counts |
 | 19 | User Security | Per-user MFA status, locked state, roles, last login |
+| 20 | Workload Risk Heatmap | All protection groups scored by recovery risk, sorted worst-first with RAG coloring |
+| 21 | Audit Log | 30-day configuration change summary by category, with detail log and high-risk event highlighting |
 
 ### Prerequisites
 
@@ -133,9 +135,9 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.45_AcmeCorp_20260410_1430.xlsx
-cohesity_health_check_v1.45_AcmeCorp_20260410_1430.docx
-cohesity_health_check_v1.45_AcmeCorp_20260410_1430.drawio
+cohesity_health_check_v1.46_AcmeCorp_20260412_1430.xlsx
+cohesity_health_check_v1.46_AcmeCorp_20260412_1430.docx
+cohesity_health_check_v1.46_AcmeCorp_20260412_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.
