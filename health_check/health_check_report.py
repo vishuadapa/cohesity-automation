@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.47
+health_check_report.py  v1.48
 
-Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + editable topology diagram.
+Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + editable topology diagram + PowerPoint slide.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -80,13 +80,25 @@ Options
 Requirements
 ────────────
   Required:  pip install requests openpyxl python-docx
-  Optional:  pip install matplotlib keyring
+  Optional:  pip install matplotlib keyring python-pptx
 
   The script checks all prerequisites at startup and reports missing
   packages with exact install commands.
 
 Version history
 ───────────────
+  1.48 (2026-04-13) — feat: Topology diagram overhaul. Fixed missing FK vault
+                     connections in _topology_data() — vaults registered via the
+                     cluster vaults list but absent from policies now correctly
+                     emit edges. draw.io diagram enhanced with arrow labels
+                     (Replication / Archive / FortKnox / Indelible), cluster
+                     node labels include software version and group/source counts,
+                     and a legend block added at bottom-right. New optional
+                     PowerPoint (.pptx) output via python-pptx — 16:9 widescreen
+                     slide with colored rounded-rect nodes, STRAIGHT connectors,
+                     arrow labels, and a legend; gracefully skipped if python-pptx
+                     is not installed. python-pptx added to the optional prereq
+                     check table.
   1.47 (2026-04-13) — feat: Guide tab added as the first tab in every generated
                      workbook. Covers all 22 tabs with descriptions, the overall
                      health scoring model (weights + grade table), security score
@@ -473,7 +485,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.47"
+__version__ = "1.48"
 
 import argparse
 import datetime
@@ -744,6 +756,16 @@ try:
     DOCX_OK = True
 except ImportError:
     DOCX_OK = False
+
+try:
+    from pptx import Presentation as _PptxPresentation
+    from pptx.util import Inches as _PptxInches, Pt as _PptxPt
+    from pptx.dml.color import RGBColor as _PptxRGB
+    from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE as _MSO_SHAPE
+    from pptx.enum.dml import MSO_THEME_COLOR as _MSO_THEME
+    PPTX_OK = True
+except ImportError:
+    PPTX_OK = False
 
 # ── Thresholds / best-practice baselines ─────────────────────────────────────
 CAPACITY_WARN_PCT    = 70       # cluster used % — warning
@@ -4483,16 +4505,27 @@ def _topology_data(all_data):
                         all_arch[tname] = {"id": f"a{len(all_arch)}", "name": tname}
                     edges.append({"src": cid, "tgt": all_arch[tname]["id"], "type": "arch"})
 
-        # Pick up FK vaults that appear in the vaults list but not in policies
+        # Pick up FK vaults that appear in the vaults list but not in policies.
+        # Previously these only got a node entry but never an edge — fixed.
         for v in (cd.get("vaults") or []):
             vtype = v.get("vaultType") or ""
             vname = v.get("name") or ""
-            if vname and _is_fk(vtype, vname) and vname not in all_fk:
-                all_fk[vname] = {"id": f"f{len(all_fk)}", "name": vname}
+            if vname and _is_fk(vtype, vname):
+                if vname not in all_fk:
+                    all_fk[vname] = {"id": f"f{len(all_fk)}", "name": vname}
+                edges.append({"src": cid, "tgt": all_fk[vname]["id"], "type": "fk"})
+
+        # Pull software version for node labels
+        cluster_version = (
+            cd.get("version") or
+            (cd.get("info") or {}).get("clusterSoftwareVersion") or
+            (cd.get("info") or {}).get("softwareVersion") or ""
+        )
 
         clusters.append({
             "id":       cid,
             "name":     cd["name"],
+            "version":  cluster_version,
             "groups":   len(cd["groups"]),
             "sources":  len(cd.get("sources") or []),
             "workloads": workloads,
@@ -4646,12 +4679,13 @@ def _generate_topology_drawio(all_data, out_path):
     for idx, cl in enumerate(clusters):
         y   = _col_y(clusters, idx, C_H)
         wls = ", ".join(cl["workloads"]) if cl["workloads"] else ""
-        det = f"{cl['groups']} groups"
-        if cl["sources"]: det += f" &bull; {cl['sources']} sources"
-        if cl["cap_tb"] > 0.01: det += f" &bull; {cl['cap_tb']:.1f} TB"
-        lbl = (f"<b>{_he(cl['name'])}</b><br>"
-               + (f"{_he(wls)}<br>" if wls else "")
-               + det)
+        ver = cl.get("version", "")
+        sub = f"v{ver}" if ver else ""
+        if cl["groups"]:   sub += (" | " if sub else "") + f"{cl['groups']} groups"
+        if cl["sources"]:  sub += f" | {cl['sources']} sources"
+        lbl = f"<b>{_he(cl['name'])}</b><br>{_he(sub)}"
+        if wls:
+            lbl += f"<br><i>{_he(wls)}</i>"
         _vertex(cl["id"], _av(lbl), col_c, y, C_W, C_H, S_CLUSTER)
 
     # ── Replication target nodes ──────────────────────────────────────────────
@@ -4672,7 +4706,8 @@ def _generate_topology_drawio(all_data, out_path):
         lbl = f"&#x1F512; <b>{_he(n['name'])}</b><br>FortKnox / RPaaS"
         _vertex(n["id"], _av(lbl), col_f, y, T_W, T_H, S_FK)
 
-    # ── Edges ─────────────────────────────────────────────────────────────────
+    # ── Edges (with labels) ───────────────────────────────────────────────────
+    _EDGE_LABELS = {"repl": "Replication", "arch": "Archive", "fk": "FortKnox /&#xa;Indelible"}
     for e in edges:
         if e["type"] == "repl":
             style = _s_edge(_DG_REPL)
@@ -4680,12 +4715,45 @@ def _generate_topology_drawio(all_data, out_path):
             style = _s_edge(_DG_ARCH)
         else:
             style = _s_edge(_DG_FK, dashed=True)
-        _edge(_nid(), e["src"], e["tgt"], style)
+        _edge(_nid(), e["src"], e["tgt"], style, label=_av(_EDGE_LABELS.get(e["type"], "")))
 
     # ── Canvas dimensions ─────────────────────────────────────────────────────
     right_items = max(len(repl_nodes), len(arch_nodes), len(fk_nodes), 1)
     canvas_h = MARGIN_Y + 30 + max(len(clusters), right_items) * (C_H + V_GAP) + 60
     canvas_w = col_f + T_W + 60
+
+    # ── Legend block (bottom-right) ───────────────────────────────────────────
+    leg_x  = col_f + T_W + 20
+    leg_y  = canvas_h - 170
+    leg_w  = 220
+    leg_hd = 22
+    leg_rh = 36
+
+    # Legend title
+    cells.append(
+        f'<mxCell id="{_nid()}" value="Legend" '
+        f'style="text;html=1;align=left;fontStyle=1;fontSize=10;fontColor=#1A3045;" '
+        f'vertex="1" parent="1">'
+        f'<mxGeometry x="{leg_x}" y="{leg_y}" width="{leg_w}" height="{leg_hd}" as="geometry"/>'
+        f'</mxCell>'
+    )
+    legend_items = [
+        (_DG_TEAL,   _DG_TEAL_DK,  "Source Cluster"),
+        (_DG_REPL,   "#004A8A",     "Replication Target"),
+        (_DG_ARCH,   "#B05A00",     "Archival Vault"),
+        (_DG_FK,     "#0E3B25",     "FortKnox / RPaaS"),
+    ]
+    for li, (bg, stroke, label) in enumerate(legend_items):
+        iy = leg_y + leg_hd + li * (leg_rh + 4)
+        cells.append(
+            f'<mxCell id="{_nid()}" value="{_av(label)}" '
+            f'style="rounded=1;whiteSpace=wrap;html=1;fillColor={bg};'
+            f'strokeColor={stroke};strokeWidth=1;fontColor=#FFFFFF;fontSize=10;" '
+            f'vertex="1" parent="1">'
+            f'<mxGeometry x="{leg_x}" y="{iy}" width="{leg_w}" height="{leg_rh}" as="geometry"/>'
+            f'</mxCell>'
+        )
+    canvas_w = max(canvas_w, leg_x + leg_w + 20)
 
     # ── Assemble XML ──────────────────────────────────────────────────────────
     cells_xml = "\n        ".join(cells)
@@ -4715,6 +4783,297 @@ def _generate_topology_drawio(all_data, out_path):
         return drawio_path
     except Exception as exc:
         print(f"  WARN: Could not write topology diagram: {exc}")
+        return None
+
+
+# ── PowerPoint topology diagram ──────────────────────────────────────────────
+
+def _generate_topology_pptx(all_data, out_path, customer="", debug=False):
+    """Write a 16:9 PowerPoint topology slide to out_path + '.pptx'.
+
+    Requires python-pptx (optional).  Returns the output path on success,
+    None if python-pptx is unavailable or an error occurs.
+    """
+    if not PPTX_OK:
+        return None
+
+    import lxml.etree as _etree
+
+    topo       = _topology_data(all_data)
+    clusters   = topo["clusters"]
+    repl_nodes = topo["repl_nodes"]
+    arch_nodes = topo["arch_nodes"]
+    fk_nodes   = topo["fk_nodes"]
+    edges      = topo["edges"]
+
+    prs = _PptxPresentation()
+    prs.slide_width  = _PptxInches(13.33)
+    prs.slide_height = _PptxInches(7.5)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+
+    shapes = slide.shapes
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _rgb(hex6):
+        h = hex6.lstrip("#")
+        return _PptxRGB(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+    def _inches(v):
+        return _PptxInches(v)
+
+    def _add_box(label, sublabel, x, y, w, h, fill_hex, stroke_hex, text_color="#FFFFFF"):
+        """Add a rounded-rectangle shape with a two-line label."""
+        sp = shapes.add_shape(
+            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            _inches(x), _inches(y), _inches(w), _inches(h)
+        )
+        # Fill
+        sp.fill.solid()
+        sp.fill.fore_color.rgb = _rgb(fill_hex)
+        # Border
+        sp.line.color.rgb = _rgb(stroke_hex)
+        sp.line.width = _PptxInches(0.015)
+        # Text
+        tf = sp.text_frame
+        tf.word_wrap = True
+        tf.auto_size = None
+        from pptx.util import Pt as _PPPt
+        from pptx.enum.text import PP_ALIGN
+        p1 = tf.paragraphs[0]
+        p1.alignment = PP_ALIGN.CENTER
+        run1 = p1.add_run()
+        run1.text = label
+        run1.font.bold = True
+        run1.font.size = _PPPt(9)
+        run1.font.color.rgb = _rgb(text_color)
+        if sublabel:
+            from pptx.oxml.ns import qn as _qn
+            p2 = tf.add_paragraph()
+            p2.alignment = PP_ALIGN.CENTER
+            run2 = p2.add_run()
+            run2.text = sublabel
+            run2.font.size = _PPPt(7)
+            run2.font.color.rgb = _rgb(text_color)
+        return sp
+
+    def _add_connector(x1, y1, x2, y2, color_hex):
+        """Add a straight arrow connector."""
+        from pptx.util import Emu as _Emu
+        from pptx.oxml.ns import qn as _qn
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        # python-pptx add_connector is available in ≥0.6.18
+        try:
+            from pptx.enum.shapes import MSO_CONNECTOR_TYPE
+            conn = shapes.add_connector(
+                MSO_CONNECTOR_TYPE.STRAIGHT,
+                _inches(x1), _inches(y1),
+                _inches(x2), _inches(y2)
+            )
+            conn.line.color.rgb = _rgb(color_hex)
+            conn.line.width = _PptxInches(0.025)
+            return conn, cx, cy
+        except Exception:
+            return None, cx, cy
+
+    def _add_label(text, cx, cy, w=0.85, h=0.22):
+        """Add a small text label near a connector midpoint."""
+        tb = shapes.add_textbox(_inches(cx - w / 2), _inches(cy - h / 2),
+                                _inches(w), _inches(h))
+        from pptx.util import Pt as _PPPt
+        from pptx.enum.text import PP_ALIGN
+        p = tb.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = text
+        run.font.size = _PPPt(7)
+        run.font.color.rgb = _rgb("#888888")
+
+    # ── Layout constants (inches) ─────────────────────────────────────────────
+    TITLE_H   = 0.40
+    START_Y   = 1.10   # first node top
+    NODE_W    = 2.50
+    NODE_H    = 0.85
+    V_GAP     = 0.20   # vertical gap between nodes in same column
+    COL_C     = 0.20   # cluster column left edge
+    COL_R     = 3.10   # replication column
+    COL_A     = 6.00   # archival column
+    COL_F     = 8.90   # FortKnox column
+
+    # ── Title bar ─────────────────────────────────────────────────────────────
+    title_text = f"Cohesity Environment Topology"
+    if customer:
+        title_text += f" — {customer}"
+    tb = shapes.add_textbox(_inches(0.2), _inches(0.1),
+                            _inches(12.9), _inches(TITLE_H))
+    from pptx.util import Pt as _PPPt
+    from pptx.enum.text import PP_ALIGN
+    tp = tb.text_frame.paragraphs[0]
+    tp.alignment = PP_ALIGN.LEFT
+    tr = tp.add_run()
+    tr.text = title_text
+    tr.font.bold = True
+    tr.font.size = _PPPt(18)
+    tr.font.color.rgb = _rgb(_DG_FK)
+
+    # ── Node ID → center-right / center-left x,y for connectors ─────────────
+    node_anchor = {}  # id → (cx_right, cy, cx_left)
+
+    def _node_y(idx):
+        return START_Y + idx * (NODE_H + V_GAP)
+
+    def _center_y(idx):
+        return _node_y(idx) + NODE_H / 2.0
+
+    # ── Cluster nodes ─────────────────────────────────────────────────────────
+    for idx, cl in enumerate(clusters):
+        y = _node_y(idx)
+        ver = cl.get("version", "")
+        sub = f"v{ver}" if ver else ""
+        if cl["groups"]:  sub += (" | " if sub else "") + f"{cl['groups']} grp"
+        if cl["sources"]: sub += f" | {cl['sources']} src"
+        _add_box(cl["name"], sub, COL_C, y, NODE_W, NODE_H,
+                 _DG_TEAL, _DG_TEAL_DK)
+        cy = y + NODE_H / 2.0
+        node_anchor[cl["id"]] = (COL_C + NODE_W, cy, COL_C)
+
+    # ── Replication target nodes ───────────────────────────────────────────────
+    for idx, n in enumerate(repl_nodes):
+        y = _node_y(idx)
+        _add_box(n["name"], "Cluster", COL_R, y, NODE_W, NODE_H,
+                 _DG_REPL, "#004A8A")
+        cy = y + NODE_H / 2.0
+        node_anchor[n["id"]] = (COL_R + NODE_W, cy, COL_R)
+
+    # ── Archival vault nodes ───────────────────────────────────────────────────
+    for idx, n in enumerate(arch_nodes):
+        y = _node_y(idx)
+        _add_box(n["name"], "Archival Vault", COL_A, y, NODE_W, NODE_H,
+                 _DG_ARCH, "#B05A00")
+        cy = y + NODE_H / 2.0
+        node_anchor[n["id"]] = (COL_A + NODE_W, cy, COL_A)
+
+    # ── FortKnox nodes ────────────────────────────────────────────────────────
+    for idx, n in enumerate(fk_nodes):
+        y = _node_y(idx)
+        _add_box(n["name"], "FortKnox / RPaaS", COL_F, y, NODE_W, NODE_H,
+                 _DG_FK, "#0E3B25")
+        cy = y + NODE_H / 2.0
+        node_anchor[n["id"]] = (COL_F + NODE_W, cy, COL_F)
+
+    # ── Column headers ────────────────────────────────────────────────────────
+    HDR_Y = START_Y - 0.35
+    HDR_H = 0.28
+    if clusters:
+        tb2 = shapes.add_textbox(_inches(COL_C), _inches(HDR_Y),
+                                 _inches(NODE_W), _inches(HDR_H))
+        p2 = tb2.text_frame.paragraphs[0]
+        p2.alignment = PP_ALIGN.CENTER
+        r2 = p2.add_run(); r2.text = "Source Clusters"
+        r2.font.bold = True; r2.font.size = _PPPt(9)
+        r2.font.color.rgb = _rgb(_DG_TEAL)
+    if repl_nodes:
+        tb3 = shapes.add_textbox(_inches(COL_R), _inches(HDR_Y),
+                                 _inches(NODE_W), _inches(HDR_H))
+        p3 = tb3.text_frame.paragraphs[0]
+        p3.alignment = PP_ALIGN.CENTER
+        r3 = p3.add_run(); r3.text = "Replication Targets"
+        r3.font.bold = True; r3.font.size = _PPPt(9)
+        r3.font.color.rgb = _rgb(_DG_REPL)
+    if arch_nodes:
+        tb4 = shapes.add_textbox(_inches(COL_A), _inches(HDR_Y),
+                                 _inches(NODE_W), _inches(HDR_H))
+        p4 = tb4.text_frame.paragraphs[0]
+        p4.alignment = PP_ALIGN.CENTER
+        r4 = p4.add_run(); r4.text = "Archival Vaults"
+        r4.font.bold = True; r4.font.size = _PPPt(9)
+        r4.font.color.rgb = _rgb(_DG_ARCH)
+    if fk_nodes:
+        tb5 = shapes.add_textbox(_inches(COL_F), _inches(HDR_Y),
+                                 _inches(NODE_W), _inches(HDR_H))
+        p5 = tb5.text_frame.paragraphs[0]
+        p5.alignment = PP_ALIGN.CENTER
+        r5 = p5.add_run(); r5.text = "FortKnox / RPaaS"
+        r5.font.bold = True; r5.font.size = _PPPt(9)
+        r5.font.color.rgb = _rgb(_DG_FK)
+
+    # ── Edges and labels ──────────────────────────────────────────────────────
+    _EDGE_COLORS  = {"repl": _DG_REPL, "arch": _DG_ARCH, "fk": _DG_FK}
+    _EDGE_LBLS    = {"repl": "Replication", "arch": "Archive", "fk": "FortKnox /\nIndelible"}
+    _seen_lbl     = set()  # avoid duplicate labels on same source→target-type lane
+
+    for e in edges:
+        src_id = e["src"]
+        tgt_id = e["tgt"]
+        etype  = e["type"]
+        if src_id not in node_anchor or tgt_id not in node_anchor:
+            continue
+        src_x_right, src_cy, _ = node_anchor[src_id]
+        _, tgt_cy, tgt_x_left  = node_anchor[tgt_id]
+        color = _EDGE_COLORS.get(etype, "#888888")
+        conn, cx, cy = _add_connector(src_x_right, src_cy,
+                                      tgt_x_left,  tgt_cy, color)
+        # Add label once per (src, etype) pair to avoid clutter
+        lbl_key = (src_id, etype)
+        if lbl_key not in _seen_lbl:
+            _seen_lbl.add(lbl_key)
+            _add_label(_EDGE_LBLS.get(etype, ""), cx, cy)
+
+    # ── Legend (bottom-left) ──────────────────────────────────────────────────
+    LEG_X = 0.20
+    LEG_Y = 6.30
+    LEG_W = 1.90
+    LEG_H = 0.28
+    LEG_G = 0.06
+
+    legend_items = [
+        (_DG_TEAL,   _DG_TEAL_DK, "Source Cluster"),
+        (_DG_REPL,   "#004A8A",   "Replication Target"),
+        (_DG_ARCH,   "#B05A00",   "Archival Vault"),
+        (_DG_FK,     "#0E3B25",   "FortKnox / RPaaS"),
+    ]
+    leg_tb = shapes.add_textbox(_inches(LEG_X), _inches(LEG_Y - 0.25),
+                                _inches(1.5), _inches(0.22))
+    lp = leg_tb.text_frame.paragraphs[0]
+    lr = lp.add_run(); lr.text = "Legend"
+    lr.font.bold = True; lr.font.size = _PPPt(8)
+    lr.font.color.rgb = _rgb("#1A3045")
+
+    for li, (bg, stroke, label) in enumerate(legend_items):
+        iy = LEG_Y + li * (LEG_H + LEG_G)
+        sp = shapes.add_shape(
+            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            _inches(LEG_X), _inches(iy), _inches(LEG_W), _inches(LEG_H)
+        )
+        sp.fill.solid()
+        sp.fill.fore_color.rgb = _rgb(bg)
+        sp.line.color.rgb = _rgb(stroke)
+        sp.line.width = _PptxInches(0.01)
+        tf = sp.text_frame
+        tf.word_wrap = False
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = label
+        run.font.size = _PPPt(7)
+        run.font.color.rgb = _rgb("#FFFFFF")
+        run.font.bold = True
+
+    # ── Watermark ─────────────────────────────────────────────────────────────
+    wm = shapes.add_textbox(_inches(0.2), _inches(7.25), _inches(12.9), _inches(0.22))
+    wp = wm.text_frame.paragraphs[0]
+    wp.alignment = PP_ALIGN.RIGHT
+    wr = wp.add_run()
+    wr.text = f"Generated by Cohesity Health Check v{__version__}"
+    wr.font.size = _PPPt(7)
+    wr.font.color.rgb = _rgb("#AAAAAA")
+
+    try:
+        pptx_path = out_path + ".pptx"
+        prs.save(pptx_path)
+        return pptx_path
+    except Exception as exc:
+        print(f"  WARN: Could not write PowerPoint topology: {exc}")
         return None
 
 
@@ -5597,8 +5956,11 @@ def _sheet_guide(wb, all_data):
                      "environment, generated live from the Cohesity Helios API or directly "
                      "from a cluster. Each tab covers a specific area of infrastructure health, "
                      "protection group performance, storage capacity, security posture, and "
-                     "recovery readiness. Use this Guide tab as a quick reference for "
-                     "understanding what each sheet contains and how the scores are calculated."
+                     "recovery readiness. Alongside this workbook, the script also produces a "
+                     "Word narrative report, an editable draw.io topology diagram (.drawio), and "
+                     "optionally a PowerPoint topology slide (.pptx, requires python-pptx). "
+                     "Use this Guide tab as a quick reference for understanding what each sheet "
+                     "contains and how the scores are calculated."
                  ))
     ac.font = _Fnt(size=9, name="Calibri")
     ac.alignment = _Aln(wrap_text=True, vertical="top")
@@ -6787,6 +7149,7 @@ def main():
         ("openpyxl",      EXCEL_OK,     "required", "Excel workbook output (skip with --word-only)"),
         ("python-docx",   DOCX_OK,      "required", "Word document generation (skip with --excel-only)"),
         ("matplotlib",    _pkg_ok("matplotlib"), "optional", "Topology PNG fallback for Word diagram"),
+        ("python-pptx",  PPTX_OK,               "optional", "PowerPoint topology diagram (.pptx)"),
         ("keyring",       _pkg_ok("keyring"),    "optional", "OS keychain credential storage"),
     ]
 
@@ -6963,10 +7326,20 @@ def main():
 
     # Generate editable topology diagram (draw.io)
     drawio_path = _generate_topology_drawio(all_data, args.output)
+
+    # Generate PowerPoint topology slide (optional — requires python-pptx)
+    pptx_path = _generate_topology_pptx(
+        all_data, args.output,
+        customer=args.customer,
+        debug=args.debug,
+    )
+
+    out_parts = [f"{args.output}.xlsx", f"{args.output}.docx"]
     if drawio_path:
-        print(f"\nComplete.  Output: {args.output}.xlsx / {args.output}.docx / {drawio_path}")
-    else:
-        print(f"\nComplete.  Output: {args.output}.xlsx / {args.output}.docx")
+        out_parts.append(drawio_path)
+    if pptx_path:
+        out_parts.append(pptx_path)
+    print(f"\nComplete.  Output: {' / '.join(out_parts)}")
 
 
 if __name__ == "__main__":
