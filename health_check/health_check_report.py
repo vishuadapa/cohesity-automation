@@ -5647,7 +5647,12 @@ def _sheet_guide(wb, all_data):
         bg = LIGHT_GRAY if i % 2 == 0 else None
         rn = _nxt()
         ws.cell(row=rn, column=1, value=str(i)).font = _Fnt(size=9, name="Calibri")
-        ws.cell(row=rn, column=2, value=name).font   = _Fnt(size=9, bold=True, name="Calibri")
+        # Hyperlink to the target sheet — escape single quotes in sheet name
+        safe = name.replace("'", "''")
+        c2 = ws.cell(row=rn, column=2, value=name)
+        c2.hyperlink = f"#'{safe}'!A1"
+        c2.font      = _Fnt(size=9, bold=True, underline="single",
+                            color="0563C1", name="Calibri")
         c3 = ws.cell(row=rn, column=3, value=desc)
         c3.font      = _Fnt(size=9, name="Calibri")
         c3.alignment = _Aln(wrap_text=True, vertical="top")
