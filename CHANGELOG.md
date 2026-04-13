@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-13] feat(health_check): Guide tab added to Excel workbook (v1.47)
+
+### Added — `health_check/health_check_report.py`
+
+- **Guide tab**: A new "Guide" tab is now the first tab in every generated Excel workbook. It provides a self-contained reference covering:
+  - Descriptions of all 22 tabs (Guide + 21 data sheets) with a brief summary of what each contains
+  - **Overall Health Score**: scoring dimensions, weights, and grade table (Excellent/Good/Fair/At Risk/Critical)
+  - **Security Score**: full deductions table — which findings trigger point deductions and their severity
+  - **Ransomware Readiness Score**: per-dimension max points and scoring detail (DataLock, FortKnox, recovery window, admin MFA, quorum)
+  - **Workload Risk Score**: per-factor max points and scoring detail (last-run status, SLA, RPO gap, DataLock)
+  - **Recommendation Priorities**: CRITICAL/HIGH/MEDIUM/LOW definitions with expected response times
+  - **Color/RAG Legend**: every color used in the workbook with its meaning
+- The Guide tab requires no API calls — content is generated from static definitions in the script and is always accurate for the current version.
+
+---
+
 ## [2026-04-12] feat(health_check): Ransomware readiness, capacity runway, workload risk heatmap, audit log (v1.46)
 
 ### Added — `health_check/health_check_report.py`

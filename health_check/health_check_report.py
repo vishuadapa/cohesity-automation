@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.46
+health_check_report.py  v1.47
 
-Multi-cluster Cohesity health check — 21-sheet Excel workbook + Word document + editable topology diagram.
+Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + editable topology diagram.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -38,6 +38,7 @@ cluster) and produces:
   19 Recommendations         — prioritized action list
   20 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
   21 Audit Log               — 30-day configuration change summary and detail log
+  + Guide tab (first)        — sheet descriptions, scoring methodology, color legend
 
   Word document
   ─────────────
@@ -86,6 +87,12 @@ Requirements
 
 Version history
 ───────────────
+  1.47 (2026-04-13) — feat: Guide tab added as the first tab in every generated
+                     workbook. Covers all 22 tabs with descriptions, the overall
+                     health scoring model (weights + grade table), security score
+                     deductions, ransomware readiness scoring breakdown, workload
+                     risk score factors, recommendation priority levels, and a
+                     full color/RAG legend. Static content — no API calls required.
   1.46 (2026-04-12) — feat: Ransomware Readiness Score (0-100) computed per
                      cluster from DataLock coverage, FortKnox vault activity,
                      recovery window depth, quorum, and admin MFA. Displayed
@@ -466,7 +473,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.46"
+__version__ = "1.47"
 
 import argparse
 import datetime
@@ -5501,6 +5508,366 @@ def _sheet_audit_log(wb, all_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GUIDE SHEET (first tab) — scoring reference and sheet descriptions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_guide(wb, all_data):
+    """Tab 1: Static reference — what each sheet contains and how scoring works."""
+    from openpyxl.styles import Alignment as _Aln, PatternFill as _PF, Font as _Fnt
+
+    ws = wb.create_sheet("Guide")
+    SPAN  = "F"   # merge across A:F
+    NC    = 6     # number of meaningful columns
+
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 30
+    ws.column_dimensions["C"].width = 58
+    ws.column_dimensions["D"].width = 8
+    ws.column_dimensions["E"].width = 8
+    ws.column_dimensions["F"].width = 8
+
+    _r = [0]
+
+    def _nxt():
+        _r[0] += 1
+        return _r[0]
+
+    def _blank():
+        _r[0] += 1
+
+    def _section(title):
+        rn = _nxt()
+        ws.merge_cells(f"A{rn}:{SPAN}{rn}")
+        c = ws.cell(row=rn, column=1, value=title)
+        c.fill = _PF("solid", fgColor=COH_GREEN)
+        c.font = _Fnt(bold=True, color=WHITE, size=11, name="Calibri")
+        c.alignment = _Aln(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[rn].height = 22
+
+    def _sub_hdr(*cols):
+        rn = _nxt()
+        for ci, val in enumerate(cols, 1):
+            cell = ws.cell(row=rn, column=ci, value=val)
+            cell.fill = _PF("solid", fgColor=DARK_GREEN)
+            cell.font = _Fnt(bold=True, color=WHITE, size=9, name="Calibri")
+            cell.alignment = _Aln(horizontal="center", vertical="center")
+        ws.row_dimensions[rn].height = 16
+
+    def _row(a, b, c, bg=None, bold_a=False, bold_b=False, h=15, wrap_c=True):
+        rn = _nxt()
+        for ci, (val, bold) in enumerate([(a, bold_a), (b, bold_b), (c, False)], 1):
+            cell = ws.cell(row=rn, column=ci, value=val)
+            cell.font = _Fnt(size=9, bold=bold, name="Calibri")
+            cell.alignment = _Aln(wrap_text=(ci == 3 and wrap_c), vertical="top")
+        if bg:
+            for ci in range(1, NC + 1):
+                ws.cell(row=rn, column=ci).fill = _PF("solid", fgColor=bg)
+        ws.row_dimensions[rn].height = h
+
+    def _color_row(a_val, a_bg, a_fg, b_val, c_val, h=16):
+        rn = _nxt()
+        c1 = ws.cell(row=rn, column=1, value=a_val)
+        c1.fill = _PF("solid", fgColor=a_bg)
+        c1.font = _Fnt(size=9, bold=True, color=a_fg, name="Calibri")
+        c1.alignment = _Aln(horizontal="center", vertical="center")
+        ws.cell(row=rn, column=2, value=b_val).font = _Fnt(size=9, bold=True, name="Calibri")
+        c3 = ws.cell(row=rn, column=3, value=c_val)
+        c3.font = _Fnt(size=9, name="Calibri")
+        c3.alignment = _Aln(wrap_text=True, vertical="top")
+        ws.row_dimensions[rn].height = h
+
+    # ── Main title ────────────────────────────────────────────────────────────
+    rn = _nxt()
+    ws.merge_cells(f"A{rn}:{SPAN}{rn}")
+    tc = ws.cell(row=rn, column=1,
+                 value="Cohesity Health Check — Workbook Guide & Scoring Reference")
+    tc.fill = _PF("solid", fgColor=DARK_GREEN)
+    tc.font = _Fnt(bold=True, color=WHITE, size=14, name="Calibri")
+    tc.alignment = _Aln(horizontal="center", vertical="center")
+    ws.row_dimensions[rn].height = 32
+    _blank()
+
+    # ── About ─────────────────────────────────────────────────────────────────
+    _section("About This Report")
+    rn = _nxt()
+    ws.merge_cells(f"A{rn}:{SPAN}{rn}")
+    ac = ws.cell(row=rn, column=1,
+                 value=(
+                     "This workbook provides a comprehensive assessment of your Cohesity "
+                     "environment, generated live from the Cohesity Helios API or directly "
+                     "from a cluster. Each tab covers a specific area of infrastructure health, "
+                     "protection group performance, storage capacity, security posture, and "
+                     "recovery readiness. Use this Guide tab as a quick reference for "
+                     "understanding what each sheet contains and how the scores are calculated."
+                 ))
+    ac.font = _Fnt(size=9, name="Calibri")
+    ac.alignment = _Aln(wrap_text=True, vertical="top")
+    ws.row_dimensions[rn].height = 42
+    _blank()
+
+    # ── Workbook Contents ─────────────────────────────────────────────────────
+    _section("Workbook Contents")
+    _sub_hdr("#", "Sheet / Tab Name", "What It Contains")
+    sheets_info = [
+        ("Guide",                  "This tab — scoring methodology and sheet descriptions"),
+        ("Executive Summary",      "Per-cluster health score, grade, success %, capacity used %, open criticals, "
+                                   "ransomware readiness score, and capacity runway forecast"),
+        ("Infrastructure",         "Software version, node count, healthy nodes, cluster/storage-domain encryption, "
+                                   "DNS/NTP settings, software lifecycle status and end-of-support date"),
+        ("Node Hardware",          "Per-node hardware model, serial, storage tiers, raw capacity, and hardware EOL status"),
+        ("Disk Health",            "Per-disk status, SSD wear %, encryption, storage tier — CRITICAL on failed disks, "
+                                   "HIGH on SSD wear ≥80%"),
+        ("Protection Health",      "Per-group last-run status, SLA violations, RPO gap, object failure counts, "
+                                   "and DataLock (WORM) coverage per group"),
+        ("Storage & Capacity",     "Cluster and per-domain usable/used/free, data reduction/dedup/compression ratios, "
+                                   "and predictive runway to 80% utilization"),
+        ("Policy Audit",           "Policy retention schedules, replication targets, archival targets, "
+                                   "and DataLock (WORM) mode and duration per policy"),
+        ("Policy → Groups",        "Every protection group listed alongside the policy that governs it"),
+        ("Alerts",                 "All open critical and warning alerts, sorted by severity, with age and description"),
+        ("Security",               "21-column checklist: encryption, vault, FortKnox, replication, audit log, MFA, "
+                                   "NTP auth, quorum, TLS cert expiry, and ransomware readiness score"),
+        ("Agent Health",           "Per-host agent version, health status, upgradability, and last upgrade error"),
+        ("Source Coverage",        "Registered protection sources with protected/unprotected object counts and coverage %"),
+        ("Replication & Archive",  "Replication partner targets, archival vault names/types, and FortKnox storage consumed"),
+        ("FortKnox Data Transfer", "Per-group data transfer to external vaults: logical TB, physical TB, "
+                                   "storage consumed, snapshot count"),
+        ("Data Services",          "NAS views with protocol, quota configuration, usage %, and near-quota warnings"),
+        ("Coverage Gaps",          "Protection groups with a failed last run, paused state, or RPO gap exceeding threshold"),
+        ("User Security",          "User accounts with domain, roles, MFA status, locked state, and last login — "
+                                   "highlights admins without MFA"),
+        ("Trends (30d)",           "Daily backup success rate per cluster over the lookback window with embedded charts"),
+        ("Recommendations",        "Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with finding and suggested action"),
+        ("Workload Risk Heatmap",  "All protection groups scored 0–100 on composite recovery risk, "
+                                   "sorted worst-first with full-row color coding"),
+        ("Audit Log",              "Last 30 days of configuration changes from the cluster audit trail, "
+                                   "categorized by type with high-risk events highlighted"),
+    ]
+    for i, (name, desc) in enumerate(sheets_info, 1):
+        bg = LIGHT_GRAY if i % 2 == 0 else None
+        rn = _nxt()
+        ws.cell(row=rn, column=1, value=str(i)).font = _Fnt(size=9, name="Calibri")
+        ws.cell(row=rn, column=2, value=name).font   = _Fnt(size=9, bold=True, name="Calibri")
+        c3 = ws.cell(row=rn, column=3, value=desc)
+        c3.font      = _Fnt(size=9, name="Calibri")
+        c3.alignment = _Aln(wrap_text=True, vertical="top")
+        if bg:
+            for ci in range(1, NC + 1):
+                ws.cell(row=rn, column=ci).fill = _PF("solid", fgColor=LIGHT_GRAY)
+        ws.row_dimensions[rn].height = 28
+    _blank()
+
+    # ── Overall Health Score ──────────────────────────────────────────────────
+    _section("Overall Health Score (0–100)")
+    _sub_hdr("Weight", "Dimension", "What It Measures")
+    score_rows = [
+        ("25%", "Protection Success Rate",
+         "Percentage of backup runs in the lookback window that succeeded"),
+        ("20%", "SLA Compliance",
+         "Percentage of runs that completed within the configured SLA window"),
+        ("15%", "Infrastructure Health",
+         "Percentage of cluster nodes in a healthy state"),
+        ("15%", "Storage Capacity",
+         "Penalized above 70% used; score reaches 0 at or above 85% utilization"),
+        ("15%", "Security Posture",
+         "Derived from the Security Score (see below) — weighted contribution to overall"),
+        ("10%", "Alert Health",
+         "Starts at 100; −10 per open critical alert, −2 per open warning alert (floor 0)"),
+    ]
+    for i, (wt, dim, desc) in enumerate(score_rows):
+        bg = LIGHT_GRAY if i % 2 == 0 else None
+        _row(wt, dim, desc, bg=bg, bold_b=True, h=18)
+
+    _blank()
+    _sub_hdr("Score Range", "Grade", "")
+    grade_rows = [
+        ("90–100", "Excellent", LT_GREEN,   "000000"),
+        ("75–89",  "Good",      "C6EFCE",   "000000"),
+        ("60–74",  "Fair",      YELLOW,     "000000"),
+        ("40–59",  "At Risk",   ORANGE,     "FFFFFF"),
+        ("<40",    "Critical",  RED,        "FFFFFF"),
+    ]
+    for score_r, lbl, bg_c, fg_c in grade_rows:
+        _color_row(score_r, bg_c, fg_c, lbl, "", h=15)
+    _blank()
+
+    # ── Security Score ────────────────────────────────────────────────────────
+    _section("Security Score (0–100)")
+    rn = _nxt()
+    ws.merge_cells(f"A{rn}:{SPAN}{rn}")
+    nc = ws.cell(row=rn, column=1,
+                 value="Score starts at 100. Points are deducted for each gap found:")
+    nc.font      = _Fnt(size=9, italic=True, name="Calibri")
+    nc.alignment = _Aln(vertical="center", indent=1)
+    ws.row_dimensions[rn].height = 15
+    _sub_hdr("Severity", "Deduction", "Finding")
+    sec_rows = [
+        ("HIGH",   "−20", "No cluster-wide encryption enabled"),
+        ("HIGH",   "−15", "Storage domain encryption not configured"),
+        ("HIGH",   "−10", "No vault / archival target configured"),
+        ("HIGH",   "−10", "No DataLock (WORM) on any policy"),
+        ("HIGH",   "−10", "Admin accounts without MFA enabled"),
+        ("MEDIUM", "−5",  "No replication target configured"),
+        ("MEDIUM", "−5",  "No FortKnox / RPaaS indelible vault"),
+        ("MEDIUM", "−5",  "Quorum not enabled (Helios mode only)"),
+        ("MEDIUM", "−5",  "Audit logging disabled"),
+        ("MEDIUM", "−5",  "TLS certificate expired or expiring within 90 days"),
+    ]
+    SEV_BG = {"HIGH": "FFD0D0", "MEDIUM": "FFF2CC"}
+    for i, (sev, ded, finding) in enumerate(sec_rows):
+        bg = LIGHT_GRAY if i % 2 == 0 else None
+        rn = _nxt()
+        c1 = ws.cell(row=rn, column=1, value=sev)
+        c1.fill      = _PF("solid", fgColor=SEV_BG.get(sev, LIGHT_GRAY))
+        c1.font      = _Fnt(size=9, bold=True, name="Calibri")
+        c1.alignment = _Aln(horizontal="center", vertical="center")
+        ws.cell(row=rn, column=2, value=ded).font = _Fnt(size=9, bold=True, name="Calibri")
+        c3 = ws.cell(row=rn, column=3, value=finding)
+        c3.font = _Fnt(size=9, name="Calibri")
+        if bg and i % 2 == 0:
+            ws.cell(row=rn, column=3).fill = _PF("solid", fgColor=LIGHT_GRAY)
+        ws.row_dimensions[rn].height = 15
+    _blank()
+
+    # ── Ransomware Readiness Score ────────────────────────────────────────────
+    _section("Ransomware Readiness Score (0–100)")
+    rn = _nxt()
+    ws.merge_cells(f"A{rn}:{SPAN}{rn}")
+    rrc = ws.cell(row=rn, column=1,
+                  value='Answers: "If ransomware hit today, could we recover?" — '
+                        'scored independently of the overall health score.')
+    rrc.font      = _Fnt(size=9, italic=True, name="Calibri")
+    rrc.alignment = _Aln(vertical="center", indent=1)
+    ws.row_dimensions[rn].height = 15
+    _sub_hdr("Max Pts", "Dimension", "Scoring Detail")
+    rw_rows = [
+        ("30", "DataLock (WORM) Coverage",
+         "Full Compliance mode=30 | Full (any mode)=20 | "
+         "Partial ≥50% of groups=15 | Partial <50%=8 | None=0"),
+        ("25", "FortKnox / Indelible Vault",
+         "Active (sending data)=25 | Configured but idle=10 | Not configured=0"),
+        ("20", "Recovery Window Depth",
+         "Oldest clean snapshot ≥30 days=20 | ≥14 days=15 | "
+         "≥7 days=10 | ≥2 days=5 | No successful backup found=0"),
+        ("15", "Admin MFA",
+         "All admins have MFA enabled=15 | Partial=8 | No admins have MFA=0"),
+        ("10", "Quorum",
+         "Enabled (or N/A in direct-cluster mode)=10 | Disabled=0"),
+    ]
+    for i, (pts, dim, detail) in enumerate(rw_rows):
+        bg = LIGHT_GRAY if i % 2 == 0 else None
+        rn = _nxt()
+        ws.cell(row=rn, column=1, value=pts).font = _Fnt(size=9, bold=True, name="Calibri")
+        ws.cell(row=rn, column=2, value=dim).font = _Fnt(size=9, bold=True, name="Calibri")
+        c3 = ws.cell(row=rn, column=3, value=detail)
+        c3.font      = _Fnt(size=9, name="Calibri")
+        c3.alignment = _Aln(wrap_text=True, vertical="top")
+        if bg:
+            for ci in range(1, NC + 1):
+                ws.cell(row=rn, column=ci).fill = _PF("solid", fgColor=LIGHT_GRAY)
+        ws.row_dimensions[rn].height = 30
+
+    _blank()
+    _sub_hdr("Score", "Label", "Interpretation")
+    rw_labels = [
+        ("≥80",  "Strong",    LT_GREEN,  "000000",
+         "Well-positioned to recover — key protections are fully in place"),
+        ("60–79","Moderate",  YELLOW,    "000000",
+         "Most protections in place but notable gaps remain — review recommended"),
+        ("40–59","High Risk", ORANGE,    "FFFFFF",
+         "Multiple recovery gaps — ransomware recovery would be significantly difficult"),
+        ("<40",  "Critical",  RED,       "FFFFFF",
+         "Fundamental protections missing — recovery from ransomware is at severe risk"),
+    ]
+    for score_r, lbl, bg_c, fg_c, interp in rw_labels:
+        _color_row(score_r, bg_c, fg_c, lbl, interp, h=20)
+    _blank()
+
+    # ── Workload Risk Score ───────────────────────────────────────────────────
+    _section("Workload Risk Score (0–100) — Workload Risk Heatmap Tab")
+    _sub_hdr("Max Pts", "Factor", "Scoring Detail")
+    wrk_rows = [
+        ("35", "Last Run Status",
+         "Success=35 | Warning=25 | Running=20 | Skipped or Paused=10 | Failed or unknown=0"),
+        ("25", "SLA Compliance",
+         "No SLA violation=25 | SLA violated=0"),
+        ("25", "RPO Gap (time since last success)",
+         "≤4 hours=25 | ≤8h=20 | ≤24h=15 | ≤48h=8 | >48h or no successful run found=0"),
+        ("15", "DataLock Coverage",
+         "Compliance mode or FortKnox=15 | Administrative WORM=10 | No DataLock=0"),
+    ]
+    for i, (pts, factor, detail) in enumerate(wrk_rows):
+        bg = LIGHT_GRAY if i % 2 == 0 else None
+        rn = _nxt()
+        ws.cell(row=rn, column=1, value=pts).font    = _Fnt(size=9, bold=True, name="Calibri")
+        ws.cell(row=rn, column=2, value=factor).font = _Fnt(size=9, bold=True, name="Calibri")
+        c3 = ws.cell(row=rn, column=3, value=detail)
+        c3.font      = _Fnt(size=9, name="Calibri")
+        c3.alignment = _Aln(wrap_text=True, vertical="top")
+        if bg:
+            for ci in range(1, NC + 1):
+                ws.cell(row=rn, column=ci).fill = _PF("solid", fgColor=LIGHT_GRAY)
+        ws.row_dimensions[rn].height = 18
+
+    _blank()
+    _sub_hdr("Score", "Risk Level", "Row Color in Heatmap")
+    risk_levels = [
+        ("≥75",  "Low",      LT_GREEN,  "000000"),
+        ("50–74","Medium",   "FFF2CC",  "000000"),
+        ("25–49","High",     "FF8C42",  "FFFFFF"),
+        ("<25",  "Critical", RED,       "FFFFFF"),
+    ]
+    for score_r, lvl, bg_c, fg_c in risk_levels:
+        _color_row(score_r, bg_c, fg_c, lvl, "Full row in the Workload Risk Heatmap tab is colored accordingly", h=15)
+    _blank()
+
+    # ── Recommendation Priorities ─────────────────────────────────────────────
+    _section("Recommendation Priorities")
+    _sub_hdr("Priority", "Expected Response", "Meaning")
+    prio_rows = [
+        ("CRITICAL", RED,      "FFFFFF", "Immediate",
+         "Active risk — data loss, capacity exhaustion, node failure, or critical security exposure"),
+        ("HIGH",     ORANGE,   "FFFFFF", "Within 30 days",
+         "Significant gap — unprotected data, no replication, near-capacity, or security misconfiguration"),
+        ("MEDIUM",   YELLOW,   "000000", "Within 90 days",
+         "Best-practice gap — missing archival, quota governance, partial compliance"),
+        ("LOW",      LT_GREEN, "000000", "Next review cycle",
+         "Housekeeping — minor policy improvements, quota hygiene, optional enhancements"),
+    ]
+    for pri, bg_c, fg_c, resp, meaning in prio_rows:
+        _color_row(pri, bg_c, fg_c, resp, meaning, h=20)
+    _blank()
+
+    # ── Color / RAG Legend ────────────────────────────────────────────────────
+    _section("Color / RAG Legend")
+    _sub_hdr("Color", "Name", "Meaning in This Workbook")
+    legend_rows = [
+        (LT_GREEN,  "000000", "Green",       "Healthy / within threshold / fully compliant"),
+        ("C6EFCE",  "000000", "Light Green", "Good score (grade: Good) in score-based RAG cells"),
+        (YELLOW,    "000000", "Yellow",      "Warning / approaching threshold / partial compliance"),
+        (ORANGE,    "000000", "Orange",      "Elevated risk / near-critical / configured but inactive"),
+        (RED,       "FFFFFF", "Red",         "Critical / failed / non-compliant / protection missing"),
+        ("FFD0D0",  "000000", "Light Red",   "High-severity finding indicator (Security Score table)"),
+        ("BDD7EE",  "000000", "Blue",        "Policy Changes category (Audit Log tab)"),
+        ("CCFFFF",  "000000", "Teal",        "Cluster Config Changes category (Audit Log tab)"),
+        ("FFF2CC",  "000000", "Amber",       "User Changes category / Medium-severity / Warning level"),
+        (LIGHT_GRAY,"000000", "Gray",        "Alternating row shading for readability"),
+    ]
+    for bg_c, fg_c, name, meaning in legend_rows:
+        rn = _nxt()
+        c1 = ws.cell(row=rn, column=1, value=name)
+        c1.fill      = _PF("solid", fgColor=bg_c)
+        c1.font      = _Fnt(size=9, bold=True, color=fg_c, name="Calibri")
+        c1.alignment = _Aln(horizontal="center", vertical="center")
+        c2 = ws.cell(row=rn, column=2, value="")
+        c2.fill = _PF("solid", fgColor=bg_c)
+        c3 = ws.cell(row=rn, column=3, value=meaning)
+        c3.font      = _Fnt(size=9, name="Calibri")
+        c3.alignment = _Aln(vertical="center")
+        ws.row_dimensions[rn].height = 15
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXCEL ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -5514,6 +5881,7 @@ def write_excel(all_data, args):
     wb.remove(wb.active)
 
     print("  Writing Excel sheets...")
+    _sheet_guide(wb, all_data)             # Guide (first tab)
     _sheet_summary(wb, all_data)           # 1
     _sheet_infrastructure(wb, all_data)    # 2
     _sheet_hardware(wb, all_data)          # 3

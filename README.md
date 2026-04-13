@@ -9,20 +9,21 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **21-sheet Excel workbook**, a **Word document**, and an **editable topology diagram**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (including a built-in Guide tab), a **Word document**, and an **editable topology diagram**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | **21 sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, **per-workload risk heatmap**, and **30-day audit log** |
+| Excel workbook | **22 tabs** — a **Guide tab** (first tab, with sheet descriptions, scoring methodology, and color legend) plus **21 data sheets** covering infrastructure, node hardware with EOL status, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, **quorum**), **agent health**, **source coverage ratio**, FortKnox/replication, data services, coverage gaps, **user security** (MFA/locked/roles), 30-day trends with charts, a prioritized recommendations list, **per-workload risk heatmap**, and **30-day audit log** |
 | Word document | Narrative report with cover page, executive scorecard with **top at-risk workloads table**, environment overview, software & hardware lifecycle, protection health, storage with **capacity runway forecast**, **fully color-coded security posture table** (11 columns including **ransomware readiness score**, red/amber/green per finding) with **governance & change activity summary**, **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
 | Topology diagram | **Editable `.drawio` file** (opens in diagrams.net / draw.io) with clusters (green), replication targets (blue), archive targets (amber), and FortKnox vaults (dark-green cloud) — arrows color-coded by target type. Native Word shapes also embedded in the Word document (editable in-place). |
 
-### Sheet reference (21 sheets)
+### Sheet reference (22 tabs)
 
 | # | Sheet | Key content |
 |---|-------|-------------|
+| — | **Guide** | First tab — descriptions of all sheets, overall health/security/ransomware/workload scoring methodology, recommendation priorities, color legend |
 | 1 | Executive Summary | Per-cluster health score, grade, ransomware readiness score, and capacity runway |
 | 2 | Infrastructure | Cluster versions, nodes, software lifecycle |
 | 3 | Node Hardware | Per-node hardware model, serial, EOL status |
@@ -135,9 +136,9 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.46_AcmeCorp_20260412_1430.xlsx
-cohesity_health_check_v1.46_AcmeCorp_20260412_1430.docx
-cohesity_health_check_v1.46_AcmeCorp_20260412_1430.drawio
+cohesity_health_check_v1.47_AcmeCorp_20260413_1430.xlsx
+cohesity_health_check_v1.47_AcmeCorp_20260413_1430.docx
+cohesity_health_check_v1.47_AcmeCorp_20260413_1430.drawio
 ```
 
 The `.drawio` file opens directly in [diagrams.net](https://app.diagrams.net/) (free, browser-based) or the draw.io desktop app. All elements are fully editable — clusters, arrows, labels, colors.
