@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.47**
+**Current version: 1.48**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets) and a **Word document**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, an **editable draw.io topology diagram**, and an optional **PowerPoint topology slide**.
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -230,6 +230,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.48 | 2026-04-13 | feat: Topology diagram overhaul — fixed missing FK vault connections (vaults list now always emits edges), draw.io arrow labels (Replication/Archive/FortKnox/Indelible), cluster nodes show software version + group/source counts, legend block added. New optional PowerPoint output (.pptx via python-pptx) — 16:9 slide with colored nodes, STRAIGHT connectors, arrow labels, legend. python-pptx added to optional prereq check table. |
 | 1.47 | 2026-04-13 | feat: Guide tab added as the first tab in every generated workbook — covers all 22 tabs with descriptions, overall health scoring (weights + grade table), security score deductions, ransomware readiness scoring, workload risk score factors, recommendation priorities, and color/RAG legend |
 | 1.46 | 2026-04-12 | feat: Ransomware Readiness Score (0–100) per cluster — scored on DataLock, FortKnox activity, recovery window, quorum, admin MFA; shown in Executive Summary, Security sheet, and Word security table (11 cols). feat: Predictive Capacity Runway — 30-day linear regression via `/v1/public/statistics/timeSeriesStats`; shown in Storage sheet, Executive Summary, and Word Storage section with forecast paragraph. feat: Workload Risk Heatmap (sheet 20) — all protection groups scored worst-first with RAG coloring; top 5 Critical/High in Word Executive Summary. feat: Audit Log sheet (sheet 21) — 30-day change summary by category with high-risk event highlighting; governance paragraph in Word Security section. Sheet count 19→21 |
 | 1.45 | 2026-04-10 | fix: `get_auth_token()` v1 failure no longer silently swallowed — prints `[!] v1 endpoint failed (HTTP NNN) — trying v2...`. Final error shows both v1 and v2 responses plus troubleshooting hints: `--clear-credentials`, `--domain`, account locked. `cohesity_auth.py` v1.6 |

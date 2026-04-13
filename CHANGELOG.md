@@ -7,6 +7,30 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-13] feat(health_check): Topology diagram overhaul — FK vault connections fixed + PowerPoint output (v1.48)
+
+### Fixed — `health_check/health_check_report.py`
+
+- **FortKnox vault connections**: Fixed a bug in `_topology_data()` where FK vaults registered in the cluster's vault list (but not referenced in any policy `archivalTargets`) were added as orphaned nodes with no connecting edges. The vault loop now correctly emits an edge for every FK vault associated with a cluster, so all FortKnox vaults appear connected in both the draw.io and PowerPoint outputs.
+
+### Added — `health_check/health_check_report.py`
+
+- **draw.io improvements**:
+  - Arrow labels on every edge: "Replication" (blue), "Archive" (amber), "FortKnox / Indelible" (dark green, dashed)
+  - Cluster node labels now include software version, group count, and source count (e.g., `v7.1.2 | 12 groups | 8 sources`)
+  - Legend block added at bottom-right with color-coded entries for all four node types
+
+- **PowerPoint topology slide** (new, optional): Generates a 16:9 widescreen `.pptx` file alongside the existing `.drawio` output. Requires `python-pptx` (optional dependency). Features:
+  - Rounded-rectangle nodes in Cohesity brand colors (green clusters, blue replication, amber archive, dark-green FortKnox)
+  - Straight connector arrows between clusters and their targets
+  - Arrow labels ("Replication", "Archive", "FortKnox / Indelible") at connector midpoints
+  - Column headers, customer/title bar, legend, and watermark
+  - Gracefully skipped if `python-pptx` is not installed
+
+- **`python-pptx` added** to the optional prereq check table at startup
+
+---
+
 ## [2026-04-13] feat(health_check): Guide tab added to Excel workbook (v1.47)
 
 ### Added — `health_check/health_check_report.py`
