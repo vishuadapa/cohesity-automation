@@ -485,7 +485,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.48"
+__version__ = "1.49"
 
 import argparse
 import datetime
