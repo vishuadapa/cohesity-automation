@@ -1324,7 +1324,10 @@ def collect_cluster(session, api_key, cluster, args):
     end_usecs   = _now_usecs()
 
     # ── Wave 1: all independent API calls in parallel ─────────────────────────
-    print(f"  [{name}] fetching data (wave 1)...", end="", flush=True)
+    print(f"  [{name}] fetching in parallel —")
+    print(f"    infrastructure, nodes, alerts, groups, policies, storage, views,")
+    print(f"    vaults, run-summary, certs, agents, sources, users, IDPs, cap-trend, audit-log...",
+          end="", flush=True)
     with _ThreadPoolExecutor(max_workers=8) as _ex:
         _fut_info    = _ex.submit(_cluster_info,          session, h, dbg)
         _fut_nodes   = _ex.submit(_nodes,                 session, h, dbg)
@@ -1362,10 +1365,11 @@ def collect_cluster(session, api_key, cluster, args):
         tenants      = _fut_tenants.result()
         cap_ts       = _fut_capts.result()
         audit_events = _fut_audit.result()
+    print(" done.")
 
     # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
     vault_ids = [v["id"] for v in vaults if "id" in v]
-    print(" wave-2...", end="", flush=True)
+    print(f"    disks (per node), FortKnox transfer data...", end="", flush=True)
     with _ThreadPoolExecutor(max_workers=3) as _ex:
         _fut_disks = _ex.submit(_disks, session, h, nodes, dbg)
         _fut_fk    = _ex.submit(_fortknox_data, session, h, start_usecs, end_usecs, vault_ids, dbg)
@@ -1376,11 +1380,12 @@ def collect_cluster(session, api_key, cluster, args):
         disks      = _fut_disks.result()
         fk_data    = _fut_fk.result()
         fk_data_1d = _fut_fk1d.result() if _fut_fk1d else []
+    print(" done.")
 
     # ── Per-group run history (non-quick mode): parallelised ──────────────────
     group_runs = {}
     if not args.quick:
-        print(f" runs ({len(groups)} groups)...", end="", flush=True)
+        print(f"    run history for {len(groups)} protection group(s)...", end="", flush=True)
         with _ThreadPoolExecutor(max_workers=8) as _ex:
             _grp_futs = {
                 _ex.submit(_group_runs, session, h, g["id"], start_usecs, end_usecs, dbg): g["id"]
@@ -1390,8 +1395,7 @@ def collect_cluster(session, api_key, cluster, args):
                 _runs = _fut.result()
                 if _runs:
                     group_runs[_gid] = _runs
-
-    print(" done.")
+        print(" done.")
 
     # Build policy ID lookups used throughout the report (computed once here)
     policy_map   = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
