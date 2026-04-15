@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.48
+health_check_report.py  v1.49
 
 Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + editable topology diagram + PowerPoint slide.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -87,6 +87,26 @@ Requirements
 
 Version history
 ───────────────
+  1.49 (2026-04-15) — perf: Parallel API data collection and cached derived state.
+                     collect_cluster() now runs all independent API calls in two
+                     parallel ThreadPoolExecutor waves (wave-1: 17 independent
+                     endpoints; wave-2: disks + FortKnox that depend on wave-1).
+                     Per-group run fetches (non-quick mode) also parallelised.
+                     Expected wall-clock speedup: ~40–60% per cluster.
+                     cd["fk_status"], cd["policy_by_id"], cd["audit_enabled"]
+                     pre-computed once in collect_cluster() and reused by all
+                     scoring, recommendation, and sheet-generation functions
+                     (previously _fk_status() was called 6×, policy_by_id dict
+                     rebuilt 4×, audit config parsed 2×).
+                     cd["end_usecs"] used in place of _now_usecs() throughout
+                     scoring and sheet functions for a consistent reference point.
+                     Dual agent loops and dual disk comprehensions in
+                     _build_recommendations() merged to single passes each.
+                     isinstance(x, dict) filtering for agents and sources moved to
+                     collection time, removing per-item guards from hot loops.
+                     _FONT_NORMAL / _FONT_BOLD openpyxl singletons defined at
+                     module level; 24 per-cell _font() allocations eliminated.
+                     No output changes — all modifications are internal.
   1.48 (2026-04-13) — feat: Topology diagram overhaul. Fixed missing FK vault
                      connections in _topology_data() — vaults registered via the
                      cluster vaults list but absent from policies now correctly

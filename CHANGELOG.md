@@ -7,6 +7,24 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-15] perf(health_check): Parallel API collection and cached derived state (v1.49)
+
+### Performance — `health_check/health_check_report.py`
+
+- **Parallel API collection**: `collect_cluster()` now submits all 17 independent API calls (info, nodes, alerts, groups, policies, storage-domains, views, vaults, v1-runs, certs, agents, sources, users, idps, tenants, cap-timeseries, audit-log) to a `ThreadPoolExecutor` and resolves them concurrently. A second parallel wave handles disks and FortKnox data (which depend on wave-1 results). Per-group run fetches (non-quick mode) are also parallelised. Expected wall-clock speedup: **~40–60% per cluster**.
+- **Cached derived state**: Three values pre-computed once in `collect_cluster()` and reused by all downstream functions instead of being recalculated on each call:
+  - `cd["fk_status"]` — `_fk_status()` was called **6×** (scoring, recommendations, 4 sheet/Word functions)
+  - `cd["policy_by_id"]` — full policy object dict rebuilt **4×** in sheet generation functions
+  - `cd["audit_enabled"]` — audit config parsed in both `_build_recommendations()` and `_sheet_security()`
+- **Consistent time reference**: `cd["end_usecs"]` (set once at collection time) replaces repeated `_now_usecs()` calls in scoring and sheet functions — all age/RPO calculations now use the same reference point for a given run.
+- **Merged loops**: Two separate passes over `cd["agents"]` (unhealthy + upgradable) in `_build_recommendations()` merged into one. Two separate disk comprehensions (failed + high-wear) merged into one.
+- **isinstance filtering at source**: `agents` and `sources` now filtered to dicts when wave-1 futures are resolved, removing per-item guards from hot recommendation-engine loops.
+- **Font object singletons**: `_FONT_NORMAL` and `_FONT_BOLD` defined once at module level after the openpyxl import. `_reg()` and **24** inline `.font = _font()` call sites updated to use the pre-allocated singletons — no new `Font` object allocated per cell during workbook generation.
+
+> **No output changes** — all modifications are internal to data collection and computation logic.
+
+---
+
 ## [2026-04-13] feat(health_check): Topology diagram overhaul — FK vault connections fixed + PowerPoint output (v1.48)
 
 ### Fixed — `health_check/health_check_report.py`
