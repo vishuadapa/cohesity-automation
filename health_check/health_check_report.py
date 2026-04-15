@@ -4817,6 +4817,37 @@ def write_pptx(all_data, args, out_path):
                  "LOW":      (_C_GRN_BG, _C_GRN_TX)}
     _ADMIN_ROLES = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
 
+    # ── Native PowerPoint section markers ─────────────────────────────────────
+    # Tracked as (section_name, first_slide_index); populated at each section
+    # boundary below and applied via _register_sections() before save().
+    _sec_starts = []
+
+    def _register_sections(prs, sec_starts):
+        """Inject <p14:sectionLst> into the presentation XML so PowerPoint's
+        slide panel groups slides under named section headers.
+        """
+        import uuid as _uuid
+        _NS14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+        sld_id_lst = prs.element.find(_qn("p:sldIdLst"))
+        if sld_id_lst is None or not sec_starts:
+            return
+        slide_ids = [int(el.get("id"))
+                     for el in sld_id_lst.findall(_qn("p:sldId"))]
+        total = len(slide_ids)
+        sec_lst = _letree.Element(f"{{{_NS14}}}sectionLst")
+        for i, (name, start_idx) in enumerate(sec_starts):
+            end_idx = (sec_starts[i + 1][1]
+                       if i + 1 < len(sec_starts) else total)
+            sec_el = _letree.SubElement(sec_lst, f"{{{_NS14}}}section")
+            sec_el.set("name", name)
+            sec_el.set("id", "{" + str(_uuid.uuid4()).upper() + "}")
+            ids_el = _letree.SubElement(sec_el, f"{{{_NS14}}}sldIdLst")
+            for idx in range(start_idx, end_idx):
+                if idx < total:
+                    sld_el = _letree.SubElement(ids_el, f"{{{_NS14}}}sldId")
+                    sld_el.set("id", str(slide_ids[idx]))
+        prs.element.append(sec_lst)
+
     # ── Cover slide ───────────────────────────────────────────────────────────
     slide = _blank()
     _rect(slide, 0, 0, W, H, _C_DIV)
@@ -4838,8 +4869,10 @@ def write_pptx(all_data, args, out_path):
          size=11, color="#88CCAA", align="center")
     _txt(slide, f"v{__version__}", W - 1.4, H - 0.32, 1.2, 0.28,
          size=8, color="#558866", align="right")
+    _sec_starts.append(("Cover", 0))
 
     # ── Section: Executive Summary ────────────────────────────────────────────
+    _sec_starts.append(("Executive Summary", len(prs.slides)))
     _section_div("Executive Summary",
                  "Snapshot  \u00b7  Scorecard  \u00b7  Capacity  \u00b7  "
                  "Protection  \u00b7  Ransomware  \u00b7  Actions")
@@ -5117,6 +5150,7 @@ def write_pptx(all_data, args, out_path):
            0.22, 0.68, fills=pri_fills)
 
     # ── Section: Topology ─────────────────────────────────────────────────────
+    _sec_starts.append(("Environment Topology", len(prs.slides)))
     _section_div("Environment Topology",
                  "Cluster connections  \u00b7  Replication  "
                  "\u00b7  Archival  \u00b7  FortKnox / RPaaS")
@@ -5272,6 +5306,7 @@ def write_pptx(all_data, args, out_path):
     _footer(slide)
 
     # ── Section: Security Deep-Dive ───────────────────────────────────────────
+    _sec_starts.append(("Security Deep-Dive", len(prs.slides)))
     _section_div("Security Deep-Dive",
                  "Posture  \u00b7  User Security  "
                  "\u00b7  Audit & Governance  \u00b7  Recommendations")
@@ -5423,6 +5458,7 @@ def write_pptx(all_data, args, out_path):
            0.22, 0.68, fills=fills_sr)
 
     # ── Section: Backup Engineering ───────────────────────────────────────────
+    _sec_starts.append(("Backup Engineering", len(prs.slides)))
     _section_div("Backup Engineering",
                  "Lifecycle  \u00b7  Coverage Gaps  \u00b7  Agents  "
                  "\u00b7  Source Coverage  \u00b7  Risk  \u00b7  Recommendations")
@@ -5637,7 +5673,8 @@ def write_pptx(all_data, args, out_path):
            rows_er, [1.2, 1.8, 2.0, 4.1, 3.8],
            0.22, 0.68, fills=fills_er)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
+    # ── Register native PowerPoint sections then save ─────────────────────────
+    _register_sections(prs, _sec_starts)
     try:
         pptx_path = out_path + ".pptx"
         prs.save(pptx_path)
