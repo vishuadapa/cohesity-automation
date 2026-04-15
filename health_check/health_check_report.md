@@ -52,16 +52,19 @@ Narrative report suitable for printing or sharing with customers:
 - Prioritized Recommendations table
 - Appendix: scoring methodology and thresholds (security score: 6 dimensions + −10 admin MFA penalty)
 
-### Topology Diagram (new in v1.36)
+### PowerPoint Deck (v1.50+)
 
-Each run produces a **`.drawio` file** alongside the Excel and Word output. Open it with [diagrams.net](https://app.diagrams.net) or draw.io desktop to get a fully editable diagram showing:
+Each run produces a **`.pptx` file** (requires `pip install python-pptx`) with ~29 slides organised into 5 native PowerPoint sections:
 
-- Source clusters (Cohesity teal) with workload types, group count, source count, and protected capacity
-- Replication partner clusters (blue) with directed arrows
-- Archival vault targets (amber cylinders) with directed arrows
-- FortKnox / RPaaS vaults (dark green, dashed arrows)
+| Section | Slides |
+|---------|--------|
+| **Cover** | Title, customer name, date |
+| **Executive Summary** | KPI snapshot, health scorecard, capacity & growth, protection, ransomware readiness, top at-risk workloads, priority actions |
+| **Environment Topology** | Cluster/replication/archival/FortKnox diagram with connector labels and legend |
+| **Security Deep-Dive** | Security posture overview, user security & MFA, audit & governance activity, security recommendations |
+| **Backup Engineering** | SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations |
 
-A PNG preview of the same diagram is embedded in the Word document's Environment section. Install `matplotlib` for the preview: `pip install matplotlib`.
+All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook. The topology diagram is also embedded as editable native Word shapes in the Word document's Environment section. Install `matplotlib` as a fallback for the Word topology if native shapes fail: `pip install matplotlib`.
 
 ---
 
