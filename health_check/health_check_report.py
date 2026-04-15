@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.48
+health_check_report.py  v1.50
 
-Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + editable topology diagram + PowerPoint slide.
+Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -87,6 +87,39 @@ Requirements
 
 Version history
 ───────────────
+  1.50 (2026-04-15) — feat: Comprehensive PowerPoint deck (write_pptx). Replaces
+                     the single-slide topology .pptx and eliminates draw.io output.
+                     New deck spans ~29 slides across 4 sections: Cover, Executive
+                     Summary (Snapshot, Scorecard, Capacity, Protection, Ransomware
+                     Readiness, Top At-Risk Workloads, Priority Action Items),
+                     Environment Topology (full connection diagram with legend),
+                     Security Deep-Dive (Posture, User Security, Audit & Governance,
+                     Security Recommendations), Backup Engineering (Software &
+                     Hardware Lifecycle, Coverage Gaps, Agent Health, Source
+                     Coverage, Workload Risk Heatmap, Engineering Recommendations).
+                     All data slides use RAG colour-coding. draw.io generation
+                     removed entirely. python-pptx remains optional — skipped
+                     gracefully if not installed.
+  1.49 (2026-04-15) — perf: Parallel API data collection and cached derived state.
+                     collect_cluster() now runs all independent API calls in two
+                     parallel ThreadPoolExecutor waves (wave-1: 17 independent
+                     endpoints; wave-2: disks + FortKnox that depend on wave-1).
+                     Per-group run fetches (non-quick mode) also parallelised.
+                     Expected wall-clock speedup: ~40–60% per cluster.
+                     cd["fk_status"], cd["policy_by_id"], cd["audit_enabled"]
+                     pre-computed once in collect_cluster() and reused by all
+                     scoring, recommendation, and sheet-generation functions
+                     (previously _fk_status() was called 6×, policy_by_id dict
+                     rebuilt 4×, audit config parsed 2×).
+                     cd["end_usecs"] used in place of _now_usecs() throughout
+                     scoring and sheet functions for a consistent reference point.
+                     Dual agent loops and dual disk comprehensions in
+                     _build_recommendations() merged to single passes each.
+                     isinstance(x, dict) filtering for agents and sources moved to
+                     collection time, removing per-item guards from hot loops.
+                     _FONT_NORMAL / _FONT_BOLD openpyxl singletons defined at
+                     module level; 24 per-cell _font() allocations eliminated.
+                     No output changes — all modifications are internal.
   1.48 (2026-04-13) — feat: Topology diagram overhaul. Fixed missing FK vault
                      connections in _topology_data() — vaults registered via the
                      cluster vaults list but absent from policies now correctly
@@ -485,7 +518,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.48"
+__version__ = "1.50"
 
 import argparse
 import datetime
@@ -493,6 +526,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 
 # ── Core HTTP client ──────────────────────────────────────────────────────────
 # requests must be present.  urllib3 is bundled inside requests; we suppress
@@ -744,8 +778,14 @@ try:
     from openpyxl.chart import LineChart, Reference
     from openpyxl.chart.series import SeriesLabel
     EXCEL_OK = True
+    # Pre-allocated style singletons — reused across all cells to avoid
+    # constructing a new object per cell during large workbook generation.
+    _FONT_NORMAL = Font(size=10, color="000000")
+    _FONT_BOLD   = Font(bold=True, size=10, color="000000")
 except ImportError:
     EXCEL_OK = False
+    _FONT_NORMAL = None
+    _FONT_BOLD   = None
 
 try:
     from docx import Document
@@ -901,7 +941,7 @@ def _title(ws, text, span):
 
 def _reg(ws, row, col, val):
     cell = ws.cell(row=row, column=col, value=val)
-    cell.font = _font()
+    cell.font = _FONT_NORMAL
     return cell
 
 # ── Grade from score ──────────────────────────────────────────────────────────
@@ -1296,57 +1336,83 @@ def collect_cluster(session, api_key, cluster, args):
     start_usecs = _days_ago_usecs(args.days)
     end_usecs   = _now_usecs()
 
-    print(f"  [{name}] infrastructure...", end="", flush=True)
-    info    = _cluster_info(session, h, dbg)
-    nodes   = _nodes(session, h, dbg)
-    print(" alerts...", end="", flush=True)
-    alerts  = _alerts(session, h, args.days, dbg)
-    print(" groups...", end="", flush=True)
-    groups  = _protection_groups(session, h, dbg)
-    print(" policies...", end="", flush=True)
-    policies = _policies(session, h, dbg)
-    print(" storage...", end="", flush=True)
-    domains = _storage_domains(session, h, dbg)
-    views   = _views(session, h, dbg)
-    print(" vaults...", end="", flush=True)
-    vaults    = _vaults(session, h, dbg)
-    vault_ids = [v["id"] for v in vaults if "id" in v]
-    fk_data    = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
-    # For the FortKnox detail tab: quick mode shows last 1 day only
-    fk_data_1d = (_fortknox_data(session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
-                  if args.quick else [])
-    print(" run-summary...", end="", flush=True)
-    v1_runs   = _v1_protection_runs(session, h, start_usecs, end_usecs, dbg)
-    print(" certs/agents...", end="", flush=True)
-    certs    = _certificates(session, h, dbg)
-    agents   = _agents(session, h, dbg)
-    print(" disks...", end="", flush=True)
-    disks    = _disks(session, h, nodes, dbg)
-    print(" sources...", end="", flush=True)
-    sources  = _sources(session, h, dbg)
-    print(" users/idps...", end="", flush=True)
-    users    = _users(session, h, dbg)
-    idps     = _idps(session, h, dbg)
-    tenants  = _tenants(session, h, dbg)
-    print(" cap-trend...", end="", flush=True)
-    cap_ts   = _capacity_timeseries(session, h, cid, dbg)
-    print(" audit-log...", end="", flush=True)
-    audit_events = _fetch_audit_log(session, h, args.days, dbg)
+    # ── Wave 1: all independent API calls in parallel ─────────────────────────
+    print(f"  [{name}] fetching in parallel —")
+    print(f"    infrastructure, nodes, alerts, groups, policies, storage, views,")
+    print(f"    vaults, run-summary, certs, agents, sources, users, IDPs, cap-trend, audit-log...",
+          end="", flush=True)
+    with _ThreadPoolExecutor(max_workers=8) as _ex:
+        _fut_info    = _ex.submit(_cluster_info,          session, h, dbg)
+        _fut_nodes   = _ex.submit(_nodes,                 session, h, dbg)
+        _fut_alerts  = _ex.submit(_alerts,                session, h, args.days, dbg)
+        _fut_groups  = _ex.submit(_protection_groups,     session, h, dbg)
+        _fut_policies= _ex.submit(_policies,              session, h, dbg)
+        _fut_domains = _ex.submit(_storage_domains,       session, h, dbg)
+        _fut_views   = _ex.submit(_views,                 session, h, dbg)
+        _fut_vaults  = _ex.submit(_vaults,                session, h, dbg)
+        _fut_v1runs  = _ex.submit(_v1_protection_runs,    session, h, start_usecs, end_usecs, dbg)
+        _fut_certs   = _ex.submit(_certificates,          session, h, dbg)
+        _fut_agents  = _ex.submit(_agents,                session, h, dbg)
+        _fut_sources = _ex.submit(_sources,               session, h, dbg)
+        _fut_users   = _ex.submit(_users,                 session, h, dbg)
+        _fut_idps    = _ex.submit(_idps,                  session, h, dbg)
+        _fut_tenants = _ex.submit(_tenants,               session, h, dbg)
+        _fut_capts   = _ex.submit(_capacity_timeseries,   session, h, cid, dbg)
+        _fut_audit   = _ex.submit(_fetch_audit_log,       session, h, args.days, dbg)
 
-    group_runs = {}
-    if not args.quick:
-        print(f" runs ({len(groups)} groups)...", end="", flush=True)
-        for g in groups:
-            gid = g.get("id")
-            if gid:
-                runs = _group_runs(session, h, gid, start_usecs, end_usecs, dbg)
-                if runs:
-                    group_runs[gid] = runs
-
+        info         = _fut_info.result()
+        nodes        = _fut_nodes.result()
+        alerts       = _fut_alerts.result()
+        groups       = _fut_groups.result()
+        policies     = _fut_policies.result()
+        domains      = _fut_domains.result()
+        views        = _fut_views.result()
+        vaults       = _fut_vaults.result()
+        v1_runs      = _fut_v1runs.result()
+        certs        = _fut_certs.result()
+        # Filter to dicts at source — removes isinstance guards from hot loops
+        agents       = [a for a in _fut_agents.result()  if isinstance(a, dict)]
+        sources      = [s for s in _fut_sources.result() if isinstance(s, dict)]
+        users        = _fut_users.result()
+        idps         = _fut_idps.result()
+        tenants      = _fut_tenants.result()
+        cap_ts       = _fut_capts.result()
+        audit_events = _fut_audit.result()
     print(" done.")
 
-    # Build policy ID → name lookup used throughout the report
-    policy_map = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
+    # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
+    vault_ids = [v["id"] for v in vaults if "id" in v]
+    print(f"    disks (per node), FortKnox transfer data...", end="", flush=True)
+    with _ThreadPoolExecutor(max_workers=3) as _ex:
+        _fut_disks = _ex.submit(_disks, session, h, nodes, dbg)
+        _fut_fk    = _ex.submit(_fortknox_data, session, h, start_usecs, end_usecs, vault_ids, dbg)
+        # For the FortKnox detail tab: quick mode shows last 1 day only
+        _fut_fk1d  = (_ex.submit(_fortknox_data, session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
+                      if args.quick else None)
+
+        disks      = _fut_disks.result()
+        fk_data    = _fut_fk.result()
+        fk_data_1d = _fut_fk1d.result() if _fut_fk1d else []
+    print(" done.")
+
+    # ── Per-group run history (non-quick mode): parallelised ──────────────────
+    group_runs = {}
+    if not args.quick:
+        print(f"    run history for {len(groups)} protection group(s)...", end="", flush=True)
+        with _ThreadPoolExecutor(max_workers=8) as _ex:
+            _grp_futs = {
+                _ex.submit(_group_runs, session, h, g["id"], start_usecs, end_usecs, dbg): g["id"]
+                for g in groups if g.get("id")
+            }
+            for _fut, _gid in _grp_futs.items():
+                _runs = _fut.result()
+                if _runs:
+                    group_runs[_gid] = _runs
+        print(" done.")
+
+    # Build policy ID lookups used throughout the report (computed once here)
+    policy_map   = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
+    policy_by_id = {p.get("id"): p              for p in policies if p.get("id")}
 
     cd = {
         "name":        name,
@@ -1359,6 +1425,7 @@ def collect_cluster(session, api_key, cluster, args):
         "group_runs":  group_runs,
         "policies":    policies,
         "policy_map":  policy_map,
+        "policy_by_id": policy_by_id,
         "domains":     domains,
         "views":       views,
         "vaults":      vaults,
@@ -1380,6 +1447,18 @@ def collect_cluster(session, api_key, cluster, args):
         "cap_timeseries": cap_ts,
         "audit_events":   audit_events,
     }
+
+    # Pre-compute shared derived values — avoids repeated recalculation in
+    # scoring, recommendations, and every sheet generation function.
+    _ac = info.get("auditLogConfig")
+    _ca = info.get("clusterAuditConfig")
+    cd["audit_enabled"] = bool(
+        info.get("auditLogEnabled")
+        or (isinstance(_ac, dict) and _ac.get("enabled"))
+        or (isinstance(_ca, dict) and _ca.get("enabled"))
+    )
+    cd["fk_status"] = _fk_status(cd)   # used by scores, recs, and all sheet fns
+
     cd["scores"]           = _compute_scores(cd, args.quick)
     cd["capacity_runway"]  = _capacity_runway(cd)       # must precede recommendations
     cd["recommendations"]  = _build_recommendations(cd)
@@ -1606,7 +1685,7 @@ def _score_security(cd):
         score += 15
 
     # FortKnox / Indelible archival (20 pts)
-    fk = _fk_status({"vaults": vaults, "policies": policies, "groups": groups})
+    fk = cd.get("fk_status") or _fk_status(cd)
     if fk == "active":
         score += 20
     elif fk == "idle":
@@ -1674,7 +1753,7 @@ def _ransomware_score(cd):
         gaps.append("No DataLock/WORM protection on any group")
 
     # ── FortKnox / indelible vault (25 pts) ──────────────────────────────
-    fk = _fk_status(cd)
+    fk = cd.get("fk_status") or _fk_status(cd)
     if fk == "active":
         fk_pts = 25
     elif fk == "idle":
@@ -1711,7 +1790,7 @@ def _ransomware_score(cd):
         rw_pts = 0
         gaps.append("No successful backup history found in lookback window")
     else:
-        days_old = (_now_usecs() - oldest_clean) / (86_400 * 1_000_000)
+        days_old = (cd.get("end_usecs", _now_usecs()) - oldest_clean) / (86_400 * 1_000_000)
         if days_old >= 30:   rw_pts = 20
         elif days_old >= 14: rw_pts = 15
         elif days_old >= 7:  rw_pts = 10
@@ -1863,7 +1942,7 @@ def _group_risk_score(group, cd):
     if not start_u:
         rpo_pts = 0
     else:
-        rpo_hrs = (_now_usecs() - start_u) / 3_600_000_000
+        rpo_hrs = (cd.get("end_usecs", _now_usecs()) - start_u) / 3_600_000_000
         if   rpo_hrs <=  4: rpo_pts = 25
         elif rpo_hrs <=  8: rpo_pts = 20
         elif rpo_hrs <= 24: rpo_pts = 15
@@ -1871,7 +1950,7 @@ def _group_risk_score(group, cd):
         else:               rpo_pts =  0
 
     # DataLock (15 pts)
-    policy_by_id = {p.get("id"): p for p in (cd.get("policies") or []) if p.get("id")}
+    policy_by_id = cd.get("policy_by_id") or {p.get("id"): p for p in (cd.get("policies") or []) if p.get("id")}
     policy = policy_by_id.get(group.get("policyId"), {})
     dl_str = _policy_datalock_str(policy).lower()
     if "compliance" in dl_str:                dl_pts = 15
@@ -2082,7 +2161,7 @@ def _build_recommendations(cd):
             "Configure at least one external vault for off-site retention",
             "No off-site copy of data — single point of failure"))
 
-    fk_st = _fk_status(cd)
+    fk_st = cd.get("fk_status") or _fk_status(cd)
     if fk_st == "none":
         recs.append(_r("MEDIUM", "Security",
             "No indelible/FortKnox archival target detected",
@@ -2132,8 +2211,9 @@ def _build_recommendations(cd):
     # ── Alerts ────────────────────────────────────────────────────────────────
     crits = [a for a in alerts if a.get("severity") == "kCritical"]
     if crits:
+        _now_u = cd["end_usecs"]
         old = [a for a in crits
-               if (_now_usecs() - (a.get("firstOccurrenceTime") or _now_usecs()))
+               if (_now_u - (a.get("firstOccurrenceTime") or _now_u))
                   > ALERT_AGE_CRIT_DAYS * 86400 * 1_000_000]
         sev = "CRITICAL" if old else "HIGH"
         msg = f"{len(crits)} open critical alert(s)"
@@ -2159,7 +2239,7 @@ def _build_recommendations(cd):
         start_u = lb.get("startTimeUsecs") or 0
         if not start_u:
             continue
-        hrs = (_now_usecs() - start_u) / 3_600_000_000
+        hrs = (cd["end_usecs"] - start_u) / 3_600_000_000
         if hrs > RPO_CRIT_HOURS:
             rpo_gaps.append((g.get("name", "?"), hrs))
     if rpo_gaps:
@@ -2238,21 +2318,23 @@ def _build_recommendations(cd):
                 "Plan certificate renewal now — lead time for CA-signed certs can be 2–4 weeks",
                 "Certificate expiry causes browser warnings and may break automated API calls"))
 
-    # ── Agent health ──────────────────────────────────────────────────────────
-    unhealthy_agents = []
+    # ── Agent health — single pass for unhealthy + upgradable ────────────────
+    unhealthy_agents  = []
+    upgradable_agents = []
     for agent in (cd.get("agents") or []):
-        if not isinstance(agent, dict):
-            continue
         _hs = agent.get("healthStatus")
-        st = ((isinstance(_hs, dict) and _hs.get("status"))
-              or (isinstance(_hs, str) and _hs)
-              or agent.get("agentStatus") or agent.get("status") or "")
+        st  = ((isinstance(_hs, dict) and _hs.get("status"))
+               or (isinstance(_hs, str) and _hs)
+               or agent.get("agentStatus") or agent.get("status") or "")
+        _rh, _ri = _split_host_ip(
+            agent.get("hostName") or agent.get("host") or "",
+            agent.get("hostIp") or "")
+        host = _rh or _ri or "unknown"
         if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
-            _rh, _ri = _split_host_ip(
-                agent.get("hostName") or agent.get("host") or "",
-                agent.get("hostIp") or "")
-            host = _rh or _ri or "unknown"
             unhealthy_agents.append(host)
+        upg = (agent.get("upgradability") or agent.get("upgradable") or "")
+        if "upgradable" in upg.lower():
+            upgradable_agents.append(host)
     if unhealthy_agents:
         examples = ", ".join(unhealthy_agents[:3])
         recs.append(_r("HIGH", "Agent Health",
@@ -2261,16 +2343,6 @@ def _build_recommendations(cd):
             "Check agent connectivity, firewall rules, and reinstall if necessary",
             "Unhealthy agents silently prevent backups from running on affected hosts"))
 
-    upgradable_agents = []
-    for agent in (cd.get("agents") or []):
-        if not isinstance(agent, dict):
-            continue
-        upg = (agent.get("upgradability") or agent.get("upgradable") or "")
-        if "upgradable" in upg.lower():
-            _rh, _ri = _split_host_ip(
-                agent.get("hostName") or agent.get("host") or "",
-                agent.get("hostIp") or "")
-            upgradable_agents.append(_rh or _ri or "unknown")
     if upgradable_agents:
         examples = ", ".join(upgradable_agents[:3])
         recs.append(_r("MEDIUM", "Agent Health",
@@ -2282,25 +2354,23 @@ def _build_recommendations(cd):
             "Outdated agents MAY cause issues with newer cluster features; Cohesity "
             "supports a limited range of back-versions — check compatibility docs"))
 
-    # ── Disk health and SSD wear ──────────────────────────────────────────────
-    failed_disks = [d for d in (cd.get("disks") or [])
-                    if isinstance(d, dict)
-                    and (d.get("diskStatus") or d.get("status") or "").lower()
-                    in ("kfailed", "failed", "kmissing", "missing")]
+    # ── Disk health and SSD wear — single pass ────────────────────────────────
+    failed_disks = []
+    high_wear    = []
+    for d in (cd.get("disks") or []):
+        if (d.get("diskStatus") or d.get("status") or "").lower() \
+                in ("kfailed", "failed", "kmissing", "missing"):
+            failed_disks.append(d)
+        wear = (d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
+                or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+        if wear >= SSD_WEAR_CRIT_PCT:
+            high_wear.append((d.get("_nodeIp", "?"), wear))
     if failed_disks:
         recs.append(_r("CRITICAL", "Disk Health",
             f"{len(failed_disks)} disk(s) in failed or missing state",
             "Replace failed disks immediately and verify cluster redundancy",
             "Failed disks reduce storage redundancy and risk data loss"))
 
-    high_wear = [(d.get("_nodeIp", "?"),
-                  d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
-                  or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
-                 for d in (cd.get("disks") or [])
-                 if isinstance(d, dict)
-                 and (d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
-                      or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
-                 >= SSD_WEAR_CRIT_PCT]
     if high_wear:
         examples = ", ".join(f"{ip} ({w}%)" for ip, w in high_wear[:3])
         recs.append(_r("HIGH", "Disk Health",
@@ -2311,8 +2381,6 @@ def _build_recommendations(cd):
     # ── Source coverage ───────────────────────────────────────────────────────
     low_coverage = []
     for src in (cd.get("sources") or []):
-        if not isinstance(src, dict):
-            continue
         _si = src.get("sourceInfo")
         si   = _si if isinstance(_si, dict) else src
         name = si.get("name") or si.get("sourceName") or src.get("name") or ""
@@ -2352,15 +2420,7 @@ def _build_recommendations(cd):
             "a stolen credential gives full cluster access without MFA as a second factor"))
 
     # ── Audit log ─────────────────────────────────────────────────────────────
-    info_local = cd["info"]
-    _audit_cfg     = info_local.get("auditLogConfig")
-    _cluster_audit = info_local.get("clusterAuditConfig")
-    audit_enabled = bool(
-        info_local.get("auditLogEnabled")
-        or (isinstance(_audit_cfg, dict)     and _audit_cfg.get("enabled"))
-        or (isinstance(_cluster_audit, dict) and _cluster_audit.get("enabled"))
-    )
-    if not audit_enabled:
+    if not cd.get("audit_enabled"):
         recs.append(_r("MEDIUM", "Security",
             "Cluster audit logging is not enabled",
             "Enable audit logging in cluster security settings to capture all admin actions",
@@ -2525,7 +2585,7 @@ def _sheet_summary(wb, all_data):
                len(cd["recommendations"]), top]
         r = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=r, column=c, value=val).font = _font()
+            ws.cell(row=r, column=c, value=val).font = _FONT_NORMAL
 
         # RAG color on overall score + grade
         for col in (4, 5):
@@ -2619,7 +2679,7 @@ def _sheet_infrastructure(wb, all_data):
                "Connected"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # color SW Lifecycle Status cell (col 3)
         sw_cell = ws.cell(row=rn, column=3)
@@ -2711,7 +2771,7 @@ def _sheet_hardware(wb, all_data):
                    eol_str, hw_status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # color HW EOL Status cell (col 12)
             eol_cell = ws.cell(row=rn, column=12)
@@ -2746,7 +2806,7 @@ def _sheet_protection(wb, all_data):
 
     for cd in all_data:
         pm         = cd.get("policy_map", {})
-        policy_by_id = {p.get("id"): p for p in cd["policies"] if p.get("id")}
+        policy_by_id = cd.get("policy_by_id") or {p.get("id"): p for p in cd["policies"] if p.get("id")}
         for g in cd["groups"]:
             lr  = g.get("lastRun") or {}
             lb  = lr.get("localBackupInfo") or {}
@@ -2763,7 +2823,7 @@ def _sheet_protection(wb, all_data):
                 s = int((end_u - start_u) / 1_000_000)
                 h, m = divmod(s // 60, 60)
                 dur = f"{h}h {m:02d}m"
-            rpo_hrs = round((_now_usecs() - start_u) / 3_600_000_000, 1) \
+            rpo_hrs = round((cd["end_usecs"] - start_u) / 3_600_000_000, 1) \
                       if start_u else ""
 
             # Object counts are directly on localBackupInfo (not nested in stats)
@@ -2818,7 +2878,7 @@ def _sheet_protection(wb, all_data):
                    rpo_hrs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # DataLock col 18 — color by mode
             dc = ws.cell(row=rn, column=18)
@@ -2948,7 +3008,7 @@ def _sheet_storage(wb, all_data):
                     "", "", ""]
             rn2 = ws.max_row + 1
             for c, val in enumerate(drow, 1):
-                ws.cell(row=rn2, column=c, value=val).font = _font()
+                ws.cell(row=rn2, column=c, value=val).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
 
@@ -3169,7 +3229,7 @@ def _sheet_policies(wb, all_data):
                    "; ".join(gaps) if gaps else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # DataLock col 15 — color by mode
             dl_cell = ws.cell(row=rn, column=15)
@@ -3226,7 +3286,7 @@ def _sheet_policy_groups(wb, all_data):
                    status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # Highlight paused groups
             if paused:
@@ -3261,7 +3321,7 @@ def _sheet_alerts(wb, all_data):
             # v1 alerts API uses firstTimestampUsecs (not firstOccurrenceTime)
             first_u = a.get("firstTimestampUsecs") or 0
             last_u  = a.get("latestTimestampUsecs") or 0
-            age = round((_now_usecs() - first_u) / (86400 * 1_000_000), 1) \
+            age = round((cd["end_usecs"] - first_u) / (86400 * 1_000_000), 1) \
                   if first_u else ""
             doc  = a.get("alertDocument") or {}
             desc = doc.get("alertDescription") or ""
@@ -3274,7 +3334,7 @@ def _sheet_alerts(wb, all_data):
                    "Yes" if a.get("acknowledgeTimestampUsecs") else "No"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=2)
             if a.get("severity") == "kCritical":
@@ -3342,20 +3402,14 @@ def _sheet_security(wb, all_data):
 
         cluster_enc, sd_enc = _sd_enc_status(cd)
         has_vault = bool(vaults)
-        fk_st    = _fk_status(cd)
+        fk_st    = cd.get("fk_status") or _fk_status(cd)
         has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                        for p in policies)
         has_arch = any((p.get("remoteTargetPolicy") or {}).get("archivalTargets")
                        for p in policies)
 
         # ── Extended security controls ─────────────────────────────────────
-        _audit_cfg2     = info.get("auditLogConfig")
-        _cluster_audit2 = info.get("clusterAuditConfig")
-        audit_on = bool(
-            info.get("auditLogEnabled")
-            or (isinstance(_audit_cfg2, dict)     and _audit_cfg2.get("enabled"))
-            or (isinstance(_cluster_audit2, dict) and _cluster_audit2.get("enabled"))
-        )
+        audit_on = cd.get("audit_enabled", False)
         _ntp_s2  = info.get("ntpSettings")
         ntp_auth = bool(
             isinstance(_ntp_s2, dict)
@@ -3441,7 +3495,7 @@ def _sheet_security(wb, all_data):
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # Cluster Encryption col 2, SD Encryption col 3
         ce_cell = ws.cell(row=rn, column=2)
@@ -3677,7 +3731,7 @@ def _sheet_replication(wb, all_data):
                    "", "", "", status, "",
                    ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # ── Archival / vault rows ─────────────────────────────────────────
         shown = set()
@@ -3696,7 +3750,7 @@ def _sheet_replication(wb, all_data):
                       status, note,
                       ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
             shown.add(tname)
 
         # Vaults that exist in the API but are not referenced by any policy
@@ -3714,7 +3768,7 @@ def _sheet_replication(wb, all_data):
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
                      "Vault exists — not referenced by any policy", note, ""]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
     ws.column_dimensions["K"].width = 60
@@ -3770,12 +3824,12 @@ def _sheet_fortknox_detail(wb, all_data):
                 row = [cd["name"], vname, vtype, jname,
                        logical, physical, consumed, snaps, period]
                 for c, val in enumerate(row, 1):
-                    ws.cell(row=rn, column=c, value=val).font = _font()
+                    ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
                 has_rows = True
 
         if not has_rows:
             rn = ws.max_row + 1
-            ws.cell(row=rn, column=1, value=cd["name"]).font = _font()
+            ws.cell(row=rn, column=1, value=cd["name"]).font = _FONT_NORMAL
             ws.cell(row=rn, column=4,
                     value="No data transfer records for this cluster in the period.") \
                .font = _font(color="595959")
@@ -3833,7 +3887,7 @@ def _sheet_views(wb, all_data):
                    created, smb, nfs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=12)
             if "CRITICAL" in flag:
@@ -3867,7 +3921,7 @@ def _sheet_coverage(wb, all_data):
             st  = lb.get("status", "")
             sla_viol = lb.get("isSlaViolated") or lr.get("isSlaViolated") or False
             su  = lb.get("startTimeUsecs") or 0
-            hrs = round((_now_usecs() - su) / 3_600_000_000, 1) if su else 9999
+            hrs = round((cd["end_usecs"] - su) / 3_600_000_000, 1) if su else 9999
 
             is_gap = (g.get("isPaused")
                       or st in ("kFailure", "Failed")
@@ -3900,7 +3954,7 @@ def _sheet_coverage(wb, all_data):
                    st, sev]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=9)
             if sev in ("FAILED", "CRITICAL RPO GAP"):
@@ -3992,7 +4046,7 @@ def _sheet_trends(wb, all_data):
                    d["warn"], d["cancel"], pct, d["viols"],
                    round(bytes_to_gb(d["logical"]), 1)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
             sc = ws.cell(row=rn, column=8)
             if pct < SUCCESS_CRIT_PCT:
                 sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
@@ -4110,7 +4164,7 @@ def _sheet_recommendations(wb, all_data):
                rec["finding"], rec["action"], rec["impact"]]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         pc = ws.cell(row=rn, column=2)
         if rec["priority"] == "CRITICAL":
@@ -4172,7 +4226,7 @@ def _sheet_disk_health(wb, all_data):
                    tier]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # color Status cell (col 8)
             sc = ws.cell(row=rn, column=8)
@@ -4256,7 +4310,7 @@ def _sheet_agent_health(wb, all_data):
                    status, upg, cert_exp, notes]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=6)
             if status.lower() in ("kunhealthy", "unhealthy", "unreachable",
@@ -4331,7 +4385,7 @@ def _sheet_source_coverage(wb, all_data):
                    prot or "", unprot or "", pct, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=8)
             if isinstance(pct, float) and pct < 75:
@@ -4401,7 +4455,7 @@ def _sheet_user_security(wb, all_data):
                    "; ".join(notes) if notes else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             if locked:
                 ws.cell(row=rn, column=7).fill = _fill(RED)
@@ -4550,531 +4604,1085 @@ def _topology_data(all_data):
     }
 
 
-# ── draw.io XML generator ─────────────────────────────────────────────────────
+# ── Comprehensive PowerPoint deck ────────────────────────────────────────────
+
 
 def _generate_topology_drawio(all_data, out_path):
-    """Write an editable draw.io topology diagram to out_path + '.drawio'.
-
-    Returns True on success, False on error.
-    Node types and brand colors:
-      Clusters       — Cohesity teal rounded rectangles (left column)
-      Replication    — Blue rounded rectangles (2nd column)
-      Archival Vault — Amber cylinders (3rd column)
-      FortKnox/RPaaS — Dark-green rounded rectangles with lock symbol (4th column)
-    """
-    import html as _html
-
-    def _he(s):
-        return _html.escape(str(s), quote=False)
-
-    def _av(html_label):
-        """XML-escape an HTML label for use as a draw.io value attribute."""
-        return (html_label
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;"))
-
-    topo       = _topology_data(all_data)
-    clusters   = topo["clusters"]
-    repl_nodes = topo["repl_nodes"]
-    arch_nodes = topo["arch_nodes"]
-    fk_nodes   = topo["fk_nodes"]
-    edges      = topo["edges"]
-
-    # ── Layout constants (draw.io units, 1 unit ≈ 1 px at 100% zoom) ────────
-    MARGIN_X, MARGIN_Y = 40, 70
-    C_W,  C_H  = 250, 110   # source cluster box
-    T_W,  T_H  = 220, 80    # target node box
-    V_GAP      = 22          # vertical gap between nodes in same column
-    COL_GAP    = 80          # horizontal gap between columns
-
-    col_c  = MARGIN_X
-    col_r  = col_c + C_W + COL_GAP
-    col_a  = col_r + T_W + COL_GAP
-    col_f  = col_a + T_W + COL_GAP
-
-    def _col_y(nodes, idx, node_h):
-        return MARGIN_Y + 30 + idx * (node_h + V_GAP)
-
-    cells  = []
-    _ctr   = [2]
-
-    def _nid():
-        i = _ctr[0]; _ctr[0] += 1; return str(i)
-
-    def _vertex(vid, av_label, x, y, w, h, style):
-        cells.append(
-            f'<mxCell id="{vid}" value="{av_label}" style="{style}" '
-            f'vertex="1" parent="1">'
-            f'<mxGeometry x="{x}" y="{y}" width="{w}" height="{h}" as="geometry"/>'
-            f'</mxCell>'
-        )
-
-    def _edge(eid, src, tgt, style, label=""):
-        cells.append(
-            f'<mxCell id="{eid}" value="{label}" style="{style}" '
-            f'edge="1" source="{src}" target="{tgt}" parent="1">'
-            f'<mxGeometry relative="1" as="geometry"/>'
-            f'</mxCell>'
-        )
-
-    # ── Styles ───────────────────────────────────────────────────────────────
-    S_CLUSTER = (
-        f"rounded=1;whiteSpace=wrap;html=1;"
-        f"fillColor={_DG_TEAL};strokeColor={_DG_TEAL_DK};strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;"
-        f"spacingLeft=10;arcSize=6;"
-    )
-    S_REPL = (
-        f"rounded=1;whiteSpace=wrap;html=1;"
-        f"fillColor={_DG_REPL};strokeColor=#004A8A;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=12;align=center;arcSize=6;"
-    )
-    S_ARCH = (
-        f"shape=cylinder3;whiteSpace=wrap;html=1;direction=south;"
-        f"fillColor={_DG_ARCH};strokeColor=#B05A00;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=12;align=center;size=12;"
-    )
-    S_FK = (
-        f"shape=cloud;whiteSpace=wrap;html=1;"
-        f"fillColor={_DG_FK};strokeColor=#0E3B25;strokeWidth=2;"
-        f"fontColor=#FFFFFF;fontSize=12;fontStyle=1;align=center;"
-    )
-
-    def _s_hdr(color):
-        return (f"text;html=1;align=center;verticalAlign=middle;"
-                f"fontStyle=1;fontSize=14;fontColor={color};")
-
-    def _s_edge(color, dashed=False):
-        d = "dashed=1;dashPattern=8 4;" if dashed else ""
-        return (
-            f"edgeStyle=elbowEdgeStyle;elbow=vertical;{d}"
-            f"strokeColor={color};strokeWidth=2;fillColor={color};"
-            f"exitX=1;exitY=0.5;exitDx=0;exitDy=0;"
-            f"entryX=0;entryY=0.5;entryDx=0;entryDy=0;"
-            f"endArrow=block;endFill=1;"
-        )
-
-    # ── Watermark / generation note ──────────────────────────────────────────
-    nid = _nid()
-    cells.append(
-        f'<mxCell id="{nid}" value="Generated by Cohesity Health Check v{__version__}" '
-        f'style="text;html=1;align=right;verticalAlign=top;fontSize=9;fontColor=#AAAAAA;" '
-        f'vertex="1" parent="1">'
-        f'<mxGeometry x="{col_f + T_W + 20}" y="5" width="270" height="20" as="geometry"/>'
-        f'</mxCell>'
-    )
-
-    # ── Column headers ────────────────────────────────────────────────────────
-    _vertex(_nid(), _av("Source Clusters"), col_c, MARGIN_Y - 28, C_W, 24, _s_hdr(_DG_TEAL))
-    if repl_nodes:
-        _vertex(_nid(), _av("Replication Targets"), col_r, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_REPL))
-    if arch_nodes:
-        _vertex(_nid(), _av("Archival Vaults"), col_a, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_ARCH))
-    if fk_nodes:
-        _vertex(_nid(), _av("FortKnox / RPaaS"), col_f, MARGIN_Y - 28, T_W, 24, _s_hdr(_DG_FK))
-
-    # ── Source cluster nodes ──────────────────────────────────────────────────
-    for idx, cl in enumerate(clusters):
-        y   = _col_y(clusters, idx, C_H)
-        wls = ", ".join(cl["workloads"]) if cl["workloads"] else ""
-        ver = cl.get("version", "")
-        sub = f"v{ver}" if ver else ""
-        if cl["groups"]:   sub += (" | " if sub else "") + f"{cl['groups']} groups"
-        if cl["sources"]:  sub += f" | {cl['sources']} sources"
-        lbl = f"<b>{_he(cl['name'])}</b><br>{_he(sub)}"
-        if wls:
-            lbl += f"<br><i>{_he(wls)}</i>"
-        _vertex(cl["id"], _av(lbl), col_c, y, C_W, C_H, S_CLUSTER)
-
-    # ── Replication target nodes ──────────────────────────────────────────────
-    for idx, n in enumerate(repl_nodes):
-        y   = _col_y(repl_nodes, idx, T_H)
-        lbl = f"<b>{_he(n['name'])}</b><br>Cluster"
-        _vertex(n["id"], _av(lbl), col_r, y, T_W, T_H, S_REPL)
-
-    # ── Archival vault nodes ──────────────────────────────────────────────────
-    for idx, n in enumerate(arch_nodes):
-        y   = _col_y(arch_nodes, idx, T_H)
-        lbl = f"<b>{_he(n['name'])}</b><br>Archival Vault"
-        _vertex(n["id"], _av(lbl), col_a, y, T_W, T_H, S_ARCH)
-
-    # ── FortKnox nodes ────────────────────────────────────────────────────────
-    for idx, n in enumerate(fk_nodes):
-        y   = _col_y(fk_nodes, idx, T_H)
-        lbl = f"&#x1F512; <b>{_he(n['name'])}</b><br>FortKnox / RPaaS"
-        _vertex(n["id"], _av(lbl), col_f, y, T_W, T_H, S_FK)
-
-    # ── Edges (with labels) ───────────────────────────────────────────────────
-    _EDGE_LABELS = {"repl": "Replication", "arch": "Archive", "fk": "FortKnox /&#xa;Indelible"}
-    for e in edges:
-        if e["type"] == "repl":
-            style = _s_edge(_DG_REPL)
-        elif e["type"] == "arch":
-            style = _s_edge(_DG_ARCH)
-        else:
-            style = _s_edge(_DG_FK, dashed=True)
-        _edge(_nid(), e["src"], e["tgt"], style, label=_av(_EDGE_LABELS.get(e["type"], "")))
-
-    # ── Canvas dimensions ─────────────────────────────────────────────────────
-    right_items = max(len(repl_nodes), len(arch_nodes), len(fk_nodes), 1)
-    canvas_h = MARGIN_Y + 30 + max(len(clusters), right_items) * (C_H + V_GAP) + 60
-    canvas_w = col_f + T_W + 60
-
-    # ── Legend block (bottom-right) ───────────────────────────────────────────
-    leg_x  = col_f + T_W + 20
-    leg_y  = canvas_h - 170
-    leg_w  = 220
-    leg_hd = 22
-    leg_rh = 36
-
-    # Legend title
-    cells.append(
-        f'<mxCell id="{_nid()}" value="Legend" '
-        f'style="text;html=1;align=left;fontStyle=1;fontSize=10;fontColor=#1A3045;" '
-        f'vertex="1" parent="1">'
-        f'<mxGeometry x="{leg_x}" y="{leg_y}" width="{leg_w}" height="{leg_hd}" as="geometry"/>'
-        f'</mxCell>'
-    )
-    legend_items = [
-        (_DG_TEAL,   _DG_TEAL_DK,  "Source Cluster"),
-        (_DG_REPL,   "#004A8A",     "Replication Target"),
-        (_DG_ARCH,   "#B05A00",     "Archival Vault"),
-        (_DG_FK,     "#0E3B25",     "FortKnox / RPaaS"),
-    ]
-    for li, (bg, stroke, label) in enumerate(legend_items):
-        iy = leg_y + leg_hd + li * (leg_rh + 4)
-        cells.append(
-            f'<mxCell id="{_nid()}" value="{_av(label)}" '
-            f'style="rounded=1;whiteSpace=wrap;html=1;fillColor={bg};'
-            f'strokeColor={stroke};strokeWidth=1;fontColor=#FFFFFF;fontSize=10;" '
-            f'vertex="1" parent="1">'
-            f'<mxGeometry x="{leg_x}" y="{iy}" width="{leg_w}" height="{leg_rh}" as="geometry"/>'
-            f'</mxCell>'
-        )
-    canvas_w = max(canvas_w, leg_x + leg_w + 20)
-
-    # ── Assemble XML ──────────────────────────────────────────────────────────
-    cells_xml = "\n        ".join(cells)
-    xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<mxfile host="app.diagrams.net" agent="Cohesity Health Check" '
-        f'version="21.7.5" type="device">\n'
-        '  <diagram id="cohesity-topology" name="Environment Topology">\n'
-        f'    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" '
-        f'guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" '
-        f'pageScale="1" pageWidth="{canvas_w}" pageHeight="{canvas_h}" '
-        f'math="0" shadow="0">\n'
-        '      <root>\n'
-        '        <mxCell id="0" />\n'
-        '        <mxCell id="1" parent="0" />\n'
-        f'        {cells_xml}\n'
-        '      </root>\n'
-        '    </mxGraphModel>\n'
-        '  </diagram>\n'
-        '</mxfile>\n'
-    )
-
-    try:
-        drawio_path = out_path + ".drawio"
-        with open(drawio_path, "w", encoding="utf-8") as fh:
-            fh.write(xml)
-        return drawio_path
-    except Exception as exc:
-        print(f"  WARN: Could not write topology diagram: {exc}")
-        return None
+    """Removed in v1.50 — draw.io output superseded by write_pptx() deck."""
+    return None
 
 
-# ── PowerPoint topology diagram ──────────────────────────────────────────────
 
-def _generate_topology_pptx(all_data, out_path, customer="", debug=False):
-    """Write a 16:9 PowerPoint topology slide to out_path + '.pptx'.
+def write_pptx(all_data, args, out_path):
+    """Write a comprehensive multi-section .pptx health check deck.
 
-    Requires python-pptx (optional).  Returns the output path on success,
-    None if python-pptx is unavailable or an error occurs.
+    Sections: Cover · Executive Summary (Snapshot, Scorecard, Capacity,
+    Protection, Ransomware, Top Risks, Priority Actions) · Environment
+    Topology · Security Deep-Dive (Posture, User Security, Audit,
+    Recommendations) · Backup Engineering (Lifecycle, Coverage Gaps,
+    Agents, Source Coverage, Workload Risk, Recommendations).
+
+    Returns the output path on success, None if python-pptx is unavailable.
     """
     if not PPTX_OK:
         return None
 
-    import lxml.etree as _etree
+    import datetime as _dt
+    import lxml.etree as _letree
+    from pptx.util import Pt as _Pt
+    from pptx.enum.text import PP_ALIGN
+    from pptx.oxml.ns import qn as _qn
 
-    topo       = _topology_data(all_data)
-    clusters   = topo["clusters"]
-    repl_nodes = topo["repl_nodes"]
-    arch_nodes = topo["arch_nodes"]
-    fk_nodes   = topo["fk_nodes"]
-    edges      = topo["edges"]
+    customer = getattr(args, "customer", "") or ""
+    quick    = getattr(args, "quick", False)
+    today    = _dt.date.today().strftime("%B %d, %Y")
 
+    # ── Colour palette ────────────────────────────────────────────────────────
+    _C_HDR    = "#70AD47"   # Cohesity green — header bars
+    _C_DIV    = "#1A5C3A"   # Dark green — section dividers
+    _C_WHT    = "#FFFFFF"
+    _C_BLK    = "#000000"
+    _C_DGRY   = "#404040"
+    _C_LGRY   = "#F5F5F5"   # alternating table row tint
+    _C_GRN_BG = "#E2EFDA"; _C_GRN_TX = "#375623"
+    _C_AMB_BG = "#FFF2CC"; _C_AMB_TX = "#7F6000"
+    _C_RED_BG = "#FFCCCC"; _C_RED_TX = "#9C0006"
+
+    # ── Presentation setup ────────────────────────────────────────────────────
     prs = _PptxPresentation()
     prs.slide_width  = _PptxInches(13.33)
     prs.slide_height = _PptxInches(7.5)
-    slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+    W, H = 13.33, 7.5
 
-    shapes = slide.shapes
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # ── Low-level helpers ─────────────────────────────────────────────────────
     def _rgb(hex6):
         h = hex6.lstrip("#")
         return _PptxRGB(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
-    def _inches(v):
-        return _PptxInches(v)
+    def _blank():
+        return prs.slides.add_slide(prs.slide_layouts[6])
 
-    def _add_box(label, sublabel, x, y, w, h, fill_hex, stroke_hex, text_color="#FFFFFF"):
-        """Add a rounded-rectangle shape with a two-line label."""
-        sp = shapes.add_shape(
-            _MSO_SHAPE.ROUNDED_RECTANGLE,
-            _inches(x), _inches(y), _inches(w), _inches(h)
-        )
-        # Fill
+    def _rect(slide, x, y, w, h, fill, line=None, lw=0.01, rounded=False):
+        st = _MSO_SHAPE.ROUNDED_RECTANGLE if rounded else _MSO_SHAPE.RECTANGLE
+        sp = slide.shapes.add_shape(
+            st, _PptxInches(x), _PptxInches(y),
+            _PptxInches(w), _PptxInches(h))
         sp.fill.solid()
-        sp.fill.fore_color.rgb = _rgb(fill_hex)
-        # Border
-        sp.line.color.rgb = _rgb(stroke_hex)
-        sp.line.width = _PptxInches(0.015)
-        # Text
-        tf = sp.text_frame
-        tf.word_wrap = True
-        tf.auto_size = None
-        from pptx.util import Pt as _PPPt
-        from pptx.enum.text import PP_ALIGN
-        p1 = tf.paragraphs[0]
-        p1.alignment = PP_ALIGN.CENTER
-        run1 = p1.add_run()
-        run1.text = label
-        run1.font.bold = True
-        run1.font.size = _PPPt(9)
-        run1.font.color.rgb = _rgb(text_color)
-        if sublabel:
-            from pptx.oxml.ns import qn as _qn
-            p2 = tf.add_paragraph()
-            p2.alignment = PP_ALIGN.CENTER
-            run2 = p2.add_run()
-            run2.text = sublabel
-            run2.font.size = _PPPt(7)
-            run2.font.color.rgb = _rgb(text_color)
+        sp.fill.fore_color.rgb = _rgb(fill)
+        if line:
+            sp.line.color.rgb = _rgb(line)
+            sp.line.width = _PptxInches(lw)
+        else:
+            sp.line.fill.background()
         return sp
 
-    def _add_connector(x1, y1, x2, y2, color_hex):
-        """Add a straight arrow connector."""
-        from pptx.util import Emu as _Emu
-        from pptx.oxml.ns import qn as _qn
-        cx = (x1 + x2) / 2.0
-        cy = (y1 + y2) / 2.0
-        # python-pptx add_connector is available in ≥0.6.18
-        try:
-            from pptx.enum.shapes import MSO_CONNECTOR_TYPE
-            conn = shapes.add_connector(
-                MSO_CONNECTOR_TYPE.STRAIGHT,
-                _inches(x1), _inches(y1),
-                _inches(x2), _inches(y2)
-            )
-            conn.line.color.rgb = _rgb(color_hex)
-            conn.line.width = _PptxInches(0.025)
-            return conn, cx, cy
-        except Exception:
-            return None, cx, cy
-
-    def _add_label(text, cx, cy, w=0.85, h=0.22):
-        """Add a small text label near a connector midpoint."""
-        tb = shapes.add_textbox(_inches(cx - w / 2), _inches(cy - h / 2),
-                                _inches(w), _inches(h))
-        from pptx.util import Pt as _PPPt
-        from pptx.enum.text import PP_ALIGN
-        p = tb.text_frame.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
+    def _txt(slide, text, x, y, w, h, size=10, bold=False,
+             color="#000000", align="left", wrap=True):
+        tb = slide.shapes.add_textbox(
+            _PptxInches(x), _PptxInches(y),
+            _PptxInches(w), _PptxInches(h))
+        tf = tb.text_frame
+        tf.word_wrap = wrap
+        p = tf.paragraphs[0]
+        p.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
+                       "right": PP_ALIGN.RIGHT}.get(align, PP_ALIGN.LEFT)
         run = p.add_run()
-        run.text = text
-        run.font.size = _PPPt(7)
-        run.font.color.rgb = _rgb("#888888")
+        run.text = str(text) if text is not None else ""
+        run.font.size = _Pt(size)
+        run.font.bold = bold
+        run.font.color.rgb = _rgb(color)
+        return tb
 
-    # ── Layout constants (inches) ─────────────────────────────────────────────
-    TITLE_H   = 0.40
-    START_Y   = 1.10   # first node top
-    NODE_W    = 2.50
-    NODE_H    = 0.85
-    V_GAP     = 0.20   # vertical gap between nodes in same column
-    COL_C     = 0.20   # cluster column left edge
-    COL_R     = 3.10   # replication column
-    COL_A     = 6.00   # archival column
-    COL_F     = 8.90   # FortKnox column
+    def _header(slide, title, subtitle=""):
+        _rect(slide, 0, 0, W, 0.55, _C_HDR)
+        _txt(slide, title, 0.15, 0.06, W - 0.3, 0.38,
+             size=20, bold=True, color=_C_WHT)
+        if subtitle:
+            _txt(slide, subtitle, 0.15, 0.38, W - 0.3, 0.20,
+                 size=9, color="#DDEEDD")
 
-    # ── Title bar ─────────────────────────────────────────────────────────────
-    title_text = f"Cohesity Environment Topology"
+    def _footer(slide):
+        _txt(slide,
+             f"Cohesity Health Check  v{__version__}  \u00b7  Generated {today}",
+             0.2, H - 0.24, W - 0.4, 0.22,
+             size=7, color="#AAAAAA", align="right")
+
+    def _section_div(title, subtitle=""):
+        slide = _blank()
+        _rect(slide, 0, 0, W, H, _C_DIV)
+        _rect(slide, 0, 2.78, W, 0.07, _C_HDR)
+        _rect(slide, 0, 4.00, W, 0.07, _C_HDR)
+        _txt(slide, title, 0.5, 1.1, W - 1.0, 1.6,
+             size=38, bold=True, color=_C_WHT, align="center")
+        if subtitle:
+            _txt(slide, subtitle, 0.5, 4.15, W - 1.0, 0.7,
+                 size=13, color="#AAFFAA", align="center")
+        _txt(slide, f"Cohesity Health Check  v{__version__}",
+             0.2, H - 0.28, W - 0.4, 0.25,
+             size=7, color="#55AA77", align="right")
+        return slide
+
+    def _rag(score, hi=75, lo=50):
+        if score >= hi: return (_C_GRN_BG, _C_GRN_TX)
+        if score >= lo: return (_C_AMB_BG, _C_AMB_TX)
+        return (_C_RED_BG, _C_RED_TX)
+
+    def _grade_color(grade):
+        g = str(grade).upper()
+        if g == "A": return (_C_GRN_BG, _C_GRN_TX)
+        if g == "B": return ("#DFF0D8", "#2E7D32")
+        if g == "C": return (_C_AMB_BG, _C_AMB_TX)
+        return (_C_RED_BG, _C_RED_TX)
+
+    def _sg(s):
+        return ("A" if s >= 90 else "B" if s >= 80 else
+                "C" if s >= 70 else "D" if s >= 60 else "F")
+
+    def _ov(cd):
+        return int(_score_protection(cd, quick) * 0.25
+                   + _score_sla(cd, quick) * 0.15
+                   + _score_infra(cd) * 0.15
+                   + _score_capacity(cd) * 0.20
+                   + _score_security(cd) * 0.15
+                   + _score_alerts(cd) * 0.10)
+
+    def _yn(v):
+        return "Yes" if v else "No"
+
+    def _table(slide, headers, rows, col_w, x, y, rh=0.27,
+               hdr_bg=None, fills=None):
+        """Styled table. fills[row][col] = (bg_hex, tx_hex) or None."""
+        nr, nc = len(rows) + 1, len(headers)
+        tw = sum(col_w)
+        tbl = slide.shapes.add_table(
+            nr, nc,
+            _PptxInches(x), _PptxInches(y),
+            _PptxInches(tw), _PptxInches(rh * nr)).table
+        for ci, cw in enumerate(col_w):
+            tbl.columns[ci].width = _PptxInches(cw)
+        for ri in range(nr):
+            tbl.rows[ri].height = _PptxInches(rh)
+        hbg = hdr_bg or _C_HDR
+
+        def _cell(cell, text, bg, fg, bold=False, sz=8.5, align="left"):
+            cell.text = ""
+            tf = cell.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.alignment = {"left": PP_ALIGN.LEFT,
+                           "center": PP_ALIGN.CENTER,
+                           "right": PP_ALIGN.RIGHT}.get(align, PP_ALIGN.LEFT)
+            run = p.add_run()
+            run.text = str(text) if text is not None else ""
+            run.font.size = _Pt(sz)
+            run.font.bold = bold
+            run.font.color.rgb = _rgb(fg)
+            tc = cell._tc
+            tcPr = tc.find(_qn("a:tcPr"))
+            if tcPr is None:
+                tcPr = _letree.SubElement(tc, _qn("a:tcPr"))
+            for old in tcPr.findall(_qn("a:solidFill")):
+                tcPr.remove(old)
+            sf = _letree.SubElement(tcPr, _qn("a:solidFill"))
+            sr = _letree.SubElement(sf, _qn("a:srgbClr"))
+            sr.set("val", bg.lstrip("#"))
+
+        for ci, hdr in enumerate(headers):
+            _cell(tbl.cell(0, ci), hdr, hbg, _C_WHT,
+                  bold=True, sz=8.5, align="center")
+        for ri, row in enumerate(rows):
+            alt = _C_LGRY if ri % 2 == 0 else _C_WHT
+            for ci, val in enumerate(row):
+                fill = (fills[ri][ci]
+                        if fills and ri < len(fills)
+                        and ci < len(fills[ri]) else None)
+                if fill and fill[0] is not None:
+                    bg, fg = fill
+                else:
+                    bg, fg = alt, _C_BLK
+                _cell(tbl.cell(ri + 1, ci), val, bg, fg)
+
+    def _kpi(slide, label, value, x, y, w=1.9, h=1.2,
+             bg=None, vc="#FFFFFF"):
+        bg = bg or _C_HDR
+        _rect(slide, x, y, w, h, bg, rounded=True)
+        _txt(slide, label, x + 0.07, y + 0.08, w - 0.14, 0.35,
+             size=9, color="#FFFFFF", align="center")
+        _txt(slide, str(value), x + 0.07, y + 0.45, w - 0.14, 0.60,
+             size=26, bold=True, color=vc, align="center")
+
+    _P_COLORS = {"CRITICAL": (_C_RED_BG, _C_RED_TX),
+                 "HIGH":     ("#FFE0CC", "#7F3000"),
+                 "MEDIUM":   (_C_AMB_BG, _C_AMB_TX),
+                 "LOW":      (_C_GRN_BG, _C_GRN_TX)}
+    _ADMIN_ROLES = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
+
+    # ── Native PowerPoint section markers ─────────────────────────────────────
+    # Tracked as (section_name, first_slide_index); populated at each section
+    # boundary below and applied via _register_sections() before save().
+    _sec_starts = []
+
+    def _register_sections(prs, sec_starts):
+        """Inject <p14:sectionLst> into the presentation XML so PowerPoint's
+        slide panel groups slides under named section headers.
+        """
+        import uuid as _uuid
+        _NS14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+        sld_id_lst = prs.element.find(_qn("p:sldIdLst"))
+        if sld_id_lst is None or not sec_starts:
+            return
+        slide_ids = [int(el.get("id"))
+                     for el in sld_id_lst.findall(_qn("p:sldId"))]
+        total = len(slide_ids)
+        sec_lst = _letree.Element(f"{{{_NS14}}}sectionLst")
+        for i, (name, start_idx) in enumerate(sec_starts):
+            end_idx = (sec_starts[i + 1][1]
+                       if i + 1 < len(sec_starts) else total)
+            sec_el = _letree.SubElement(sec_lst, f"{{{_NS14}}}section")
+            sec_el.set("name", name)
+            sec_el.set("id", "{" + str(_uuid.uuid4()).upper() + "}")
+            ids_el = _letree.SubElement(sec_el, f"{{{_NS14}}}sldIdLst")
+            for idx in range(start_idx, end_idx):
+                if idx < total:
+                    sld_el = _letree.SubElement(ids_el, f"{{{_NS14}}}sldId")
+                    sld_el.set("id", str(slide_ids[idx]))
+        prs.element.append(sec_lst)
+
+    # ── Cover slide ───────────────────────────────────────────────────────────
+    slide = _blank()
+    _rect(slide, 0, 0, W, H, _C_DIV)
+    _rect(slide, 0, 2.78, W, 0.08, _C_HDR)
+    _rect(slide, 0, 3.96, W, 0.08, _C_HDR)
+    _txt(slide, "Cohesity Environment",
+         0.5, 0.9, W - 1.0, 1.0,
+         size=40, bold=True, color=_C_WHT, align="center")
+    _txt(slide, "Health Check Report",
+         0.5, 1.86, W - 1.0, 1.0,
+         size=40, bold=True, color=_C_HDR, align="center")
     if customer:
-        title_text += f" — {customer}"
-    tb = shapes.add_textbox(_inches(0.2), _inches(0.1),
-                            _inches(12.9), _inches(TITLE_H))
-    from pptx.util import Pt as _PPPt
-    from pptx.enum.text import PP_ALIGN
+        _txt(slide, customer, 0.5, 2.94, W - 1.0, 0.76,
+             size=24, color=_C_WHT, align="center")
+    _txt(slide, today, 0.5, 4.10, W - 1.0, 0.55,
+         size=16, color="#AAFFAA", align="center")
+    _txt(slide, "Prepared using Cohesity Helios",
+         0.5, 4.75, W - 1.0, 0.40,
+         size=11, color="#88CCAA", align="center")
+    _txt(slide, f"v{__version__}", W - 1.4, H - 0.32, 1.2, 0.28,
+         size=8, color="#558866", align="right")
+    _sec_starts.append(("Cover", 0))
+
+    # ── Section: Executive Summary ────────────────────────────────────────────
+    _sec_starts.append(("Executive Summary", len(prs.slides)))
+    _section_div("Executive Summary",
+                 "Snapshot  \u00b7  Scorecard  \u00b7  Capacity  \u00b7  "
+                 "Protection  \u00b7  Ransomware  \u00b7  Actions")
+
+    # ── Environment Snapshot ──────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Environment Snapshot",
+            f"{len(all_data)} cluster(s)  \u00b7  {today}")
+    _footer(slide)
+    n_nodes    = sum(len(cd["nodes"])    for cd in all_data)
+    n_groups   = sum(len(cd["groups"])   for cd in all_data)
+    n_policies = sum(len(cd["policies"]) for cd in all_data)
+    n_vaults   = sum(len(cd["vaults"])   for cd in all_data)
+    n_crits    = sum(
+        sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
+        for cd in all_data)
+    kpi_data = [
+        ("Clusters",        len(all_data), _C_DIV,   "#FFFFFF"),
+        ("Nodes",           n_nodes,       _DG_TEAL,  "#FFFFFF"),
+        ("Prot. Groups",    n_groups,      _C_HDR,    "#FFFFFF"),
+        ("Policies",        n_policies,    "#5B6E8A", "#FFFFFF"),
+        ("Vaults",          n_vaults,      _DG_ARCH,  "#FFFFFF"),
+        ("Critical Alerts", n_crits,
+         "#C0392B" if n_crits else "#27AE60", "#FFFFFF"),
+    ]
+    kpi_w, kpi_gap = 1.90, 0.19
+    kpi_x0 = (W - (kpi_w * 6 + kpi_gap * 5)) / 2
+    for i, (lbl, val, bg, vc) in enumerate(kpi_data):
+        _kpi(slide, lbl, val,
+             kpi_x0 + i * (kpi_w + kpi_gap), 0.68, kpi_w, 1.25, bg, vc)
+    hdr_snap = ["Cluster", "Version", "Nodes", "Groups",
+                "Vaults", "Crit Alerts", "Overall Score", "Grade"]
+    rows_snap, fills_snap = [], []
+    for cd in all_data:
+        ver   = (cd["info"].get("clusterSoftwareVersion") or "—").strip()
+        crits = sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
+        ov    = _ov(cd)
+        grd   = _sg(ov)
+        rows_snap.append([cd["name"], ver, len(cd["nodes"]),
+                          len(cd["groups"]), len(cd["vaults"]), crits, ov, grd])
+        cr_f = (_C_RED_BG, _C_RED_TX) if crits else (_C_GRN_BG, _C_GRN_TX)
+        fills_snap.append(
+            [None, None, None, None, None, cr_f, _rag(ov), _grade_color(grd)])
+    _table(slide, hdr_snap, rows_snap,
+           [2.5, 1.4, 0.8, 0.8, 0.8, 1.0, 1.3, 0.8],
+           0.22, 2.05, fills=fills_snap)
+
+    # ── Health Scorecard ──────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Health Scorecard",
+            "Per-cluster scores (0\u2013100)  \u00b7  "
+            "Protection\u00d725%  SLA\u00d715%  "
+            "Infra\u00d715%  Capacity\u00d720%  Security\u00d715%  Alerts\u00d710%")
+    _footer(slide)
+    hdr_sc = ["Cluster", "Protection", "SLA", "Infra",
+              "Capacity", "Security", "Alerts", "Overall", "Grade"]
+    rows_sc, fills_sc = [], []
+    for cd in all_data:
+        p   = _score_protection(cd, quick)
+        sl  = _score_sla(cd, quick)
+        inf = _score_infra(cd)
+        cap = _score_capacity(cd)
+        sec = _score_security(cd)
+        al  = _score_alerts(cd)
+        ov  = int(p*0.25 + sl*0.15 + inf*0.15 + cap*0.20 + sec*0.15 + al*0.10)
+        grd = _sg(ov)
+        rows_sc.append([cd["name"], p, sl, inf, cap, sec, al, ov, grd])
+        fills_sc.append(
+            [None] + [_rag(s) for s in (p, sl, inf, cap, sec, al, ov)]
+            + [_grade_color(grd)])
+    _table(slide, hdr_sc, rows_sc,
+           [2.6, 1.1, 1.0, 1.1, 1.1, 1.1, 1.0, 1.1, 0.8],
+           0.22, 0.68, fills=fills_sc)
+    _txt(slide, "Green \u226575  |  Amber 50\u201374  |  Red <50  "
+         "|  Grade: A\u226590  B\u226580  C\u226570  D\u226560  F<60",
+         0.22, H - 0.55, W - 0.4, 0.30, size=8, color=_C_DGRY)
+
+    # ── Capacity & Growth ─────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Storage Capacity & Growth",
+            "Per-cluster utilisation and predictive runway to 80% full")
+    _footer(slide)
+    hdr_cap = ["Cluster", "Storage Domain", "Used (TB)", "Usable (TB)",
+               "Used %", "Data Reduction", "Runway (days)", "80% Full By"]
+    rows_cap, fills_cap = [], []
+    for cd in all_data:
+        sds = cd.get("storage_domains") or []
+        if not sds:
+            rows_cap.append([cd["name"], "\u2014"] + ["\u2014"] * 6)
+            fills_cap.append([None] * 8)
+            continue
+        for sd in sds:
+            used_b  = sd.get("usedBytes") or sd.get("physicalUsedBytes") or 0
+            tot_b   = (sd.get("totalPhysicalCapacityBytes")
+                       or sd.get("physicalCapacityBytes") or 1)
+            dr      = sd.get("dataReductionRatio") or 0
+            pct     = used_b / tot_b * 100 if tot_b else 0
+            runway  = sd.get("_runway_days")
+            date_80 = sd.get("_date_80pct")
+            _tb = lambda b: f"{b/1e12:.1f}" if b else "0"
+            rows_cap.append([
+                cd["name"], sd.get("name", "default"),
+                _tb(used_b), _tb(tot_b),
+                f"{pct:.1f}%",
+                f"{dr:.1f}x" if dr else "\u2014",
+                str(runway) if runway is not None else "\u2014",
+                str(date_80) if date_80 else "\u2014",
+            ])
+            rw_val = min(100, runway) if runway is not None else 999
+            fills_cap.append([
+                None, None, None, None,
+                _rag(100 - pct, hi=70, lo=30),
+                None,
+                _rag(rw_val, hi=90, lo=30),
+                None,
+            ])
+    _table(slide, hdr_cap, rows_cap,
+           [2.2, 1.8, 1.0, 1.0, 0.9, 1.2, 1.2, 1.8],
+           0.22, 0.68, fills=fills_cap)
+
+    # ── Protection Summary ────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Protection Summary",
+            "Backup success rates, SLA compliance, and coverage gaps per cluster")
+    _footer(slide)
+    hdr_prot = ["Cluster", "Groups", "Success Rate", "SLA Violations",
+                "DataLock", "Coverage Gaps", "Prot. Score"]
+    rows_prot, fills_prot = [], []
+    _SUC = {"kSuccess", "Succeeded", "kWarning"}
+    for cd in all_data:
+        groups   = cd["groups"]
+        policies = cd["policies"]
+        if quick:
+            success    = sum(1 for g in groups
+                             if (g.get("lastRun") or {})
+                                .get("localBackupInfo", {})
+                                .get("status", "") in _SUC)
+            sla_viols  = sum(1 for g in groups
+                             if (g.get("lastRun") or {})
+                                .get("isSlaViolated", False))
+            total_runs = len(groups) or 1
+        else:
+            all_runs  = [r for runs in cd["group_runs"].values()
+                         for r in runs]
+            success   = sum(1 for r in all_runs
+                            if (r.get("localBackupInfo") or {})
+                               .get("status", "") in _SUC)
+            sla_viols = sum(1 for r in all_runs
+                            if r.get("isSlaViolated", False))
+            total_runs = len(all_runs) or 1
+        succ_pct  = success / total_runs * 100
+        _, dl_lbl, _, _ = _cluster_datalock(policies, groups)
+        gaps_n    = sum(1 for g in groups
+                        if (g.get("lastRun") or {})
+                           .get("localBackupInfo", {})
+                           .get("status", "") not in _SUC)
+        p_score   = _score_protection(cd, quick)
+        rows_prot.append([cd["name"], len(groups),
+                          f"{succ_pct:.1f}%", sla_viols,
+                          dl_lbl or "None", gaps_n, p_score])
+        su_f = _rag(succ_pct)
+        sl_f = ((_C_GRN_BG, _C_GRN_TX) if sla_viols == 0 else
+                (_C_AMB_BG, _C_AMB_TX) if sla_viols <= 3 else
+                (_C_RED_BG, _C_RED_TX))
+        gp_f = ((_C_GRN_BG, _C_GRN_TX) if gaps_n == 0 else
+                (_C_AMB_BG, _C_AMB_TX) if gaps_n <= 5 else
+                (_C_RED_BG, _C_RED_TX))
+        fills_prot.append([None, None, su_f, sl_f, None, gp_f, _rag(p_score)])
+    _table(slide, hdr_prot, rows_prot,
+           [2.6, 1.0, 1.5, 1.5, 2.0, 1.5, 1.7],
+           0.22, 0.68, fills=fills_prot)
+
+    # ── Ransomware Readiness ──────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Ransomware Readiness",
+            "Composite score: DataLock \u00b7 FortKnox \u00b7 "
+            "Recovery Window \u00b7 Quorum \u00b7 Admin MFA")
+    _footer(slide)
+    hdr_rw = ["Cluster", "RW Score", "Label",
+              "DataLock", "FortKnox", "Admin MFA", "Quorum"]
+    rows_rw, fills_rw = [], []
+    for cd in all_data:
+        rw_score, rw_label, _ = _ransomware_score(cd)
+        fk = cd.get("fk_status", "none")
+        _, dl_lbl, _, _ = _cluster_datalock(cd["policies"], cd["groups"])
+        no_mfa = sum(
+            1 for u in (cd.get("users") or [])
+            if isinstance(u, dict)
+            and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+            and bool(set(u.get("roles") or []) & _ADMIN_ROLES))
+        mfa_str = "All enabled" if no_mfa == 0 else f"{no_mfa} missing"
+        quorum  = bool((cd.get("info") or {}).get("quorumConfig"))
+        fk_lbl  = {"active": "Active", "idle": "Idle (no data)",
+                   "none": "Not configured"}.get(fk, "\u2014")
+        rows_rw.append([cd["name"], rw_score, rw_label,
+                        dl_lbl or "None", fk_lbl, mfa_str,
+                        "Enabled" if quorum else "Not configured"])
+        lv_f = ((_C_GRN_BG, _C_GRN_TX) if rw_label == "Strong" else
+                (_C_AMB_BG, _C_AMB_TX) if rw_label == "Moderate" else
+                (_C_RED_BG, _C_RED_TX))
+        fk_f  = ((_C_GRN_BG, _C_GRN_TX) if fk == "active" else
+                 (_C_AMB_BG, _C_AMB_TX) if fk == "idle" else
+                 (_C_RED_BG, _C_RED_TX))
+        mfa_f = (_C_GRN_BG, _C_GRN_TX) if no_mfa == 0 else (_C_RED_BG, _C_RED_TX)
+        qr_f  = (_C_GRN_BG, _C_GRN_TX) if quorum else (_C_AMB_BG, _C_AMB_TX)
+        fills_rw.append([None, _rag(rw_score), lv_f, None, fk_f, mfa_f, qr_f])
+    _table(slide, hdr_rw, rows_rw,
+           [2.4, 1.2, 1.5, 2.2, 1.8, 1.8, 1.5],
+           0.22, 0.68, fills=fills_rw)
+    _txt(slide, "Strong \u226580  |  Moderate 60\u201379  |  "
+         "High Risk 40\u201359  |  Critical <40",
+         0.22, H - 0.55, W - 0.4, 0.30, size=8, color=_C_DGRY)
+
+    # ── Top At-Risk Workloads ─────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Top At-Risk Workloads",
+            "Protection groups sorted by recovery risk score  "
+            "\u00b7  Lower score = higher risk")
+    _footer(slide)
+    risk_all = []
+    for cd in all_data:
+        for grp in cd["groups"]:
+            score, level = _group_risk_score(grp, cd)
+            lr  = grp.get("lastRun") or {}
+            lb  = (lr.get("localBackupInfo") or {})
+            risk_all.append((score, level, cd["name"],
+                             grp.get("name", ""),
+                             lb.get("status", "\u2014"),
+                             _yn(bool(lr.get("isSlaViolated")))))
+    risk_all.sort(key=lambda x: x[0])
+    hdr_risk = ["Cluster", "Protection Group", "Risk Score",
+                "Risk Level", "Last Status", "SLA Violated"]
+    rows_risk, fills_risk = [], []
+    for score, level, cname, gname, status, sla in risk_all[:16]:
+        rows_risk.append([cname, gname, score, level, status, sla])
+        lv_f  = ((_C_GRN_BG, _C_GRN_TX) if level == "Low" else
+                 (_C_AMB_BG, _C_AMB_TX) if level == "Medium" else
+                 (_C_RED_BG, _C_RED_TX))
+        sla_f = ((_C_RED_BG, _C_RED_TX) if sla == "Yes"
+                 else (_C_GRN_BG, _C_GRN_TX))
+        fills_risk.append([None, None, _rag(score), lv_f, None, sla_f])
+    if not rows_risk:
+        rows_risk  = [["\u2014", "No workloads", "\u2014", "\u2014", "\u2014", "\u2014"]]
+        fills_risk = [[None] * 6]
+    _table(slide, hdr_risk, rows_risk,
+           [2.2, 3.5, 1.2, 1.4, 2.1, 1.4],
+           0.22, 0.68, fills=fills_risk)
+
+    # ── Priority Action Items ─────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Priority Action Items",
+            "CRITICAL and HIGH findings requiring immediate attention")
+    _footer(slide)
+    pri_rows, pri_fills = [], []
+    for cd in all_data:
+        for rec in _build_recommendations(cd):
+            if rec["priority"] in ("CRITICAL", "HIGH"):
+                pri_rows.append(
+                    (rec["priority"], rec["category"], cd["name"],
+                     rec["finding"][:80], rec["action"][:80]))
+    pri_rows.sort(key=lambda x: (0 if x[0] == "CRITICAL" else 1, x[1]))
+    if not pri_rows:
+        pri_rows  = [("\u2014", "No CRITICAL or HIGH findings", "", "", "")]
+        pri_fills = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    else:
+        for prio, *_ in pri_rows[:15]:
+            p_f = (_C_RED_BG, _C_RED_TX) if prio == "CRITICAL" \
+                  else ("#FFE0CC", "#7F3000")
+            pri_fills.append([p_f] + [None] * 4)
+        pri_rows = pri_rows[:15]
+    _table(slide,
+           ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
+           [(p, c, cl, f, a) for p, c, cl, f, a in pri_rows],
+           [1.2, 1.8, 2.0, 4.1, 3.8],
+           0.22, 0.68, fills=pri_fills)
+
+    # ── Section: Topology ─────────────────────────────────────────────────────
+    _sec_starts.append(("Environment Topology", len(prs.slides)))
+    _section_div("Environment Topology",
+                 "Cluster connections  \u00b7  Replication  "
+                 "\u00b7  Archival  \u00b7  FortKnox / RPaaS")
+
+    # ── Topology slide ────────────────────────────────────────────────────────
+    topo       = _topology_data(all_data)
+    t_clusters = topo["clusters"]
+    repl_nodes = topo["repl_nodes"]
+    arch_nodes = topo["arch_nodes"]
+    fk_nodes   = topo["fk_nodes"]
+    edges      = topo["edges"]
+    slide  = _blank()
+    shapes = slide.shapes
+    tb = shapes.add_textbox(
+        _PptxInches(0.2), _PptxInches(0.08),
+        _PptxInches(W - 0.4), _PptxInches(0.48))
     tp = tb.text_frame.paragraphs[0]
     tp.alignment = PP_ALIGN.LEFT
     tr = tp.add_run()
-    tr.text = title_text
+    tr.text = ("Environment Topology"
+               + (f"  \u2014  {customer}" if customer else ""))
     tr.font.bold = True
-    tr.font.size = _PPPt(18)
+    tr.font.size = _Pt(18)
     tr.font.color.rgb = _rgb(_DG_FK)
 
-    # ── Node ID → center-right / center-left x,y for connectors ─────────────
-    node_anchor = {}  # id → (cx_right, cy, cx_left)
+    T_START_Y = 1.02; T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18
+    T_COL_C = 0.20; T_COL_R = 3.10; T_COL_A = 6.00; T_COL_F = 8.90
 
-    def _node_y(idx):
-        return START_Y + idx * (NODE_H + V_GAP)
+    def _t_ny(idx):
+        return T_START_Y + idx * (T_NODE_H + T_V_GAP)
 
-    def _center_y(idx):
-        return _node_y(idx) + NODE_H / 2.0
+    def _t_box(label, sub, x, y, fill, stroke):
+        sp = shapes.add_shape(
+            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            _PptxInches(x), _PptxInches(y),
+            _PptxInches(T_NODE_W), _PptxInches(T_NODE_H))
+        sp.fill.solid()
+        sp.fill.fore_color.rgb = _rgb(fill)
+        sp.line.color.rgb = _rgb(stroke)
+        sp.line.width = _PptxInches(0.015)
+        tf = sp.text_frame
+        tf.word_wrap = True
+        p1 = tf.paragraphs[0]
+        p1.alignment = PP_ALIGN.CENTER
+        r1 = p1.add_run()
+        r1.text = label; r1.font.bold = True
+        r1.font.size = _Pt(9)
+        r1.font.color.rgb = _rgb("#FFFFFF")
+        if sub:
+            p2 = tf.add_paragraph()
+            p2.alignment = PP_ALIGN.CENTER
+            r2 = p2.add_run()
+            r2.text = sub
+            r2.font.size = _Pt(7)
+            r2.font.color.rgb = _rgb("#FFFFFF")
 
-    # ── Cluster nodes ─────────────────────────────────────────────────────────
-    for idx, cl in enumerate(clusters):
-        y = _node_y(idx)
+    def _t_conn(x1, y1, x2, y2, color):
+        try:
+            from pptx.enum.shapes import MSO_CONNECTOR_TYPE as _MCT
+            conn = shapes.add_connector(
+                _MCT.STRAIGHT,
+                _PptxInches(x1), _PptxInches(y1),
+                _PptxInches(x2), _PptxInches(y2))
+            conn.line.color.rgb = _rgb(color)
+            conn.line.width = _PptxInches(0.025)
+        except Exception:
+            pass
+        return (x1 + x2) / 2, (y1 + y2) / 2
+
+    def _t_lbl(text, cx, cy):
+        tb2 = shapes.add_textbox(
+            _PptxInches(cx - 0.42), _PptxInches(cy - 0.11),
+            _PptxInches(0.84), _PptxInches(0.22))
+        p = tb2.text_frame.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = text; r.font.size = _Pt(7)
+        r.font.color.rgb = _rgb("#888888")
+
+    t_anchor = {}
+    for idx, cl in enumerate(t_clusters):
+        y = _t_ny(idx)
         ver = cl.get("version", "")
         sub = f"v{ver}" if ver else ""
         if cl["groups"]:  sub += (" | " if sub else "") + f"{cl['groups']} grp"
         if cl["sources"]: sub += f" | {cl['sources']} src"
-        _add_box(cl["name"], sub, COL_C, y, NODE_W, NODE_H,
-                 _DG_TEAL, _DG_TEAL_DK)
-        cy = y + NODE_H / 2.0
-        node_anchor[cl["id"]] = (COL_C + NODE_W, cy, COL_C)
-
-    # ── Replication target nodes ───────────────────────────────────────────────
+        _t_box(cl["name"], sub, T_COL_C, y, _DG_TEAL, _DG_TEAL_DK)
+        t_anchor[cl["id"]] = (T_COL_C + T_NODE_W, y + T_NODE_H / 2, T_COL_C)
     for idx, n in enumerate(repl_nodes):
-        y = _node_y(idx)
-        _add_box(n["name"], "Cluster", COL_R, y, NODE_W, NODE_H,
-                 _DG_REPL, "#004A8A")
-        cy = y + NODE_H / 2.0
-        node_anchor[n["id"]] = (COL_R + NODE_W, cy, COL_R)
-
-    # ── Archival vault nodes ───────────────────────────────────────────────────
+        y = _t_ny(idx)
+        _t_box(n["name"], "Cluster", T_COL_R, y, _DG_REPL, "#004A8A")
+        t_anchor[n["id"]] = (T_COL_R + T_NODE_W, y + T_NODE_H / 2, T_COL_R)
     for idx, n in enumerate(arch_nodes):
-        y = _node_y(idx)
-        _add_box(n["name"], "Archival Vault", COL_A, y, NODE_W, NODE_H,
-                 _DG_ARCH, "#B05A00")
-        cy = y + NODE_H / 2.0
-        node_anchor[n["id"]] = (COL_A + NODE_W, cy, COL_A)
-
-    # ── FortKnox nodes ────────────────────────────────────────────────────────
+        y = _t_ny(idx)
+        _t_box(n["name"], "Archival Vault", T_COL_A, y, _DG_ARCH, "#B05A00")
+        t_anchor[n["id"]] = (T_COL_A + T_NODE_W, y + T_NODE_H / 2, T_COL_A)
     for idx, n in enumerate(fk_nodes):
-        y = _node_y(idx)
-        _add_box(n["name"], "FortKnox / RPaaS", COL_F, y, NODE_W, NODE_H,
-                 _DG_FK, "#0E3B25")
-        cy = y + NODE_H / 2.0
-        node_anchor[n["id"]] = (COL_F + NODE_W, cy, COL_F)
+        y = _t_ny(idx)
+        _t_box(n["name"], "FortKnox / RPaaS", T_COL_F, y, _DG_FK, "#0E3B25")
+        t_anchor[n["id"]] = (T_COL_F + T_NODE_W, y + T_NODE_H / 2, T_COL_F)
 
-    # ── Column headers ────────────────────────────────────────────────────────
-    HDR_Y = START_Y - 0.35
-    HDR_H = 0.28
-    if clusters:
-        tb2 = shapes.add_textbox(_inches(COL_C), _inches(HDR_Y),
-                                 _inches(NODE_W), _inches(HDR_H))
-        p2 = tb2.text_frame.paragraphs[0]
-        p2.alignment = PP_ALIGN.CENTER
-        r2 = p2.add_run(); r2.text = "Source Clusters"
-        r2.font.bold = True; r2.font.size = _PPPt(9)
-        r2.font.color.rgb = _rgb(_DG_TEAL)
-    if repl_nodes:
-        tb3 = shapes.add_textbox(_inches(COL_R), _inches(HDR_Y),
-                                 _inches(NODE_W), _inches(HDR_H))
+    HDR_Y = T_START_Y - 0.30
+    for nodelist, cx, lbl, color in [
+        (t_clusters, T_COL_C, "Source Clusters",    _DG_TEAL),
+        (repl_nodes, T_COL_R, "Replication Targets", _DG_REPL),
+        (arch_nodes, T_COL_A, "Archival Vaults",     _DG_ARCH),
+        (fk_nodes,   T_COL_F, "FortKnox / RPaaS",   _DG_FK),
+    ]:
+        if not nodelist: continue
+        tb3 = shapes.add_textbox(
+            _PptxInches(cx), _PptxInches(HDR_Y),
+            _PptxInches(T_NODE_W), _PptxInches(0.26))
         p3 = tb3.text_frame.paragraphs[0]
         p3.alignment = PP_ALIGN.CENTER
-        r3 = p3.add_run(); r3.text = "Replication Targets"
-        r3.font.bold = True; r3.font.size = _PPPt(9)
-        r3.font.color.rgb = _rgb(_DG_REPL)
-    if arch_nodes:
-        tb4 = shapes.add_textbox(_inches(COL_A), _inches(HDR_Y),
-                                 _inches(NODE_W), _inches(HDR_H))
-        p4 = tb4.text_frame.paragraphs[0]
-        p4.alignment = PP_ALIGN.CENTER
-        r4 = p4.add_run(); r4.text = "Archival Vaults"
-        r4.font.bold = True; r4.font.size = _PPPt(9)
-        r4.font.color.rgb = _rgb(_DG_ARCH)
-    if fk_nodes:
-        tb5 = shapes.add_textbox(_inches(COL_F), _inches(HDR_Y),
-                                 _inches(NODE_W), _inches(HDR_H))
-        p5 = tb5.text_frame.paragraphs[0]
-        p5.alignment = PP_ALIGN.CENTER
-        r5 = p5.add_run(); r5.text = "FortKnox / RPaaS"
-        r5.font.bold = True; r5.font.size = _PPPt(9)
-        r5.font.color.rgb = _rgb(_DG_FK)
+        r3 = p3.add_run()
+        r3.text = lbl; r3.font.bold = True
+        r3.font.size = _Pt(9)
+        r3.font.color.rgb = _rgb(color)
 
-    # ── Edges and labels ──────────────────────────────────────────────────────
-    _EDGE_COLORS  = {"repl": _DG_REPL, "arch": _DG_ARCH, "fk": _DG_FK}
-    _EDGE_LBLS    = {"repl": "Replication", "arch": "Archive", "fk": "FortKnox /\nIndelible"}
-    _seen_lbl     = set()  # avoid duplicate labels on same source→target-type lane
-
+    _E_COLORS = {"repl": _DG_REPL, "arch": _DG_ARCH, "fk": _DG_FK}
+    _E_LBLS   = {"repl": "Replication", "arch": "Archive",
+                 "fk": "FortKnox/\nIndelible"}
+    _seen_lbl = set()
     for e in edges:
-        src_id = e["src"]
-        tgt_id = e["tgt"]
-        etype  = e["type"]
-        if src_id not in node_anchor or tgt_id not in node_anchor:
-            continue
-        src_x_right, src_cy, _ = node_anchor[src_id]
-        _, tgt_cy, tgt_x_left  = node_anchor[tgt_id]
-        color = _EDGE_COLORS.get(etype, "#888888")
-        conn, cx, cy = _add_connector(src_x_right, src_cy,
-                                      tgt_x_left,  tgt_cy, color)
-        # Add label once per (src, etype) pair to avoid clutter
-        lbl_key = (src_id, etype)
-        if lbl_key not in _seen_lbl:
-            _seen_lbl.add(lbl_key)
-            _add_label(_EDGE_LBLS.get(etype, ""), cx, cy)
+        sid, tid, etype = e["src"], e["tgt"], e["type"]
+        if sid not in t_anchor or tid not in t_anchor: continue
+        sx, sy, _ = t_anchor[sid]
+        _, ty, tx  = t_anchor[tid]
+        cx, cy = _t_conn(sx, sy, tx, ty, _E_COLORS.get(etype, "#888888"))
+        if (sid, etype) not in _seen_lbl:
+            _seen_lbl.add((sid, etype))
+            _t_lbl(_E_LBLS.get(etype, ""), cx, cy)
 
-    # ── Legend (bottom-left) ──────────────────────────────────────────────────
-    LEG_X = 0.20
-    LEG_Y = 6.30
-    LEG_W = 1.90
-    LEG_H = 0.28
-    LEG_G = 0.06
-
-    legend_items = [
-        (_DG_TEAL,   _DG_TEAL_DK, "Source Cluster"),
-        (_DG_REPL,   "#004A8A",   "Replication Target"),
-        (_DG_ARCH,   "#B05A00",   "Archival Vault"),
-        (_DG_FK,     "#0E3B25",   "FortKnox / RPaaS"),
-    ]
-    leg_tb = shapes.add_textbox(_inches(LEG_X), _inches(LEG_Y - 0.25),
-                                _inches(1.5), _inches(0.22))
-    lp = leg_tb.text_frame.paragraphs[0]
-    lr = lp.add_run(); lr.text = "Legend"
-    lr.font.bold = True; lr.font.size = _PPPt(8)
-    lr.font.color.rgb = _rgb("#1A3045")
-
-    for li, (bg, stroke, label) in enumerate(legend_items):
-        iy = LEG_Y + li * (LEG_H + LEG_G)
+    LEG_Y = 6.18
+    for li, (bg, stroke, lbl) in enumerate([
+        (_DG_TEAL, _DG_TEAL_DK, "Source Cluster"),
+        (_DG_REPL, "#004A8A",   "Replication Target"),
+        (_DG_ARCH, "#B05A00",   "Archival Vault"),
+        (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS"),
+    ]):
         sp = shapes.add_shape(
             _MSO_SHAPE.ROUNDED_RECTANGLE,
-            _inches(LEG_X), _inches(iy), _inches(LEG_W), _inches(LEG_H)
-        )
-        sp.fill.solid()
-        sp.fill.fore_color.rgb = _rgb(bg)
+            _PptxInches(0.20), _PptxInches(LEG_Y + li * 0.34),
+            _PptxInches(1.90), _PptxInches(0.28))
+        sp.fill.solid(); sp.fill.fore_color.rgb = _rgb(bg)
         sp.line.color.rgb = _rgb(stroke)
         sp.line.width = _PptxInches(0.01)
         tf = sp.text_frame
-        tf.word_wrap = False
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
-        run = p.add_run()
-        run.text = label
-        run.font.size = _PPPt(7)
-        run.font.color.rgb = _rgb("#FFFFFF")
-        run.font.bold = True
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = lbl
+        r.font.size = _Pt(7); r.font.bold = True
+        r.font.color.rgb = _rgb("#FFFFFF")
+    _footer(slide)
 
-    # ── Watermark ─────────────────────────────────────────────────────────────
-    wm = shapes.add_textbox(_inches(0.2), _inches(7.25), _inches(12.9), _inches(0.22))
-    wp = wm.text_frame.paragraphs[0]
-    wp.alignment = PP_ALIGN.RIGHT
-    wr = wp.add_run()
-    wr.text = f"Generated by Cohesity Health Check v{__version__}"
-    wr.font.size = _PPPt(7)
-    wr.font.color.rgb = _rgb("#AAAAAA")
+    # ── Section: Security Deep-Dive ───────────────────────────────────────────
+    _sec_starts.append(("Security Deep-Dive", len(prs.slides)))
+    _section_div("Security Deep-Dive",
+                 "Posture  \u00b7  User Security  "
+                 "\u00b7  Audit & Governance  \u00b7  Recommendations")
 
+    # ── Security Posture Overview ─────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Security Posture Overview",
+            "Encryption, vaults, DataLock, MFA, and quorum per cluster")
+    _footer(slide)
+    hdr_sec = ["Cluster", "Cluster Enc", "SD Enc", "Replication",
+               "FortKnox", "DataLock", "Admin MFA", "Sec Score"]
+    rows_sec, fills_sec = [], []
+    for cd in all_data:
+        c_enc, sd_enc = _sd_enc_status(cd)
+        fk = cd.get("fk_status", "none")
+        _, dl_lbl, _, _ = _cluster_datalock(cd["policies"], cd["groups"])
+        has_repl = any(
+            (p.get("remoteTargetPolicy") or {}).get("replicationTargets")
+            for p in cd["policies"])
+        no_mfa = sum(
+            1 for u in (cd.get("users") or [])
+            if isinstance(u, dict)
+            and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
+            and bool(set(u.get("roles") or []) & _ADMIN_ROLES))
+        mfa_str = "All OK" if no_mfa == 0 else f"{no_mfa} missing"
+        sec_sc  = _score_security(cd)
+        sd_str  = ("Yes" if sd_enc is True else
+                   "No" if sd_enc is False else "N/A")
+        fk_str  = {"active": "Active", "idle": "Idle",
+                   "none": "None"}.get(fk, "\u2014")
+        rows_sec.append([cd["name"], _yn(c_enc), sd_str, _yn(has_repl),
+                         fk_str, dl_lbl or "None", mfa_str, sec_sc])
+        enc_f  = (_C_GRN_BG, _C_GRN_TX) if c_enc else (_C_RED_BG, _C_RED_TX)
+        sd_f   = (_C_GRN_BG, _C_GRN_TX) if sd_enc else (_C_AMB_BG, _C_AMB_TX)
+        rpl_f  = (_C_GRN_BG, _C_GRN_TX) if has_repl else (_C_RED_BG, _C_RED_TX)
+        fk_f   = ((_C_GRN_BG, _C_GRN_TX) if fk == "active" else
+                  (_C_AMB_BG, _C_AMB_TX) if fk == "idle" else
+                  (_C_RED_BG, _C_RED_TX))
+        dl_f   = ((_C_RED_BG, _C_RED_TX)
+                  if not dl_lbl or dl_lbl == "None" else
+                  (_C_AMB_BG, _C_AMB_TX)
+                  if "partial" in (dl_lbl or "").lower() else
+                  (_C_GRN_BG, _C_GRN_TX))
+        mfa_f  = (_C_GRN_BG, _C_GRN_TX) if no_mfa == 0 else (_C_RED_BG, _C_RED_TX)
+        fills_sec.append(
+            [None, enc_f, sd_f, rpl_f, fk_f, dl_f, mfa_f, _rag(sec_sc)])
+    _table(slide, hdr_sec, rows_sec,
+           [2.3, 1.1, 0.9, 1.2, 1.6, 2.0, 1.3, 1.2],
+           0.22, 0.68, fills=fills_sec)
+
+    # ── User Security & MFA ───────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "User Security & MFA",
+            "User accounts \u2014 MFA status, locked state, and roles")
+    _footer(slide)
+    hdr_usr = ["Cluster", "Username", "Domain", "Roles",
+               "MFA Enabled", "Locked"]
+    rows_usr, fills_usr = [], []
+    for cd in all_data:
+        for u in (cd.get("users") or []):
+            if not isinstance(u, dict): continue
+            roles  = u.get("roles") or []
+            mfa_on = bool(u.get("mfaEnabled") or u.get("isMfaEnabled"))
+            locked = bool(u.get("locked") or u.get("isLocked"))
+            uname  = u.get("username") or u.get("name") or "\u2014"
+            domain = u.get("domain") or "LOCAL"
+            rows_usr.append(
+                [cd["name"], uname, domain,
+                 ", ".join(roles[:3]) or "\u2014",
+                 _yn(mfa_on), _yn(locked)])
+            mfa_f = (_C_GRN_BG, _C_GRN_TX) if mfa_on else (_C_RED_BG, _C_RED_TX)
+            lk_f  = (_C_RED_BG, _C_RED_TX) if locked else (_C_GRN_BG, _C_GRN_TX)
+            fills_usr.append([None, None, None, None, mfa_f, lk_f])
+    if not rows_usr:
+        rows_usr  = [["\u2014", "No user data", "", "", "", ""]]
+        fills_usr = [[None] * 6]
+    _table(slide, hdr_usr, rows_usr[:20],
+           [2.0, 2.2, 1.5, 3.0, 1.5, 1.5],
+           0.22, 0.68, fills=fills_usr[:20])
+    if len(rows_usr) > 20:
+        _txt(slide,
+             f"  \u2026 and {len(rows_usr) - 20} more \u2014 "
+             "see Excel User Security sheet",
+             0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+
+    # ── Governance & Audit Activity ───────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Governance & Audit Activity",
+            "30-day configuration changes and high-risk events per cluster")
+    _footer(slide)
+    hdr_aud = ["Cluster", "Audit Logging", "Total Events",
+               "Policy Changes", "Group Changes",
+               "User Changes", "Vault/Security", "High-Risk Events"]
+    rows_aud, fills_aud = [], []
+    _HR_KW = {"delete", "destroy", "wipe", "disable", "remove",
+              "revoke", "fortknox", "datalock", "mfa", "encryption"}
+    for cd in all_data:
+        audit_on = cd.get("audit_enabled", False)
+        events   = cd.get("audit_events") or []
+        cats     = {"Policy Changes": 0, "Group Changes": 0,
+                    "User Changes": 0, "Vault/Security Changes": 0}
+        high_risk = 0
+        for ev in events:
+            cat = _audit_category(ev)
+            if cat and cat in cats: cats[cat] += 1
+            act = (ev.get("action") or ev.get("type") or "").lower()
+            if any(kw in act for kw in _HR_KW): high_risk += 1
+        rows_aud.append([
+            cd["name"], _yn(audit_on), len(events),
+            cats["Policy Changes"], cats["Group Changes"],
+            cats["User Changes"], cats["Vault/Security Changes"], high_risk])
+        al_f = (_C_GRN_BG, _C_GRN_TX) if audit_on else (_C_RED_BG, _C_RED_TX)
+        hr_f = ((_C_RED_BG, _C_RED_TX) if high_risk > 5 else
+                (_C_AMB_BG, _C_AMB_TX) if high_risk > 0 else
+                (_C_GRN_BG, _C_GRN_TX))
+        fills_aud.append([None, al_f, None, None, None, None, None, hr_f])
+    _table(slide, hdr_aud, rows_aud,
+           [2.0, 1.3, 1.2, 1.5, 1.4, 1.4, 1.4, 1.6],
+           0.22, 0.68, fills=fills_aud)
+
+    # ── Security Recommendations ──────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Security Recommendations",
+            "Security, Ransomware, Encryption, MFA, Audit, and Vault findings")
+    _footer(slide)
+    _SEC_CATS = {"security", "ransomware", "fortknox", "datalock",
+                 "encryption", "mfa", "quorum", "audit", "tls", "user"}
+    sec_recs = []
+    for cd in all_data:
+        for rec in _build_recommendations(cd):
+            if any(c in rec.get("category", "").lower() for c in _SEC_CATS):
+                sec_recs.append(
+                    (rec["priority"], rec["category"], cd["name"],
+                     rec["finding"][:72], rec["action"][:72]))
+    sec_recs.sort(key=lambda x:
+                  ({"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2,
+                    "LOW": 3}.get(x[0], 4), x[1]))
+    rows_sr, fills_sr = [], []
+    for prio, cat, cname, finding, action in sec_recs[:15]:
+        rows_sr.append([prio, cat, cname, finding, action])
+        fills_sr.append([_P_COLORS.get(prio, (None, None))] + [None] * 4)
+    if not rows_sr:
+        rows_sr  = [["\u2014", "No security findings", "", "", ""]]
+        fills_sr = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    _table(slide,
+           ["Priority", "Category", "Cluster", "Finding",
+            "Recommended Action"],
+           rows_sr, [1.2, 1.8, 2.0, 4.1, 3.8],
+           0.22, 0.68, fills=fills_sr)
+
+    # ── Section: Backup Engineering ───────────────────────────────────────────
+    _sec_starts.append(("Backup Engineering", len(prs.slides)))
+    _section_div("Backup Engineering",
+                 "Lifecycle  \u00b7  Coverage Gaps  \u00b7  Agents  "
+                 "\u00b7  Source Coverage  \u00b7  Risk  \u00b7  Recommendations")
+
+    # ── Software & Hardware Lifecycle ─────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Software & Hardware Lifecycle",
+            "Cluster software versions and hardware end-of-life status")
+    _footer(slide)
+    hdr_sw = ["Cluster", "SW Version", "SW Status",
+              "EOS Date", "Nodes", "EOL Nodes", "EOL Models"]
+    rows_sw, fills_sw = [], []
+    _today_d = _dt.date.today()
+    for cd in all_data:
+        sw_ver = (cd["info"].get("clusterSoftwareVersion") or "\u2014").strip()
+        sw_status, sw_eos_date, sw_label = _sw_eos(sw_ver)
+        eos_str = str(sw_eos_date) if sw_eos_date else "\u2014"
+        eol_models, n_eol = [], 0
+        for n in cd["nodes"]:
+            model = n.get("hardwareModel") or n.get("productModel") or ""
+            eol   = _hw_eol(model)
+            if eol and eol < _today_d:
+                n_eol += 1
+                if model and model not in eol_models:
+                    eol_models.append(model)
+        rows_sw.append([
+            cd["name"], sw_ver, sw_label or sw_status, eos_str,
+            len(cd["nodes"]), n_eol,
+            ", ".join(eol_models) or "None"])
+        sw_f  = (_C_GRN_BG, _C_GRN_TX) if sw_status == "in_support" \
+                else (_C_RED_BG, _C_RED_TX)
+        eol_f = (_C_RED_BG, _C_RED_TX) if n_eol > 0 else (_C_GRN_BG, _C_GRN_TX)
+        fills_sw.append([None, None, sw_f, None, None, eol_f, None])
+    _table(slide, hdr_sw, rows_sw,
+           [2.2, 1.8, 1.5, 1.4, 0.8, 1.0, 4.0],
+           0.22, 0.68, fills=fills_sw)
+
+    # ── Coverage Gaps ─────────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Coverage Gaps",
+            "Protection groups with no recent successful backup")
+    _footer(slide)
+    hdr_gap = ["Cluster", "Protection Group", "Last Status",
+               "Last Run End", "SLA Violated"]
+    rows_gap, fills_gap = [], []
+    for cd in all_data:
+        for g in cd["groups"]:
+            lr = g.get("lastRun") or {}
+            lb = lr.get("localBackupInfo") or {}
+            st = lb.get("status", "\u2014")
+            if st in _SUC: continue
+            end_t = lb.get("endTimeUsecs") or lb.get("startTimeUsecs") or 0
+            sla_v = bool(lb.get("isSlaViolated") or lr.get("isSlaViolated"))
+            end_s = (_dt.datetime.utcfromtimestamp(end_t / 1_000_000)
+                     .strftime("%Y-%m-%d %H:%M")
+                     if end_t else "Never")
+            rows_gap.append(
+                [cd["name"], g.get("name", "\u2014"), st, end_s, _yn(sla_v)])
+            st_f  = ((_C_RED_BG, _C_RED_TX)
+                     if st in ("kFailed", "Failed") else
+                     (_C_AMB_BG, _C_AMB_TX))
+            sla_f = ((_C_RED_BG, _C_RED_TX) if sla_v
+                     else (_C_GRN_BG, _C_GRN_TX))
+            fills_gap.append([None, None, st_f, None, sla_f])
+    if not rows_gap:
+        rows_gap  = [["\u2014",
+                      "No coverage gaps \u2014 all groups have "
+                      "recent successful backups",
+                      "", "", ""]]
+        fills_gap = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    _table(slide, hdr_gap, rows_gap[:18],
+           [2.0, 3.2, 1.8, 2.5, 1.7],
+           0.22, 0.68, fills=fills_gap[:18])
+    if len(rows_gap) > 18:
+        _txt(slide,
+             f"  \u2026 and {len(rows_gap) - 18} more \u2014 "
+             "see Excel Coverage Gaps sheet",
+             0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+
+    # ── Agent Health ──────────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Agent Health",
+            "Per-cluster agent version summary and upgrade readiness")
+    _footer(slide)
+    hdr_ag = ["Cluster", "Total Agents", "Healthy",
+              "Needs Upgrade", "Degraded / Error", "Agent Health %"]
+    rows_ag, fills_ag = [], []
+    _H_ST = {"kHealthy", "Healthy", "kGood"}
+    _D_ST = {"kDegraded", "Degraded", "kError", "Error", "kUnreachable"}
+    _U_ST = {"kUpgradable", "Upgradable", "kSomeUpgrades"}
+    for cd in all_data:
+        agents   = cd.get("agents") or []
+        total    = len(agents)
+        healthy  = sum(1 for a in agents
+                       if (a.get("healthStatus") or
+                           a.get("status") or "") in _H_ST)
+        degraded = sum(1 for a in agents
+                       if (a.get("healthStatus") or
+                           a.get("status") or "") in _D_ST)
+        upgrades = sum(1 for a in agents
+                       if a.get("upgradability") in _U_ST)
+        ag_score = int(healthy / total * 100) if total else 100
+        rows_ag.append(
+            [cd["name"], total, healthy, upgrades, degraded, ag_score])
+        dg_f = (_C_RED_BG, _C_RED_TX) if degraded > 0 else (_C_GRN_BG, _C_GRN_TX)
+        up_f = (_C_AMB_BG, _C_AMB_TX) if upgrades > 0 else (_C_GRN_BG, _C_GRN_TX)
+        fills_ag.append([None, None, None, up_f, dg_f, _rag(ag_score)])
+    _table(slide, hdr_ag, rows_ag,
+           [2.5, 1.5, 1.3, 1.5, 1.6, 1.8],
+           0.22, 0.68, fills=fills_ag)
+
+    # ── Source Coverage ───────────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Source Coverage",
+            "Registered sources \u2014 protected vs. unprotected objects")
+    _footer(slide)
+    hdr_src = ["Cluster", "Source Name", "Environment",
+               "Total Objects", "Protected", "Unprotected", "Coverage %"]
+    rows_src, fills_src = [], []
+    for cd in all_data:
+        for src in (cd.get("sources") or []):
+            if not isinstance(src, dict): continue
+            name  = src.get("name") or src.get("sourceName") or "\u2014"
+            env   = src.get("environment") or src.get("envType") or "\u2014"
+            total = (src.get("totalLeafCount")
+                     or src.get("totalObjectCount") or 0)
+            prot  = (src.get("protectedLeafCount")
+                     or src.get("protectedObjectCount") or 0)
+            unprot  = max(0, total - prot)
+            cov_val = (prot / total * 100) if total else 100
+            rows_src.append(
+                [cd["name"], name, env, total, prot, unprot,
+                 f"{cov_val:.0f}%" if total else "\u2014"])
+            up_f = (_C_RED_BG, _C_RED_TX) if unprot > 0 \
+                   else (_C_GRN_BG, _C_GRN_TX)
+            fills_src.append(
+                [None, None, None, None, None, up_f, _rag(cov_val)])
+    if not rows_src:
+        rows_src  = [["\u2014", "No source data", "", "", "", "", ""]]
+        fills_src = [[None] * 7]
+    _table(slide, hdr_src, rows_src[:18],
+           [2.0, 2.5, 1.5, 1.3, 1.2, 1.3, 1.5],
+           0.22, 0.68, fills=fills_src[:18])
+    if len(rows_src) > 18:
+        _txt(slide,
+             f"  \u2026 and {len(rows_src) - 18} more \u2014 "
+             "see Excel Source Coverage sheet",
+             0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+
+    # ── Workload Risk Heatmap ─────────────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Workload Risk Heatmap",
+            "Critical and High risk protection groups sorted worst-first")
+    _footer(slide)
+    risk_eng = []
+    for cd in all_data:
+        for grp in cd["groups"]:
+            score, level = _group_risk_score(grp, cd)
+            if level in ("Critical", "High"):
+                risk_eng.append(
+                    (score, level, cd["name"], grp.get("name", "\u2014")))
+    risk_eng.sort(key=lambda x: x[0])
+    hdr_hr = ["Cluster", "Protection Group", "Risk Score", "Risk Level"]
+    rows_hr, fills_hr = [], []
+    for score, level, cname, gname in risk_eng[:20]:
+        rows_hr.append([cname, gname, score, level])
+        lv_f = ((_C_RED_BG, _C_RED_TX) if level == "Critical"
+                else (_C_AMB_BG, _C_AMB_TX))
+        fills_hr.append([None, None, _rag(score), lv_f])
+    if not rows_hr:
+        rows_hr  = [["\u2014",
+                     "No Critical or High risk workloads \u2014 good standing",
+                     "\u2014", "\u2014"]]
+        fills_hr = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 3]
+    _table(slide, hdr_hr, rows_hr,
+           [2.5, 6.2, 1.5, 2.0],
+           0.22, 0.68, fills=fills_hr)
+    _txt(slide,
+         "Risk Score:  Low \u226575  |  Medium 50\u201374  |  "
+         "High 25\u201349  |  Critical <25  "
+         "\u00b7  Only Critical and High risk groups shown",
+         0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+
+    # ── Engineering Recommendations ───────────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Engineering Recommendations",
+            "Infrastructure, lifecycle, storage, agents, and protection findings")
+    _footer(slide)
+    _ENG_CATS = {"software lifecycle", "hardware", "infrastructure",
+                 "storage", "agent", "protection", "source",
+                 "policy", "alerts", "coverage", "backup"}
+    eng_recs = []
+    for cd in all_data:
+        for rec in _build_recommendations(cd):
+            if any(c in rec.get("category", "").lower() for c in _ENG_CATS):
+                eng_recs.append(
+                    (rec["priority"], rec["category"], cd["name"],
+                     rec["finding"][:72], rec["action"][:72]))
+    eng_recs.sort(key=lambda x:
+                  ({"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2,
+                    "LOW": 3}.get(x[0], 4), x[1]))
+    rows_er, fills_er = [], []
+    for prio, cat, cname, finding, action in eng_recs[:15]:
+        rows_er.append([prio, cat, cname, finding, action])
+        fills_er.append([_P_COLORS.get(prio, (None, None))] + [None] * 4)
+    if not rows_er:
+        rows_er  = [["\u2014", "No engineering findings", "", "", ""]]
+        fills_er = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    _table(slide,
+           ["Priority", "Category", "Cluster", "Finding",
+            "Recommended Action"],
+           rows_er, [1.2, 1.8, 2.0, 4.1, 3.8],
+           0.22, 0.68, fills=fills_er)
+
+    # ── Register native PowerPoint sections then save ─────────────────────────
+    _register_sections(prs, _sec_starts)
     try:
         pptx_path = out_path + ".pptx"
         prs.save(pptx_path)
         return pptx_path
     except Exception as exc:
-        print(f"  WARN: Could not write PowerPoint topology: {exc}")
+        print(f"  WARN: Could not write PowerPoint deck: {exc}")
         return None
+
 
 
 # ── Native Word shapes topology ──────────────────────────────────────────────
@@ -5639,7 +6247,7 @@ def _sheet_risk_heatmap(wb, all_data):
     counts   = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
 
     for cd in all_data:
-        policy_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+        policy_by_id = cd.get("policy_by_id") or {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
 
         for grp in (cd.get("groups") or []):
             score, level = _group_risk_score(grp, cd)
@@ -5735,7 +6343,7 @@ def _sheet_risk_heatmap(wb, all_data):
     all_rows.sort(key=lambda x: x["score"])
 
     if not all_rows:
-        ws.cell(row=4, column=1, value="No protection groups found").font = _font()
+        ws.cell(row=4, column=1, value="No protection groups found").font = _FONT_NORMAL
     else:
         for row_data in all_rows:
             level = row_data["level"]
@@ -5847,7 +6455,7 @@ def _sheet_audit_log(wb, all_data):
 
     if not detail_rows:
         ws.cell(row=ws.max_row + 1, column=1,
-                value="No audit log data available (may require elevated permissions)").font = _font()
+                value="No audit log data available (may require elevated permissions)").font = _FONT_NORMAL
     else:
         for ev in detail_rows:
             rn = ws.max_row + 1
@@ -6412,7 +7020,7 @@ def write_word(all_data, args):
     # Collect and score all groups; take top 5 Critical/High
     _risk_rows = []
     for cd in all_data:
-        pol_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+        pol_by_id = cd.get("policy_by_id") or {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
         for grp in (cd.get("groups") or []):
             score, level = _group_risk_score(grp, cd)
             if level in ("Critical", "High"):
@@ -6555,9 +7163,9 @@ def write_word(all_data, args):
             for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
             if (t.get("archivalTargetConfig") or {}).get("targetType", "") != "kFortKnox"
         })
-        # FortKnox: use _fk_status() for active/idle/none, then collect
+        # FortKnox: use cached fk_status for active/idle/none, then collect
         # vault names using the same comprehensive detection logic.
-        fk_st_t   = _fk_status(cd)
+        fk_st_t   = cd.get("fk_status") or _fk_status(cd)
         _fkt_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
         def _is_fk_t(tt, tname=""):
             tl = (tt or "").lower(); nl = (tname or "").lower()
@@ -6770,7 +7378,7 @@ def write_word(all_data, args):
         sd_enc_str_s = ("Yes" if sd_enc_s is True else
                         "No"  if sd_enc_s is False else "N/A")
         has_vault   = bool(vaults)
-        fk_st_s     = _fk_status(cd)
+        fk_st_s     = cd.get("fk_status") or _fk_status(cd)
         fk_label_s  = {"active": "Active", "idle": "Idle", "none": "No"}[fk_st_s]
         repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
@@ -7324,19 +7932,10 @@ def main():
     if not args.excel_only:
         write_word(all_data, args)
 
-    # Generate editable topology diagram (draw.io)
-    drawio_path = _generate_topology_drawio(all_data, args.output)
-
-    # Generate PowerPoint topology slide (optional — requires python-pptx)
-    pptx_path = _generate_topology_pptx(
-        all_data, args.output,
-        customer=args.customer,
-        debug=args.debug,
-    )
+    # Generate comprehensive PowerPoint deck (optional — requires python-pptx)
+    pptx_path = write_pptx(all_data, args, args.output)
 
     out_parts = [f"{args.output}.xlsx", f"{args.output}.docx"]
-    if drawio_path:
-        out_parts.append(drawio_path)
     if pptx_path:
         out_parts.append(pptx_path)
     print(f"\nComplete.  Output: {' / '.join(out_parts)}")
