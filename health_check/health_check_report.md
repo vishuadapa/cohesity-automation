@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.49**
+**Current version: 1.50**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, an **editable draw.io topology diagram**, and an optional **PowerPoint topology slide**.
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~29-slide PowerPoint deck** (optional, requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -230,6 +230,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.50 | 2026-04-15 | feat: Comprehensive PowerPoint deck (`write_pptx()`). ~29 slides across 4 sections: Cover, Executive Summary (Snapshot, Scorecard, Capacity, Protection, Ransomware, At-Risk Workloads, Priority Actions), Environment Topology (full diagram with legend), Security Deep-Dive (Posture, User Security, Audit, Recommendations), Backup Engineering (Lifecycle, Coverage Gaps, Agents, Source Coverage, Workload Risk, Recommendations). All slides RAG colour-coded. draw.io output removed entirely. |
 | 1.49 | 2026-04-15 | perf: Parallel API data collection (ThreadPoolExecutor wave-1 + wave-2 + per-group runs), cached `fk_status` / `policy_by_id` / `audit_enabled` in `cd`, `end_usecs` replaces repeated `_now_usecs()` calls, merged dual agent/disk loops, isinstance filtering at source, `_FONT_NORMAL`/`_FONT_BOLD` singletons. No output changes. |
 | 1.48 | 2026-04-13 | feat: Topology diagram overhaul — fixed missing FK vault connections (vaults list now always emits edges), draw.io arrow labels (Replication/Archive/FortKnox/Indelible), cluster nodes show software version + group/source counts, legend block added. New optional PowerPoint output (.pptx via python-pptx) — 16:9 slide with colored nodes, STRAIGHT connectors, arrow labels, legend. python-pptx added to optional prereq check table. |
 | 1.47 | 2026-04-13 | feat: Guide tab added as the first tab in every generated workbook — covers all 22 tabs with descriptions, overall health scoring (weights + grade table), security score deductions, ransomware readiness scoring, workload risk score factors, recommendation priorities, and color/RAG legend |

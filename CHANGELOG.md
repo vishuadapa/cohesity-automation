@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-15] feat(health_check): Comprehensive PowerPoint deck, remove draw.io (v1.50)
+
+### Output — `health_check/health_check_report.py`
+
+- **Comprehensive `.pptx` deck** (`write_pptx()`): replaces the single-slide topology PowerPoint and eliminates draw.io output entirely. The new deck spans ~29 slides across 4 sections:
+  - **Cover** — customer name, date, version
+  - **Executive Summary** — Environment Snapshot (KPI tiles + cluster table), Health Scorecard (6 dimensions, RAG), Storage Capacity & Growth (runway forecast), Protection Summary (success rate, SLA, coverage gaps), Ransomware Readiness (DataLock, FortKnox, MFA, quorum), Top At-Risk Workloads (worst 16 groups), Priority Action Items (CRITICAL/HIGH only)
+  - **Environment Topology** — full draw.io-equivalent topology diagram with cluster/replication/archival/FortKnox nodes, connector arrows with labels, and a legend
+  - **Security Deep-Dive** — Security Posture Overview, User Security & MFA, Governance & Audit Activity, Security Recommendations
+  - **Backup Engineering** — Software & Hardware Lifecycle, Coverage Gaps, Agent Health, Source Coverage, Workload Risk Heatmap, Engineering Recommendations
+- All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook
+- draw.io (`.drawio`) generation removed entirely — topology is now embedded in the `.pptx` deck
+- `python-pptx` remains optional — deck generation is silently skipped if not installed
+
+---
+
 ## [2026-04-15] perf(health_check): Parallel API collection and cached derived state (v1.49)
 
 ### Performance — `health_check/health_check_report.py`
