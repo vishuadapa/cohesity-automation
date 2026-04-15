@@ -493,6 +493,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 
 # ── Core HTTP client ──────────────────────────────────────────────────────────
 # requests must be present.  urllib3 is bundled inside requests; we suppress
@@ -744,8 +745,14 @@ try:
     from openpyxl.chart import LineChart, Reference
     from openpyxl.chart.series import SeriesLabel
     EXCEL_OK = True
+    # Pre-allocated style singletons — reused across all cells to avoid
+    # constructing a new object per cell during large workbook generation.
+    _FONT_NORMAL = Font(size=10, color="000000")
+    _FONT_BOLD   = Font(bold=True, size=10, color="000000")
 except ImportError:
     EXCEL_OK = False
+    _FONT_NORMAL = None
+    _FONT_BOLD   = None
 
 try:
     from docx import Document
@@ -901,7 +908,7 @@ def _title(ws, text, span):
 
 def _reg(ws, row, col, val):
     cell = ws.cell(row=row, column=col, value=val)
-    cell.font = _font()
+    cell.font = _FONT_NORMAL
     return cell
 
 # ── Grade from score ──────────────────────────────────────────────────────────
@@ -1296,57 +1303,79 @@ def collect_cluster(session, api_key, cluster, args):
     start_usecs = _days_ago_usecs(args.days)
     end_usecs   = _now_usecs()
 
-    print(f"  [{name}] infrastructure...", end="", flush=True)
-    info    = _cluster_info(session, h, dbg)
-    nodes   = _nodes(session, h, dbg)
-    print(" alerts...", end="", flush=True)
-    alerts  = _alerts(session, h, args.days, dbg)
-    print(" groups...", end="", flush=True)
-    groups  = _protection_groups(session, h, dbg)
-    print(" policies...", end="", flush=True)
-    policies = _policies(session, h, dbg)
-    print(" storage...", end="", flush=True)
-    domains = _storage_domains(session, h, dbg)
-    views   = _views(session, h, dbg)
-    print(" vaults...", end="", flush=True)
-    vaults    = _vaults(session, h, dbg)
-    vault_ids = [v["id"] for v in vaults if "id" in v]
-    fk_data    = _fortknox_data(session, h, start_usecs, end_usecs, vault_ids, dbg)
-    # For the FortKnox detail tab: quick mode shows last 1 day only
-    fk_data_1d = (_fortknox_data(session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
-                  if args.quick else [])
-    print(" run-summary...", end="", flush=True)
-    v1_runs   = _v1_protection_runs(session, h, start_usecs, end_usecs, dbg)
-    print(" certs/agents...", end="", flush=True)
-    certs    = _certificates(session, h, dbg)
-    agents   = _agents(session, h, dbg)
-    print(" disks...", end="", flush=True)
-    disks    = _disks(session, h, nodes, dbg)
-    print(" sources...", end="", flush=True)
-    sources  = _sources(session, h, dbg)
-    print(" users/idps...", end="", flush=True)
-    users    = _users(session, h, dbg)
-    idps     = _idps(session, h, dbg)
-    tenants  = _tenants(session, h, dbg)
-    print(" cap-trend...", end="", flush=True)
-    cap_ts   = _capacity_timeseries(session, h, cid, dbg)
-    print(" audit-log...", end="", flush=True)
-    audit_events = _fetch_audit_log(session, h, args.days, dbg)
+    # ── Wave 1: all independent API calls in parallel ─────────────────────────
+    print(f"  [{name}] fetching data (wave 1)...", end="", flush=True)
+    with _ThreadPoolExecutor(max_workers=8) as _ex:
+        _fut_info    = _ex.submit(_cluster_info,          session, h, dbg)
+        _fut_nodes   = _ex.submit(_nodes,                 session, h, dbg)
+        _fut_alerts  = _ex.submit(_alerts,                session, h, args.days, dbg)
+        _fut_groups  = _ex.submit(_protection_groups,     session, h, dbg)
+        _fut_policies= _ex.submit(_policies,              session, h, dbg)
+        _fut_domains = _ex.submit(_storage_domains,       session, h, dbg)
+        _fut_views   = _ex.submit(_views,                 session, h, dbg)
+        _fut_vaults  = _ex.submit(_vaults,                session, h, dbg)
+        _fut_v1runs  = _ex.submit(_v1_protection_runs,    session, h, start_usecs, end_usecs, dbg)
+        _fut_certs   = _ex.submit(_certificates,          session, h, dbg)
+        _fut_agents  = _ex.submit(_agents,                session, h, dbg)
+        _fut_sources = _ex.submit(_sources,               session, h, dbg)
+        _fut_users   = _ex.submit(_users,                 session, h, dbg)
+        _fut_idps    = _ex.submit(_idps,                  session, h, dbg)
+        _fut_tenants = _ex.submit(_tenants,               session, h, dbg)
+        _fut_capts   = _ex.submit(_capacity_timeseries,   session, h, cid, dbg)
+        _fut_audit   = _ex.submit(_fetch_audit_log,       session, h, args.days, dbg)
 
+        info         = _fut_info.result()
+        nodes        = _fut_nodes.result()
+        alerts       = _fut_alerts.result()
+        groups       = _fut_groups.result()
+        policies     = _fut_policies.result()
+        domains      = _fut_domains.result()
+        views        = _fut_views.result()
+        vaults       = _fut_vaults.result()
+        v1_runs      = _fut_v1runs.result()
+        certs        = _fut_certs.result()
+        # Filter to dicts at source — removes isinstance guards from hot loops
+        agents       = [a for a in _fut_agents.result()  if isinstance(a, dict)]
+        sources      = [s for s in _fut_sources.result() if isinstance(s, dict)]
+        users        = _fut_users.result()
+        idps         = _fut_idps.result()
+        tenants      = _fut_tenants.result()
+        cap_ts       = _fut_capts.result()
+        audit_events = _fut_audit.result()
+
+    # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
+    vault_ids = [v["id"] for v in vaults if "id" in v]
+    print(" wave-2...", end="", flush=True)
+    with _ThreadPoolExecutor(max_workers=3) as _ex:
+        _fut_disks = _ex.submit(_disks, session, h, nodes, dbg)
+        _fut_fk    = _ex.submit(_fortknox_data, session, h, start_usecs, end_usecs, vault_ids, dbg)
+        # For the FortKnox detail tab: quick mode shows last 1 day only
+        _fut_fk1d  = (_ex.submit(_fortknox_data, session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
+                      if args.quick else None)
+
+        disks      = _fut_disks.result()
+        fk_data    = _fut_fk.result()
+        fk_data_1d = _fut_fk1d.result() if _fut_fk1d else []
+
+    # ── Per-group run history (non-quick mode): parallelised ──────────────────
     group_runs = {}
     if not args.quick:
         print(f" runs ({len(groups)} groups)...", end="", flush=True)
-        for g in groups:
-            gid = g.get("id")
-            if gid:
-                runs = _group_runs(session, h, gid, start_usecs, end_usecs, dbg)
-                if runs:
-                    group_runs[gid] = runs
+        with _ThreadPoolExecutor(max_workers=8) as _ex:
+            _grp_futs = {
+                _ex.submit(_group_runs, session, h, g["id"], start_usecs, end_usecs, dbg): g["id"]
+                for g in groups if g.get("id")
+            }
+            for _fut, _gid in _grp_futs.items():
+                _runs = _fut.result()
+                if _runs:
+                    group_runs[_gid] = _runs
 
     print(" done.")
 
-    # Build policy ID → name lookup used throughout the report
-    policy_map = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
+    # Build policy ID lookups used throughout the report (computed once here)
+    policy_map   = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
+    policy_by_id = {p.get("id"): p              for p in policies if p.get("id")}
 
     cd = {
         "name":        name,
@@ -1359,6 +1388,7 @@ def collect_cluster(session, api_key, cluster, args):
         "group_runs":  group_runs,
         "policies":    policies,
         "policy_map":  policy_map,
+        "policy_by_id": policy_by_id,
         "domains":     domains,
         "views":       views,
         "vaults":      vaults,
@@ -1380,6 +1410,18 @@ def collect_cluster(session, api_key, cluster, args):
         "cap_timeseries": cap_ts,
         "audit_events":   audit_events,
     }
+
+    # Pre-compute shared derived values — avoids repeated recalculation in
+    # scoring, recommendations, and every sheet generation function.
+    _ac = info.get("auditLogConfig")
+    _ca = info.get("clusterAuditConfig")
+    cd["audit_enabled"] = bool(
+        info.get("auditLogEnabled")
+        or (isinstance(_ac, dict) and _ac.get("enabled"))
+        or (isinstance(_ca, dict) and _ca.get("enabled"))
+    )
+    cd["fk_status"] = _fk_status(cd)   # used by scores, recs, and all sheet fns
+
     cd["scores"]           = _compute_scores(cd, args.quick)
     cd["capacity_runway"]  = _capacity_runway(cd)       # must precede recommendations
     cd["recommendations"]  = _build_recommendations(cd)
@@ -1606,7 +1648,7 @@ def _score_security(cd):
         score += 15
 
     # FortKnox / Indelible archival (20 pts)
-    fk = _fk_status({"vaults": vaults, "policies": policies, "groups": groups})
+    fk = cd.get("fk_status") or _fk_status(cd)
     if fk == "active":
         score += 20
     elif fk == "idle":
@@ -1674,7 +1716,7 @@ def _ransomware_score(cd):
         gaps.append("No DataLock/WORM protection on any group")
 
     # ── FortKnox / indelible vault (25 pts) ──────────────────────────────
-    fk = _fk_status(cd)
+    fk = cd.get("fk_status") or _fk_status(cd)
     if fk == "active":
         fk_pts = 25
     elif fk == "idle":
@@ -1711,7 +1753,7 @@ def _ransomware_score(cd):
         rw_pts = 0
         gaps.append("No successful backup history found in lookback window")
     else:
-        days_old = (_now_usecs() - oldest_clean) / (86_400 * 1_000_000)
+        days_old = (cd.get("end_usecs", _now_usecs()) - oldest_clean) / (86_400 * 1_000_000)
         if days_old >= 30:   rw_pts = 20
         elif days_old >= 14: rw_pts = 15
         elif days_old >= 7:  rw_pts = 10
@@ -1863,7 +1905,7 @@ def _group_risk_score(group, cd):
     if not start_u:
         rpo_pts = 0
     else:
-        rpo_hrs = (_now_usecs() - start_u) / 3_600_000_000
+        rpo_hrs = (cd.get("end_usecs", _now_usecs()) - start_u) / 3_600_000_000
         if   rpo_hrs <=  4: rpo_pts = 25
         elif rpo_hrs <=  8: rpo_pts = 20
         elif rpo_hrs <= 24: rpo_pts = 15
@@ -1871,7 +1913,7 @@ def _group_risk_score(group, cd):
         else:               rpo_pts =  0
 
     # DataLock (15 pts)
-    policy_by_id = {p.get("id"): p for p in (cd.get("policies") or []) if p.get("id")}
+    policy_by_id = cd.get("policy_by_id") or {p.get("id"): p for p in (cd.get("policies") or []) if p.get("id")}
     policy = policy_by_id.get(group.get("policyId"), {})
     dl_str = _policy_datalock_str(policy).lower()
     if "compliance" in dl_str:                dl_pts = 15
@@ -2082,7 +2124,7 @@ def _build_recommendations(cd):
             "Configure at least one external vault for off-site retention",
             "No off-site copy of data — single point of failure"))
 
-    fk_st = _fk_status(cd)
+    fk_st = cd.get("fk_status") or _fk_status(cd)
     if fk_st == "none":
         recs.append(_r("MEDIUM", "Security",
             "No indelible/FortKnox archival target detected",
@@ -2132,8 +2174,9 @@ def _build_recommendations(cd):
     # ── Alerts ────────────────────────────────────────────────────────────────
     crits = [a for a in alerts if a.get("severity") == "kCritical"]
     if crits:
+        _now_u = cd["end_usecs"]
         old = [a for a in crits
-               if (_now_usecs() - (a.get("firstOccurrenceTime") or _now_usecs()))
+               if (_now_u - (a.get("firstOccurrenceTime") or _now_u))
                   > ALERT_AGE_CRIT_DAYS * 86400 * 1_000_000]
         sev = "CRITICAL" if old else "HIGH"
         msg = f"{len(crits)} open critical alert(s)"
@@ -2159,7 +2202,7 @@ def _build_recommendations(cd):
         start_u = lb.get("startTimeUsecs") or 0
         if not start_u:
             continue
-        hrs = (_now_usecs() - start_u) / 3_600_000_000
+        hrs = (cd["end_usecs"] - start_u) / 3_600_000_000
         if hrs > RPO_CRIT_HOURS:
             rpo_gaps.append((g.get("name", "?"), hrs))
     if rpo_gaps:
@@ -2238,21 +2281,23 @@ def _build_recommendations(cd):
                 "Plan certificate renewal now — lead time for CA-signed certs can be 2–4 weeks",
                 "Certificate expiry causes browser warnings and may break automated API calls"))
 
-    # ── Agent health ──────────────────────────────────────────────────────────
-    unhealthy_agents = []
+    # ── Agent health — single pass for unhealthy + upgradable ────────────────
+    unhealthy_agents  = []
+    upgradable_agents = []
     for agent in (cd.get("agents") or []):
-        if not isinstance(agent, dict):
-            continue
         _hs = agent.get("healthStatus")
-        st = ((isinstance(_hs, dict) and _hs.get("status"))
-              or (isinstance(_hs, str) and _hs)
-              or agent.get("agentStatus") or agent.get("status") or "")
+        st  = ((isinstance(_hs, dict) and _hs.get("status"))
+               or (isinstance(_hs, str) and _hs)
+               or agent.get("agentStatus") or agent.get("status") or "")
+        _rh, _ri = _split_host_ip(
+            agent.get("hostName") or agent.get("host") or "",
+            agent.get("hostIp") or "")
+        host = _rh or _ri or "unknown"
         if st.lower() in ("kunhealthy", "unhealthy", "unreachable", "kfailed", "failed"):
-            _rh, _ri = _split_host_ip(
-                agent.get("hostName") or agent.get("host") or "",
-                agent.get("hostIp") or "")
-            host = _rh or _ri or "unknown"
             unhealthy_agents.append(host)
+        upg = (agent.get("upgradability") or agent.get("upgradable") or "")
+        if "upgradable" in upg.lower():
+            upgradable_agents.append(host)
     if unhealthy_agents:
         examples = ", ".join(unhealthy_agents[:3])
         recs.append(_r("HIGH", "Agent Health",
@@ -2261,16 +2306,6 @@ def _build_recommendations(cd):
             "Check agent connectivity, firewall rules, and reinstall if necessary",
             "Unhealthy agents silently prevent backups from running on affected hosts"))
 
-    upgradable_agents = []
-    for agent in (cd.get("agents") or []):
-        if not isinstance(agent, dict):
-            continue
-        upg = (agent.get("upgradability") or agent.get("upgradable") or "")
-        if "upgradable" in upg.lower():
-            _rh, _ri = _split_host_ip(
-                agent.get("hostName") or agent.get("host") or "",
-                agent.get("hostIp") or "")
-            upgradable_agents.append(_rh or _ri or "unknown")
     if upgradable_agents:
         examples = ", ".join(upgradable_agents[:3])
         recs.append(_r("MEDIUM", "Agent Health",
@@ -2282,25 +2317,23 @@ def _build_recommendations(cd):
             "Outdated agents MAY cause issues with newer cluster features; Cohesity "
             "supports a limited range of back-versions — check compatibility docs"))
 
-    # ── Disk health and SSD wear ──────────────────────────────────────────────
-    failed_disks = [d for d in (cd.get("disks") or [])
-                    if isinstance(d, dict)
-                    and (d.get("diskStatus") or d.get("status") or "").lower()
-                    in ("kfailed", "failed", "kmissing", "missing")]
+    # ── Disk health and SSD wear — single pass ────────────────────────────────
+    failed_disks = []
+    high_wear    = []
+    for d in (cd.get("disks") or []):
+        if (d.get("diskStatus") or d.get("status") or "").lower() \
+                in ("kfailed", "failed", "kmissing", "missing"):
+            failed_disks.append(d)
+        wear = (d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
+                or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
+        if wear >= SSD_WEAR_CRIT_PCT:
+            high_wear.append((d.get("_nodeIp", "?"), wear))
     if failed_disks:
         recs.append(_r("CRITICAL", "Disk Health",
             f"{len(failed_disks)} disk(s) in failed or missing state",
             "Replace failed disks immediately and verify cluster redundancy",
             "Failed disks reduce storage redundancy and risk data loss"))
 
-    high_wear = [(d.get("_nodeIp", "?"),
-                  d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
-                  or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
-                 for d in (cd.get("disks") or [])
-                 if isinstance(d, dict)
-                 and (d.get("ssdUsedPercentage") or d.get("ssdWearLevelPct")
-                      or d.get("wearLevel") or d.get("lifeUsedPct") or 0)
-                 >= SSD_WEAR_CRIT_PCT]
     if high_wear:
         examples = ", ".join(f"{ip} ({w}%)" for ip, w in high_wear[:3])
         recs.append(_r("HIGH", "Disk Health",
@@ -2311,8 +2344,6 @@ def _build_recommendations(cd):
     # ── Source coverage ───────────────────────────────────────────────────────
     low_coverage = []
     for src in (cd.get("sources") or []):
-        if not isinstance(src, dict):
-            continue
         _si = src.get("sourceInfo")
         si   = _si if isinstance(_si, dict) else src
         name = si.get("name") or si.get("sourceName") or src.get("name") or ""
@@ -2352,15 +2383,7 @@ def _build_recommendations(cd):
             "a stolen credential gives full cluster access without MFA as a second factor"))
 
     # ── Audit log ─────────────────────────────────────────────────────────────
-    info_local = cd["info"]
-    _audit_cfg     = info_local.get("auditLogConfig")
-    _cluster_audit = info_local.get("clusterAuditConfig")
-    audit_enabled = bool(
-        info_local.get("auditLogEnabled")
-        or (isinstance(_audit_cfg, dict)     and _audit_cfg.get("enabled"))
-        or (isinstance(_cluster_audit, dict) and _cluster_audit.get("enabled"))
-    )
-    if not audit_enabled:
+    if not cd.get("audit_enabled"):
         recs.append(_r("MEDIUM", "Security",
             "Cluster audit logging is not enabled",
             "Enable audit logging in cluster security settings to capture all admin actions",
@@ -2525,7 +2548,7 @@ def _sheet_summary(wb, all_data):
                len(cd["recommendations"]), top]
         r = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=r, column=c, value=val).font = _font()
+            ws.cell(row=r, column=c, value=val).font = _FONT_NORMAL
 
         # RAG color on overall score + grade
         for col in (4, 5):
@@ -2619,7 +2642,7 @@ def _sheet_infrastructure(wb, all_data):
                "Connected"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # color SW Lifecycle Status cell (col 3)
         sw_cell = ws.cell(row=rn, column=3)
@@ -2711,7 +2734,7 @@ def _sheet_hardware(wb, all_data):
                    eol_str, hw_status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # color HW EOL Status cell (col 12)
             eol_cell = ws.cell(row=rn, column=12)
@@ -2746,7 +2769,7 @@ def _sheet_protection(wb, all_data):
 
     for cd in all_data:
         pm         = cd.get("policy_map", {})
-        policy_by_id = {p.get("id"): p for p in cd["policies"] if p.get("id")}
+        policy_by_id = cd.get("policy_by_id") or {p.get("id"): p for p in cd["policies"] if p.get("id")}
         for g in cd["groups"]:
             lr  = g.get("lastRun") or {}
             lb  = lr.get("localBackupInfo") or {}
@@ -2763,7 +2786,7 @@ def _sheet_protection(wb, all_data):
                 s = int((end_u - start_u) / 1_000_000)
                 h, m = divmod(s // 60, 60)
                 dur = f"{h}h {m:02d}m"
-            rpo_hrs = round((_now_usecs() - start_u) / 3_600_000_000, 1) \
+            rpo_hrs = round((cd["end_usecs"] - start_u) / 3_600_000_000, 1) \
                       if start_u else ""
 
             # Object counts are directly on localBackupInfo (not nested in stats)
@@ -2818,7 +2841,7 @@ def _sheet_protection(wb, all_data):
                    rpo_hrs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # DataLock col 18 — color by mode
             dc = ws.cell(row=rn, column=18)
@@ -2948,7 +2971,7 @@ def _sheet_storage(wb, all_data):
                     "", "", ""]
             rn2 = ws.max_row + 1
             for c, val in enumerate(drow, 1):
-                ws.cell(row=rn2, column=c, value=val).font = _font()
+                ws.cell(row=rn2, column=c, value=val).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
 
@@ -3169,7 +3192,7 @@ def _sheet_policies(wb, all_data):
                    "; ".join(gaps) if gaps else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # DataLock col 15 — color by mode
             dl_cell = ws.cell(row=rn, column=15)
@@ -3226,7 +3249,7 @@ def _sheet_policy_groups(wb, all_data):
                    status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # Highlight paused groups
             if paused:
@@ -3261,7 +3284,7 @@ def _sheet_alerts(wb, all_data):
             # v1 alerts API uses firstTimestampUsecs (not firstOccurrenceTime)
             first_u = a.get("firstTimestampUsecs") or 0
             last_u  = a.get("latestTimestampUsecs") or 0
-            age = round((_now_usecs() - first_u) / (86400 * 1_000_000), 1) \
+            age = round((cd["end_usecs"] - first_u) / (86400 * 1_000_000), 1) \
                   if first_u else ""
             doc  = a.get("alertDocument") or {}
             desc = doc.get("alertDescription") or ""
@@ -3274,7 +3297,7 @@ def _sheet_alerts(wb, all_data):
                    "Yes" if a.get("acknowledgeTimestampUsecs") else "No"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=2)
             if a.get("severity") == "kCritical":
@@ -3342,20 +3365,14 @@ def _sheet_security(wb, all_data):
 
         cluster_enc, sd_enc = _sd_enc_status(cd)
         has_vault = bool(vaults)
-        fk_st    = _fk_status(cd)
+        fk_st    = cd.get("fk_status") or _fk_status(cd)
         has_repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                        for p in policies)
         has_arch = any((p.get("remoteTargetPolicy") or {}).get("archivalTargets")
                        for p in policies)
 
         # ── Extended security controls ─────────────────────────────────────
-        _audit_cfg2     = info.get("auditLogConfig")
-        _cluster_audit2 = info.get("clusterAuditConfig")
-        audit_on = bool(
-            info.get("auditLogEnabled")
-            or (isinstance(_audit_cfg2, dict)     and _audit_cfg2.get("enabled"))
-            or (isinstance(_cluster_audit2, dict) and _cluster_audit2.get("enabled"))
-        )
+        audit_on = cd.get("audit_enabled", False)
         _ntp_s2  = info.get("ntpSettings")
         ntp_auth = bool(
             isinstance(_ntp_s2, dict)
@@ -3441,7 +3458,7 @@ def _sheet_security(wb, all_data):
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # Cluster Encryption col 2, SD Encryption col 3
         ce_cell = ws.cell(row=rn, column=2)
@@ -3677,7 +3694,7 @@ def _sheet_replication(wb, all_data):
                    "", "", "", status, "",
                    ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         # ── Archival / vault rows ─────────────────────────────────────────
         shown = set()
@@ -3696,7 +3713,7 @@ def _sheet_replication(wb, all_data):
                       status, note,
                       ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
             shown.add(tname)
 
         # Vaults that exist in the API but are not referenced by any policy
@@ -3714,7 +3731,7 @@ def _sheet_replication(wb, all_data):
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
                      "Vault exists — not referenced by any policy", note, ""]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
     ws.column_dimensions["K"].width = 60
@@ -3770,12 +3787,12 @@ def _sheet_fortknox_detail(wb, all_data):
                 row = [cd["name"], vname, vtype, jname,
                        logical, physical, consumed, snaps, period]
                 for c, val in enumerate(row, 1):
-                    ws.cell(row=rn, column=c, value=val).font = _font()
+                    ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
                 has_rows = True
 
         if not has_rows:
             rn = ws.max_row + 1
-            ws.cell(row=rn, column=1, value=cd["name"]).font = _font()
+            ws.cell(row=rn, column=1, value=cd["name"]).font = _FONT_NORMAL
             ws.cell(row=rn, column=4,
                     value="No data transfer records for this cluster in the period.") \
                .font = _font(color="595959")
@@ -3833,7 +3850,7 @@ def _sheet_views(wb, all_data):
                    created, smb, nfs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=12)
             if "CRITICAL" in flag:
@@ -3867,7 +3884,7 @@ def _sheet_coverage(wb, all_data):
             st  = lb.get("status", "")
             sla_viol = lb.get("isSlaViolated") or lr.get("isSlaViolated") or False
             su  = lb.get("startTimeUsecs") or 0
-            hrs = round((_now_usecs() - su) / 3_600_000_000, 1) if su else 9999
+            hrs = round((cd["end_usecs"] - su) / 3_600_000_000, 1) if su else 9999
 
             is_gap = (g.get("isPaused")
                       or st in ("kFailure", "Failed")
@@ -3900,7 +3917,7 @@ def _sheet_coverage(wb, all_data):
                    st, sev]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=9)
             if sev in ("FAILED", "CRITICAL RPO GAP"):
@@ -3992,7 +4009,7 @@ def _sheet_trends(wb, all_data):
                    d["warn"], d["cancel"], pct, d["viols"],
                    round(bytes_to_gb(d["logical"]), 1)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
             sc = ws.cell(row=rn, column=8)
             if pct < SUCCESS_CRIT_PCT:
                 sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
@@ -4110,7 +4127,7 @@ def _sheet_recommendations(wb, all_data):
                rec["finding"], rec["action"], rec["impact"]]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _font()
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
         pc = ws.cell(row=rn, column=2)
         if rec["priority"] == "CRITICAL":
@@ -4172,7 +4189,7 @@ def _sheet_disk_health(wb, all_data):
                    tier]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             # color Status cell (col 8)
             sc = ws.cell(row=rn, column=8)
@@ -4256,7 +4273,7 @@ def _sheet_agent_health(wb, all_data):
                    status, upg, cert_exp, notes]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=6)
             if status.lower() in ("kunhealthy", "unhealthy", "unreachable",
@@ -4331,7 +4348,7 @@ def _sheet_source_coverage(wb, all_data):
                    prot or "", unprot or "", pct, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=8)
             if isinstance(pct, float) and pct < 75:
@@ -4401,7 +4418,7 @@ def _sheet_user_security(wb, all_data):
                    "; ".join(notes) if notes else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _font()
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
 
             if locked:
                 ws.cell(row=rn, column=7).fill = _fill(RED)
@@ -5639,7 +5656,7 @@ def _sheet_risk_heatmap(wb, all_data):
     counts   = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
 
     for cd in all_data:
-        policy_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+        policy_by_id = cd.get("policy_by_id") or {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
 
         for grp in (cd.get("groups") or []):
             score, level = _group_risk_score(grp, cd)
@@ -5735,7 +5752,7 @@ def _sheet_risk_heatmap(wb, all_data):
     all_rows.sort(key=lambda x: x["score"])
 
     if not all_rows:
-        ws.cell(row=4, column=1, value="No protection groups found").font = _font()
+        ws.cell(row=4, column=1, value="No protection groups found").font = _FONT_NORMAL
     else:
         for row_data in all_rows:
             level = row_data["level"]
@@ -5847,7 +5864,7 @@ def _sheet_audit_log(wb, all_data):
 
     if not detail_rows:
         ws.cell(row=ws.max_row + 1, column=1,
-                value="No audit log data available (may require elevated permissions)").font = _font()
+                value="No audit log data available (may require elevated permissions)").font = _FONT_NORMAL
     else:
         for ev in detail_rows:
             rn = ws.max_row + 1
@@ -6412,7 +6429,7 @@ def write_word(all_data, args):
     # Collect and score all groups; take top 5 Critical/High
     _risk_rows = []
     for cd in all_data:
-        pol_by_id = {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
+        pol_by_id = cd.get("policy_by_id") or {p["id"]: p for p in (cd.get("policies") or []) if p.get("id")}
         for grp in (cd.get("groups") or []):
             score, level = _group_risk_score(grp, cd)
             if level in ("Critical", "High"):
@@ -6555,9 +6572,9 @@ def write_word(all_data, args):
             for t in ((p.get("remoteTargetPolicy") or {}).get("archivalTargets") or [])
             if (t.get("archivalTargetConfig") or {}).get("targetType", "") != "kFortKnox"
         })
-        # FortKnox: use _fk_status() for active/idle/none, then collect
+        # FortKnox: use cached fk_status for active/idle/none, then collect
         # vault names using the same comprehensive detection logic.
-        fk_st_t   = _fk_status(cd)
+        fk_st_t   = cd.get("fk_status") or _fk_status(cd)
         _fkt_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
         def _is_fk_t(tt, tname=""):
             tl = (tt or "").lower(); nl = (tname or "").lower()
@@ -6770,7 +6787,7 @@ def write_word(all_data, args):
         sd_enc_str_s = ("Yes" if sd_enc_s is True else
                         "No"  if sd_enc_s is False else "N/A")
         has_vault   = bool(vaults)
-        fk_st_s     = _fk_status(cd)
+        fk_st_s     = cd.get("fk_status") or _fk_status(cd)
         fk_label_s  = {"active": "Active", "idle": "Idle", "none": "No"}[fk_st_s]
         repl = any((p.get("remoteTargetPolicy") or {}).get("replicationTargets")
                    for p in policies)
