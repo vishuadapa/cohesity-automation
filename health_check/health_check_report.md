@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.50**
+**Current version: 1.52**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~29-slide PowerPoint deck** (optional, requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -54,17 +54,18 @@ Narrative report suitable for printing or sharing with customers:
 
 ### PowerPoint Deck (v1.50+)
 
-Each run produces a **`.pptx` file** (requires `pip install python-pptx`) with ~29 slides organised into 5 native PowerPoint sections:
+Each run produces a **`.pptx` file** (requires `pip install python-pptx`) with ~27 slides organised into 5 native PowerPoint sections:
 
 | Section | Slides |
 |---------|--------|
 | **Cover** | Title, customer name, date |
+| **Contents** | Hyperlinked table of contents |
 | **Executive Summary** | KPI snapshot, health scorecard, capacity & growth, protection, ransomware readiness, top at-risk workloads, priority actions |
 | **Environment Topology** | Cluster/replication/archival/FortKnox diagram with connector labels and legend |
 | **Security Deep-Dive** | Security posture overview, user security & MFA, audit & governance activity, security recommendations |
 | **Backup Engineering** | SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations |
 
-All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook. The topology diagram is also embedded as editable native Word shapes in the Word document's Environment section. Install `matplotlib` as a fallback for the Word topology if native shapes fail: `pip install matplotlib`.
+All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook. DataLock is RAG-coloured (red = no DataLock, amber = partial, green = full) across all slides where it appears. Scoring methodology for all four models (Overall Health Score, Security Score, Ransomware Readiness, Workload Risk) is embedded inline at the bottom of each respective data slide — compact tables separated by a thin gray rule so they don't distract from the main data. Table body font is 10pt throughout. The topology diagram is also embedded as editable native Word shapes in the Word document's Environment section. Install `matplotlib` as a fallback for the Word topology if native shapes fail: `pip install matplotlib`.
 
 ---
 
@@ -233,6 +234,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.51 | 2026-04-16 | fix: Storage Capacity & Growth PPT slide now uses correct API field paths — was empty because it read non-existent `storage_domains` key. feat: DataLock RAG coloring (red/amber/green) added to Protection Summary and Ransomware Readiness PPT slides. feat: Two Scoring Methodology Reference slides appended to deck (Health Score + Security Score; Ransomware Score + Workload Risk Score + RAG legend). PPT grows from ~29 to ~31 slides. |
 | 1.50 | 2026-04-15 | feat: Comprehensive PowerPoint deck (`write_pptx()`). ~29 slides across 4 sections: Cover, Executive Summary (Snapshot, Scorecard, Capacity, Protection, Ransomware, At-Risk Workloads, Priority Actions), Environment Topology (full diagram with legend), Security Deep-Dive (Posture, User Security, Audit, Recommendations), Backup Engineering (Lifecycle, Coverage Gaps, Agents, Source Coverage, Workload Risk, Recommendations). All slides RAG colour-coded. draw.io output removed entirely. |
 | 1.49 | 2026-04-15 | perf: Parallel API data collection (ThreadPoolExecutor wave-1 + wave-2 + per-group runs), cached `fk_status` / `policy_by_id` / `audit_enabled` in `cd`, `end_usecs` replaces repeated `_now_usecs()` calls, merged dual agent/disk loops, isinstance filtering at source, `_FONT_NORMAL`/`_FONT_BOLD` singletons. No output changes. |
 | 1.48 | 2026-04-13 | feat: Topology diagram overhaul — fixed missing FK vault connections (vaults list now always emits edges), draw.io arrow labels (Replication/Archive/FortKnox/Indelible), cluster nodes show software version + group/source counts, legend block added. New optional PowerPoint output (.pptx via python-pptx) — 16:9 slide with colored nodes, STRAIGHT connectors, arrow labels, legend. python-pptx added to optional prereq check table. |

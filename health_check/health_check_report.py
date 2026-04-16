@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.50
+health_check_report.py  v1.51
 
 Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -87,6 +87,23 @@ Requirements
 
 Version history
 ───────────────
+  1.52 (2026-04-16) — feat: Inline scoring methodology — remove 4 standalone
+                     methodology slides; embed compact scoring tables directly in
+                     the bottom whitespace of Health Scorecard, Ransomware Readiness,
+                     Security Posture Overview, and Workload Risk Heatmap slides.
+                     feat: Table body font increased from 8.5pt to 10pt across all
+                     slides (header row remains 8.5pt; inline methodology tables
+                     use 8pt to stay compact in the smaller space).
+  1.51 (2026-04-16) — fix: Storage Capacity & Growth PPT slide now reads from the
+                     correct API fields (cd["info"]["stats"]["usagePerfStats"] +
+                     cd.get("capacity_runway") + cd["domains"]) instead of the
+                     non-existent storage_domains key — slide was previously empty.
+                     feat: DataLock red/amber/green coloring added to Protection
+                     Summary and Ransomware Readiness PPT slides (was uncolored).
+                     feat: Two Scoring Methodology Reference slides appended at end
+                     of PowerPoint deck covering all four scoring models (Overall
+                     Health, Security, Ransomware Readiness, Workload Risk) with
+                     RAG colour thresholds and grade bands.
   1.50 (2026-04-15) — feat: Comprehensive PowerPoint deck (write_pptx). Replaces
                      the single-slide topology .pptx and eliminates draw.io output.
                      New deck spans ~29 slides across 4 sections: Cover, Executive
@@ -518,7 +535,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.50"
+__version__ = "1.52"
 
 import argparse
 import datetime
@@ -4638,15 +4655,20 @@ def write_pptx(all_data, args, out_path):
     today    = _dt.date.today().strftime("%B %d, %Y")
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    _C_HDR    = "#70AD47"   # Cohesity green — header bars
-    _C_DIV    = "#1A5C3A"   # Dark green — section dividers
+    _C_HDR    = "#67BF1B"   # Cohesity vibrant green — header bars & accents
+    _C_DIV    = "#1A5C3A"   # Dark green (topology/misc legacy use)
     _C_WHT    = "#FFFFFF"
-    _C_BLK    = "#000000"
+    _C_BLK    = "#0C0C0C"
     _C_DGRY   = "#404040"
     _C_LGRY   = "#F5F5F5"   # alternating table row tint
     _C_GRN_BG = "#E2EFDA"; _C_GRN_TX = "#375623"
     _C_AMB_BG = "#FFF2CC"; _C_AMB_TX = "#7F6000"
     _C_RED_BG = "#FFCCCC"; _C_RED_TX = "#9C0006"
+    # Cover / divider / TOC palette — Cohesity 2025 template
+    _C_BG     = "#FFFFFF"   # White background
+    _C_VACC   = "#67BF1B"   # Vibrant Cohesity green accent
+    _C_BGROW  = "#F4F6F4"   # Very light green-tinted white for TOC cards
+    _C_FLBG   = "#F8FAF8"   # Near-white slide tint (light slides)
 
     # ── Presentation setup ────────────────────────────────────────────────────
     prs = _PptxPresentation()
@@ -4702,24 +4724,30 @@ def write_pptx(all_data, args, out_path):
                  size=9, color="#DDEEDD")
 
     def _footer(slide):
-        _txt(slide,
-             f"Cohesity Health Check  v{__version__}  \u00b7  Generated {today}",
-             0.2, H - 0.24, W - 0.4, 0.22,
+        # COHESITY wordmark — left
+        _txt(slide, "COHESITY", 0.15, H - 0.30, 1.20, 0.24,
+             size=9, bold=True, color=_C_BLK)
+        # Copyright — centre
+        _txt(slide, "\u00a9 2025 Cohesity Inc. All rights reserved.",
+             1.40, H - 0.30, W - 4.0, 0.24,
+             size=7, color="#888888")
+        # Version + date — right
+        _txt(slide, f"v{__version__}  \u00b7  {today}",
+             W - 2.6, H - 0.30, 2.4, 0.24,
              size=7, color="#AAAAAA", align="right")
 
     def _section_div(title, subtitle=""):
         slide = _blank()
-        _rect(slide, 0, 0, W, H, _C_DIV)
-        _rect(slide, 0, 2.78, W, 0.07, _C_HDR)
-        _rect(slide, 0, 4.00, W, 0.07, _C_HDR)
-        _txt(slide, title, 0.5, 1.1, W - 1.0, 1.6,
-             size=38, bold=True, color=_C_WHT, align="center")
+        _rect(slide, 0, 0, W, H, _C_BG)              # white background
+        _rect(slide, 0, 0, 0.06, H, _C_VACC)         # thin green left bar
+        # Green block — left ~62%, vertically centred (matches Cohesity chapter slide)
+        _rect(slide, 0.06, 1.85, 8.20, 2.95, _C_VACC)
+        _txt(slide, title, 0.32, 2.10, 7.70, 2.20,
+             size=36, bold=True, color=_C_WHT, align="left")
         if subtitle:
-            _txt(slide, subtitle, 0.5, 4.15, W - 1.0, 0.7,
-                 size=13, color="#AAFFAA", align="center")
-        _txt(slide, f"Cohesity Health Check  v{__version__}",
-             0.2, H - 0.28, W - 0.4, 0.25,
-             size=7, color="#55AA77", align="right")
+            _txt(slide, subtitle, 0.15, 4.95, 9.00, 0.55,
+                 size=11, color="#555555", align="left")
+        _footer(slide)
         return slide
 
     def _rag(score, hi=75, lo=50):
@@ -4749,8 +4777,24 @@ def write_pptx(all_data, args, out_path):
     def _yn(v):
         return "Yes" if v else "No"
 
+    def _cx(col_w):
+        """Return X offset to horizontally centre a table on the slide."""
+        return max(0.1, (W - sum(col_w)) / 2)
+
+    def _notes(slide, text):
+        """Set speaker-notes text on a slide."""
+        try:
+            slide.notes_slide.notes_text_frame.text = text
+        except Exception:
+            pass
+
+    # Shape-type constants for topology nodes
+    _ST_ROUND  = _MSO_SHAPE.ROUNDED_RECTANGLE
+    _ST_CLOUD  = getattr(_MSO_SHAPE, "CLOUD", _MSO_SHAPE.ROUNDED_RECTANGLE)
+    _ST_CAN    = getattr(_MSO_SHAPE, "CAN",   _MSO_SHAPE.ROUNDED_RECTANGLE)
+
     def _table(slide, headers, rows, col_w, x, y, rh=0.27,
-               hdr_bg=None, fills=None):
+               hdr_bg=None, fills=None, body_sz=10):
         """Styled table. fills[row][col] = (bg_hex, tx_hex) or None."""
         nr, nc = len(rows) + 1, len(headers)
         tw = sum(col_w)
@@ -4800,16 +4844,21 @@ def write_pptx(all_data, args, out_path):
                     bg, fg = fill
                 else:
                     bg, fg = alt, _C_BLK
-                _cell(tbl.cell(ri + 1, ci), val, bg, fg)
+                _cell(tbl.cell(ri + 1, ci), val, bg, fg, sz=body_sz)
 
-    def _kpi(slide, label, value, x, y, w=1.9, h=1.2,
-             bg=None, vc="#FFFFFF"):
-        bg = bg or _C_HDR
-        _rect(slide, x, y, w, h, bg, rounded=True)
-        _txt(slide, label, x + 0.07, y + 0.08, w - 0.14, 0.35,
-             size=9, color="#FFFFFF", align="center")
-        _txt(slide, str(value), x + 0.07, y + 0.45, w - 0.14, 0.60,
-             size=26, bold=True, color=vc, align="center")
+    def _kpi(slide, label, value, x, y, w=1.90, h=1.25,
+             bg=None, vc=None):
+        accent = bg or _C_HDR
+        # Card: light background, subtle border
+        _rect(slide, x, y, w, h, "#F5F8F5", line="#C5D2C5", lw=0.012, rounded=True)
+        # Thin left accent bar, inset slightly so it sits within the rounded corners
+        _rect(slide, x + 0.03, y + 0.10, 0.06, h - 0.20, accent)
+        # Label — small, uppercase, muted
+        _txt(slide, label.upper(), x + 0.17, y + 0.13, w - 0.22, 0.26,
+             size=7.5, color="#7A8878")
+        # Value — large, bold; dark by default, colored if explicitly overridden
+        _txt(slide, str(value), x + 0.17, y + 0.42, w - 0.22, 0.64,
+             size=26, bold=True, color=vc if vc else "#1A3020")
 
     _P_COLORS = {"CRITICAL": (_C_RED_BG, _C_RED_TX),
                  "HIGH":     ("#FFE0CC", "#7F3000"),
@@ -4850,26 +4899,48 @@ def write_pptx(all_data, args, out_path):
 
     # ── Cover slide ───────────────────────────────────────────────────────────
     slide = _blank()
-    _rect(slide, 0, 0, W, H, _C_DIV)
-    _rect(slide, 0, 2.78, W, 0.08, _C_HDR)
-    _rect(slide, 0, 3.96, W, 0.08, _C_HDR)
+    _rect(slide, 0, 0, W, H, _C_BG)          # white background
+    _rect(slide, 0, 0, 0.06, H, _C_VACC)     # thin green left bar
+    # Green title block (matches Cohesity cover template)
+    _rect(slide, 0.06, 1.30, 8.20, 3.90, _C_VACC)
+    # Title text inside green block — white bold
     _txt(slide, "Cohesity Environment",
-         0.5, 0.9, W - 1.0, 1.0,
-         size=40, bold=True, color=_C_WHT, align="center")
+         0.28, 1.55, 7.80, 0.80,
+         size=36, bold=True, color=_C_WHT, align="left")
     _txt(slide, "Health Check Report",
-         0.5, 1.86, W - 1.0, 1.0,
-         size=40, bold=True, color=_C_HDR, align="center")
+         0.28, 2.38, 7.80, 0.80,
+         size=36, bold=True, color=_C_WHT, align="left")
+    # Thin white rule inside block
+    _rect(slide, 0.28, 3.27, 3.80, 0.04, _C_WHT)
+    # Customer / date inside block
     if customer:
-        _txt(slide, customer, 0.5, 2.94, W - 1.0, 0.76,
-             size=24, color=_C_WHT, align="center")
-    _txt(slide, today, 0.5, 4.10, W - 1.0, 0.55,
-         size=16, color="#AAFFAA", align="center")
+        _txt(slide, customer, 0.28, 3.40, 7.80, 0.55,
+             size=20, bold=True, color=_C_WHT, align="left")
+    _txt(slide, today, 0.28, 3.97, 7.80, 0.38,
+         size=13, color="#DDFFD0", align="left")
+    # Below block
     _txt(slide, "Prepared using Cohesity Helios",
-         0.5, 4.75, W - 1.0, 0.40,
-         size=11, color="#88CCAA", align="center")
-    _txt(slide, f"v{__version__}", W - 1.4, H - 0.32, 1.2, 0.28,
-         size=8, color="#558866", align="right")
+         0.15, 5.38, 8.00, 0.32,
+         size=9, color="#888888", align="left")
+    _footer(slide)
+    _notes(slide,
+           "Cohesity Environment Health Check Report. "
+           "This deck was generated live from the Cohesity Helios API and covers all "
+           "clusters connected to Helios at the time of the report. "
+           "Sections: Executive Summary (cluster snapshot, scorecard, capacity, "
+           "protection, ransomware readiness, priority actions), "
+           "Environment Topology (connection diagram), "
+           "Security Deep-Dive (posture, user security, audit, recommendations), "
+           "Backup Engineering (lifecycle, coverage gaps, agents, source coverage, "
+           "workload risk, engineering recommendations), "
+           "Scoring Methodology (reference for all scoring models). "
+           "Use alongside the Excel workbook (detailed data) and Word document "
+           "(narrative report) for a complete customer business review."
+           + (f" Customer: {customer}." if customer else ""))
     _sec_starts.append(("Cover", 0))
+
+    # ── Contents slide (placeholder — populated after all slides are built) ───
+    toc_slide = _blank()
 
     # ── Section: Executive Summary ────────────────────────────────────────────
     _sec_starts.append(("Executive Summary", len(prs.slides)))
@@ -4890,13 +4961,14 @@ def write_pptx(all_data, args, out_path):
         sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
         for cd in all_data)
     kpi_data = [
-        ("Clusters",        len(all_data), _C_DIV,   "#FFFFFF"),
-        ("Nodes",           n_nodes,       _DG_TEAL,  "#FFFFFF"),
-        ("Prot. Groups",    n_groups,      _C_HDR,    "#FFFFFF"),
-        ("Policies",        n_policies,    "#5B6E8A", "#FFFFFF"),
-        ("Vaults",          n_vaults,      _DG_ARCH,  "#FFFFFF"),
+        ("Clusters",        len(all_data), "#2E5A8E",  None),
+        ("Nodes",           n_nodes,       _C_VACC,   None),
+        ("Prot. Groups",    n_groups,      _C_HDR,    None),
+        ("Policies",        n_policies,    "#5B6E8A", None),
+        ("Vaults",          n_vaults,      _DG_ARCH,  None),
         ("Critical Alerts", n_crits,
-         "#C0392B" if n_crits else "#27AE60", "#FFFFFF"),
+         "#C0392B" if n_crits else "#27AE60",
+         "#C0392B" if n_crits else "#27AE60"),
     ]
     kpi_w, kpi_gap = 1.90, 0.19
     kpi_x0 = (W - (kpi_w * 6 + kpi_gap * 5)) / 2
@@ -4916,9 +4988,19 @@ def write_pptx(all_data, args, out_path):
         cr_f = (_C_RED_BG, _C_RED_TX) if crits else (_C_GRN_BG, _C_GRN_TX)
         fills_snap.append(
             [None, None, None, None, None, cr_f, _rag(ov), _grade_color(grd)])
-    _table(slide, hdr_snap, rows_snap,
-           [2.5, 1.4, 0.8, 0.8, 0.8, 1.0, 1.3, 0.8],
-           0.22, 2.05, fills=fills_snap)
+    _cw_snap = [2.5, 1.4, 0.8, 0.8, 0.8, 1.0, 1.3, 0.8]
+    _table(slide, hdr_snap, rows_snap, _cw_snap,
+           _cx(_cw_snap), 2.05, fills=fills_snap)
+    _notes(slide,
+           "Summary of all Cohesity clusters in scope. "
+           "KPI tiles at the top show total clusters, nodes, protection groups, "
+           "policies, vaults, and open critical alerts. "
+           "The cluster table shows per-cluster software version, group and vault "
+           "counts, overall health score (0-100), and letter grade (A>=90, B>=80, "
+           "C>=70, D>=60, F<60). "
+           "Red overall score = below 50 (At Risk), Amber = 50-74 (Fair), "
+           "Green = 75+ (Good/Excellent). "
+           "Critical alerts in red indicate open issues requiring immediate action.")
 
     # ── Health Scorecard ──────────────────────────────────────────────────────
     slide = _blank()
@@ -4943,12 +5025,44 @@ def write_pptx(all_data, args, out_path):
         fills_sc.append(
             [None] + [_rag(s) for s in (p, sl, inf, cap, sec, al, ov)]
             + [_grade_color(grd)])
-    _table(slide, hdr_sc, rows_sc,
-           [2.6, 1.1, 1.0, 1.1, 1.1, 1.1, 1.0, 1.1, 0.8],
-           0.22, 0.68, fills=fills_sc)
-    _txt(slide, "Green \u226575  |  Amber 50\u201374  |  Red <50  "
-         "|  Grade: A\u226590  B\u226580  C\u226570  D\u226560  F<60",
-         0.22, H - 0.55, W - 0.4, 0.30, size=8, color=_C_DGRY)
+    _cw_sc = [2.6, 1.1, 1.0, 1.1, 1.1, 1.1, 1.0, 1.1, 0.8]
+    rows_sc  = rows_sc[:10];  fills_sc  = fills_sc[:10]
+    _table(slide, hdr_sc, rows_sc, _cw_sc,
+           _cx(_cw_sc), 0.68, fills=fills_sc)
+    # ── Inline scoring methodology ──────────────────────────────────────────
+    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+         size=7.5, bold=True, color="#888888")
+    _hs_cols = [2.6, 1.0, 1.5, 1.5, 1.5]
+    _table(slide,
+           ["Dimension", "Weight", "Green \u226575", "Amber 50\u201374", "Red <50"],
+           [
+               ["Protection Success", "25%", "\u226595%",      "90\u201394%",   "<90%"],
+               ["SLA Compliance",     "15%", "\u226599%",      "90\u201398%",   "<90%"],
+               ["Infrastructure",     "15%", "100% nodes",     "\u226590%",     "<90%"],
+               ["Storage Capacity",   "20%", "\u226475% full", "75\u201385%",   ">85%"],
+               ["Security Score",     "15%", "\u226575 pts",   "50\u201374",    "<50"],
+               ["Alerts",             "10%", "No criticals",   "\u22641 crit",  ">1 crit"],
+           ],
+           _hs_cols, _cx(_hs_cols), 4.02, rh=0.22, body_sz=8,
+           fills=[[None, None,
+                   (_C_GRN_BG, _C_GRN_TX),
+                   (_C_AMB_BG, _C_AMB_TX),
+                   (_C_RED_BG, _C_RED_TX)]] * 6)
+    _txt(slide,
+         "Grade: A\u226590  B\u226580  C\u226570  D\u226560  F<60"
+         "  \u00b7  Green\u226575  Amber 50\u201374  Red <50",
+         0.15, 5.62, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Per-cluster health scorecard with six weighted dimensions. "
+           "Protection Success (25%) — backup run success rate in the lookback window. "
+           "SLA Compliance (15%) — percentage of runs completing within their SLA window. "
+           "Infrastructure (15%) — ratio of healthy nodes to total nodes. "
+           "Storage Capacity (20%) — score based on used % of usable capacity. "
+           "Security (15%) — encryption, vaults, replication, DataLock, MFA posture. "
+           "Alerts (10%) — deducted for open critical and warning alerts. "
+           "Overall score is the weighted sum; Grade: A>=90, B>=80, C>=70, D>=60, F<60. "
+           "Red = below 50, Amber = 50-74, Green = 75 or above.")
 
     # ── Capacity & Growth ─────────────────────────────────────────────────────
     slide = _blank()
@@ -4959,39 +5073,57 @@ def write_pptx(all_data, args, out_path):
                "Used %", "Data Reduction", "Runway (days)", "80% Full By"]
     rows_cap, fills_cap = [], []
     for cd in all_data:
-        sds = cd.get("storage_domains") or []
-        if not sds:
-            rows_cap.append([cd["name"], "\u2014"] + ["\u2014"] * 6)
-            fills_cap.append([None] * 8)
-            continue
-        for sd in sds:
-            used_b  = sd.get("usedBytes") or sd.get("physicalUsedBytes") or 0
-            tot_b   = (sd.get("totalPhysicalCapacityBytes")
-                       or sd.get("physicalCapacityBytes") or 1)
-            dr      = sd.get("dataReductionRatio") or 0
-            pct     = used_b / tot_b * 100 if tot_b else 0
-            runway  = sd.get("_runway_days")
-            date_80 = sd.get("_date_80pct")
-            _tb = lambda b: f"{b/1e12:.1f}" if b else "0"
-            rows_cap.append([
-                cd["name"], sd.get("name", "default"),
-                _tb(used_b), _tb(tot_b),
-                f"{pct:.1f}%",
-                f"{dr:.1f}x" if dr else "\u2014",
-                str(runway) if runway is not None else "\u2014",
-                str(date_80) if date_80 else "\u2014",
-            ])
-            rw_val = min(100, runway) if runway is not None else 999
-            fills_cap.append([
-                None, None, None, None,
-                _rag(100 - pct, hi=70, lo=30),
-                None,
-                _rag(rw_val, hi=90, lo=30),
-                None,
-            ])
-    _table(slide, hdr_cap, rows_cap,
-           [2.2, 1.8, 1.0, 1.0, 0.9, 1.2, 1.2, 1.8],
-           0.22, 0.68, fills=fills_cap)
+        stats_c  = (cd["info"].get("stats") or {})
+        usage_c  = (stats_c.get("usagePerfStats") or {})
+        usable_c = usage_c.get("physicalCapacityBytes") or 0
+        used_c   = usage_c.get("totalPhysicalUsageBytes") or 0
+        dr_c     = stats_c.get("dataReductionRatio") or 0
+        pct_c    = (used_c / usable_c * 100) if usable_c else 0
+        runway_d = cd.get("capacity_runway") or {}
+        dq       = runway_d.get("data_quality", "no_data")
+        d80      = runway_d.get("days_to_80")
+        proj_80  = runway_d.get("projected_80")
+        _tb = lambda b: f"{b/1e12:.1f}" if b else "\u2014"
+        if dq in ("no_data", "insufficient"):
+            runway_str = "Insufficient data"
+            date_str   = "\u2014"
+        elif d80 is None:
+            runway_str = "Stable"
+            date_str   = "\u2014"
+        elif d80 == 0:
+            runway_str = ">80% now"
+            date_str   = str(proj_80) if proj_80 else "\u2014"
+        else:
+            runway_str = str(d80)
+            date_str   = str(proj_80) if proj_80 else "\u2014"
+        rows_cap.append([
+            cd["name"], "(Cluster Total)",
+            _tb(used_c), _tb(usable_c),
+            f"{pct_c:.1f}%" if usable_c else "\u2014",
+            f"{dr_c:.1f}x" if dr_c else "\u2014",
+            runway_str, date_str,
+        ])
+        rw_val = d80 if isinstance(d80, int) else 999
+        fills_cap.append([
+            None, None, None, None,
+            _rag(100 - pct_c, hi=70, lo=30) if usable_c else None,
+            None,
+            _rag(rw_val, hi=90, lo=30) if isinstance(d80, int) else None,
+            None,
+        ])
+    _cw_cap = [2.2, 1.8, 1.0, 1.0, 0.9, 1.2, 1.2, 1.8]
+    _table(slide, hdr_cap, rows_cap, _cw_cap,
+           _cx(_cw_cap), 0.68, fills=fills_cap)
+    _notes(slide,
+           "Storage utilisation and capacity runway per cluster. "
+           "Used and Usable columns show cluster-total capacity in terabytes. "
+           "Used % is coloured: Green = below 75%, Amber = 75-85%, Red = above 85%. "
+           "Data Reduction reflects the combined deduplication and compression ratio. "
+           "Runway (days) is a predictive forecast based on 30-day linear regression "
+           "of daily capacity growth — how many days until the cluster reaches 80% full. "
+           "Runway coloring: Green = more than 90 days, Amber = 30-90 days, "
+           "Red = fewer than 30 days. 'Stable' means growth is flat or shrinking. "
+           "'Insufficient data' means fewer than 3 data points were available for regression.")
 
     # ── Protection Summary ────────────────────────────────────────────────────
     slide = _blank()
@@ -5040,10 +5172,25 @@ def write_pptx(all_data, args, out_path):
         gp_f = ((_C_GRN_BG, _C_GRN_TX) if gaps_n == 0 else
                 (_C_AMB_BG, _C_AMB_TX) if gaps_n <= 5 else
                 (_C_RED_BG, _C_RED_TX))
-        fills_prot.append([None, None, su_f, sl_f, None, gp_f, _rag(p_score)])
-    _table(slide, hdr_prot, rows_prot,
-           [2.6, 1.0, 1.5, 1.5, 2.0, 1.5, 1.7],
-           0.22, 0.68, fills=fills_prot)
+        dl_f = ((_C_RED_BG, _C_RED_TX)
+                if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
+                (_C_AMB_BG, _C_AMB_TX)
+                if "partial" in (dl_lbl or "").lower() else
+                (_C_GRN_BG, _C_GRN_TX))
+        fills_prot.append([None, None, su_f, sl_f, dl_f, gp_f, _rag(p_score)])
+    _cw_prot = [2.6, 1.0, 1.5, 1.5, 2.0, 1.5, 1.7]
+    _table(slide, hdr_prot, rows_prot, _cw_prot,
+           _cx(_cw_prot), 0.68, fills=fills_prot)
+    _notes(slide,
+           "Backup health summary per cluster across all protection groups. "
+           "Success Rate = percentage of runs in the lookback window that succeeded "
+           "(kSuccess, Succeeded, or kWarning status). "
+           "SLA Violations = number of runs that exceeded their SLA window. "
+           "DataLock (WORM) status: Red = no DataLock on any group (immutable backups "
+           "absent — ransomware risk), Amber = partial coverage, Green = all groups covered. "
+           "Coverage Gaps = groups whose last run was not successful. "
+           "Protection Score reflects overall backup reliability for the cluster. "
+           "See Excel Protection Health sheet for per-group detail.")
 
     # ── Ransomware Readiness ──────────────────────────────────────────────────
     slide = _blank()
@@ -5064,27 +5211,64 @@ def write_pptx(all_data, args, out_path):
             and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
             and bool(set(u.get("roles") or []) & _ADMIN_ROLES))
         mfa_str = "All enabled" if no_mfa == 0 else f"{no_mfa} missing"
-        quorum  = bool((cd.get("info") or {}).get("quorumConfig"))
+        quorum  = (cd.get("mode") == "direct" or bool(cd.get("quorum_enabled")))
         fk_lbl  = {"active": "Active", "idle": "Idle (no data)",
                    "none": "Not configured"}.get(fk, "\u2014")
         rows_rw.append([cd["name"], rw_score, rw_label,
                         dl_lbl or "None", fk_lbl, mfa_str,
                         "Enabled" if quorum else "Not configured"])
-        lv_f = ((_C_GRN_BG, _C_GRN_TX) if rw_label == "Strong" else
-                (_C_AMB_BG, _C_AMB_TX) if rw_label == "Moderate" else
-                (_C_RED_BG, _C_RED_TX))
+        lv_f  = ((_C_GRN_BG, _C_GRN_TX) if rw_label == "Strong" else
+                 (_C_AMB_BG, _C_AMB_TX) if rw_label == "Moderate" else
+                 (_C_RED_BG, _C_RED_TX))
         fk_f  = ((_C_GRN_BG, _C_GRN_TX) if fk == "active" else
                  (_C_AMB_BG, _C_AMB_TX) if fk == "idle" else
                  (_C_RED_BG, _C_RED_TX))
         mfa_f = (_C_GRN_BG, _C_GRN_TX) if no_mfa == 0 else (_C_RED_BG, _C_RED_TX)
         qr_f  = (_C_GRN_BG, _C_GRN_TX) if quorum else (_C_AMB_BG, _C_AMB_TX)
-        fills_rw.append([None, _rag(rw_score), lv_f, None, fk_f, mfa_f, qr_f])
-    _table(slide, hdr_rw, rows_rw,
-           [2.4, 1.2, 1.5, 2.2, 1.8, 1.8, 1.5],
-           0.22, 0.68, fills=fills_rw)
-    _txt(slide, "Strong \u226580  |  Moderate 60\u201379  |  "
-         "High Risk 40\u201359  |  Critical <40",
-         0.22, H - 0.55, W - 0.4, 0.30, size=8, color=_C_DGRY)
+        dl_f  = ((_C_RED_BG, _C_RED_TX)
+                 if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
+                 (_C_AMB_BG, _C_AMB_TX)
+                 if "partial" in (dl_lbl or "").lower() else
+                 (_C_GRN_BG, _C_GRN_TX))
+        fills_rw.append([None, _rag(rw_score), lv_f, dl_f, fk_f, mfa_f, qr_f])
+    _cw_rw = [2.4, 1.2, 1.5, 2.2, 1.8, 1.8, 1.5]
+    rows_rw  = rows_rw[:10];  fills_rw  = fills_rw[:10]
+    _table(slide, hdr_rw, rows_rw, _cw_rw,
+           _cx(_cw_rw), 0.68, fills=fills_rw)
+    # ── Inline scoring methodology ──────────────────────────────────────────
+    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+         size=7.5, bold=True, color="#888888")
+    _rw_cols = [2.4, 1.1, 8.5]
+    _table(slide,
+           ["Dimension", "Max Pts", "Detail"],
+           [
+               ["DataLock (WORM) coverage",   "30 pts",
+                "30=Compliance mode, 20=any mode, 15=partial\u226550%, 8=partial<50%, 0=none"],
+               ["FortKnox / indelible vault",  "25 pts",
+                "25=Active, 10=Idle, 0=Not configured"],
+               ["Clean recovery window",       "20 pts",
+                "20=\u226530d, 15=14\u201329d, 10=7\u201313d, 5=2\u20136d, 2=<2d, 0=none"],
+               ["Quorum",                      "10 pts",
+                "10=enabled (or N/A for direct clusters), 0=disabled"],
+               ["Admin MFA",                   "15 pts",
+                "15=all admins enabled, 8=partial, 0=none enabled"],
+           ],
+           _rw_cols, _cx(_rw_cols), 4.02, rh=0.22, body_sz=8)
+    _txt(slide,
+         "Strong \u226580  \u00b7  Moderate 60\u201379  \u00b7  "
+         "High Risk 40\u201359  \u00b7  Critical <40",
+         0.15, 5.30, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Composite ransomware recovery readiness score per cluster (0-100). "
+           "DataLock (WORM) coverage (30 pts): Compliance mode = 30, any mode = 20, "
+           "partial >=50% = 15, partial <50% = 8, none = 0 (RED — critical gap). "
+           "FortKnox / indelible vault (25 pts): Active = 25, Idle = 10, None = 0. "
+           "Admin MFA (15 pts): all admins enabled = 15, partial = 8, none = 0. "
+           "Clean recovery window (20 pts): based on oldest successful snapshot age. "
+           "Quorum (10 pts): enabled = 10. "
+           "Labels: Strong (>=80), Moderate (60-79), High Risk (40-59), Critical (<40). "
+           "Clusters scoring Critical or High Risk should be prioritised for immediate remediation.")
 
     # ── Top At-Risk Workloads ─────────────────────────────────────────────────
     slide = _blank()
@@ -5117,9 +5301,19 @@ def write_pptx(all_data, args, out_path):
     if not rows_risk:
         rows_risk  = [["\u2014", "No workloads", "\u2014", "\u2014", "\u2014", "\u2014"]]
         fills_risk = [[None] * 6]
-    _table(slide, hdr_risk, rows_risk,
-           [2.2, 3.5, 1.2, 1.4, 2.1, 1.4],
-           0.22, 0.68, fills=fills_risk)
+    _cw_risk = [2.2, 3.5, 1.2, 1.4, 2.1, 1.4]
+    _table(slide, hdr_risk, rows_risk, _cw_risk,
+           _cx(_cw_risk), 0.68, fills=fills_risk)
+    _notes(slide,
+           "Top 16 protection groups most at risk of recovery failure, sorted worst-first. "
+           "Risk Score factors: last run status (35 pts — Success=35, Warning=25, "
+           "Running=20, Skipped=10, Paused=5, Failed=0), SLA compliance (25 pts), "
+           "RPO gap from last successful run (25 pts — <=4h=25, <=8h=20, <=24h=15, "
+           "<=48h=8, >48h=0), DataLock coverage (15 pts). "
+           "Levels: Low (>=75), Medium (50-74), High (25-49), Critical (<25). "
+           "Groups with Critical or High risk represent the highest recovery exposure — "
+           "address SLA violations, failed runs, and missing DataLock coverage first. "
+           "See Excel Workload Risk Heatmap sheet for all groups.")
 
     # ── Priority Action Items ─────────────────────────────────────────────────
     slide = _blank()
@@ -5143,11 +5337,21 @@ def write_pptx(all_data, args, out_path):
                   else ("#FFE0CC", "#7F3000")
             pri_fills.append([p_f] + [None] * 4)
         pri_rows = pri_rows[:15]
+    _cw_pri = [1.2, 1.8, 2.0, 4.1, 3.8]
     _table(slide,
            ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
            [(p, c, cl, f, a) for p, c, cl, f, a in pri_rows],
-           [1.2, 1.8, 2.0, 4.1, 3.8],
-           0.22, 0.68, fills=pri_fills)
+           _cw_pri, _cx(_cw_pri), 0.68, fills=pri_fills)
+    _notes(slide,
+           "CRITICAL and HIGH priority findings requiring immediate attention, "
+           "sorted by priority then category. "
+           "CRITICAL items represent active risks with potential data loss or compliance "
+           "breach — address within 24-48 hours. "
+           "HIGH items are significant gaps that should be remediated within days to weeks. "
+           "Each row shows the affected cluster, finding description (truncated — see Excel "
+           "for full text), and recommended action. "
+           "See the Excel Recommendations sheet for the complete list including MEDIUM and "
+           "LOW priority items with business impact descriptions.")
 
     # ── Section: Topology ─────────────────────────────────────────────────────
     _sec_starts.append(("Environment Topology", len(prs.slides)))
@@ -5164,27 +5368,20 @@ def write_pptx(all_data, args, out_path):
     edges      = topo["edges"]
     slide  = _blank()
     shapes = slide.shapes
-    tb = shapes.add_textbox(
-        _PptxInches(0.2), _PptxInches(0.08),
-        _PptxInches(W - 0.4), _PptxInches(0.48))
-    tp = tb.text_frame.paragraphs[0]
-    tp.alignment = PP_ALIGN.LEFT
-    tr = tp.add_run()
-    tr.text = ("Environment Topology"
-               + (f"  \u2014  {customer}" if customer else ""))
-    tr.font.bold = True
-    tr.font.size = _Pt(18)
-    tr.font.color.rgb = _rgb(_DG_FK)
+    _header(slide, "Environment Topology",
+            "Source Clusters  \u00b7  Replication  \u00b7  Archival  "
+            "\u00b7  FortKnox / RPaaS"
+            + (f"  \u2014  {customer}" if customer else ""))
 
-    T_START_Y = 1.02; T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18
+    T_START_Y = 0.90; T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18
     T_COL_C = 0.20; T_COL_R = 3.10; T_COL_A = 6.00; T_COL_F = 8.90
 
     def _t_ny(idx):
         return T_START_Y + idx * (T_NODE_H + T_V_GAP)
 
-    def _t_box(label, sub, x, y, fill, stroke):
+    def _t_box(label, sub, x, y, fill, stroke, shape_type=None):
         sp = shapes.add_shape(
-            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            shape_type or _ST_ROUND,
             _PptxInches(x), _PptxInches(y),
             _PptxInches(T_NODE_W), _PptxInches(T_NODE_H))
         sp.fill.solid()
@@ -5245,11 +5442,13 @@ def write_pptx(all_data, args, out_path):
         t_anchor[n["id"]] = (T_COL_R + T_NODE_W, y + T_NODE_H / 2, T_COL_R)
     for idx, n in enumerate(arch_nodes):
         y = _t_ny(idx)
-        _t_box(n["name"], "Archival Vault", T_COL_A, y, _DG_ARCH, "#B05A00")
+        _t_box(n["name"], "Archival Vault", T_COL_A, y, _DG_ARCH, "#B05A00",
+               shape_type=_ST_CAN)
         t_anchor[n["id"]] = (T_COL_A + T_NODE_W, y + T_NODE_H / 2, T_COL_A)
     for idx, n in enumerate(fk_nodes):
         y = _t_ny(idx)
-        _t_box(n["name"], "FortKnox / RPaaS", T_COL_F, y, _DG_FK, "#0E3B25")
+        _t_box(n["name"], "FortKnox / RPaaS", T_COL_F, y, _DG_FK, "#0E3B25",
+               shape_type=_ST_CLOUD)
         t_anchor[n["id"]] = (T_COL_F + T_NODE_W, y + T_NODE_H / 2, T_COL_F)
 
     HDR_Y = T_START_Y - 0.30
@@ -5285,14 +5484,14 @@ def write_pptx(all_data, args, out_path):
             _t_lbl(_E_LBLS.get(etype, ""), cx, cy)
 
     LEG_Y = 6.18
-    for li, (bg, stroke, lbl) in enumerate([
-        (_DG_TEAL, _DG_TEAL_DK, "Source Cluster"),
-        (_DG_REPL, "#004A8A",   "Replication Target"),
-        (_DG_ARCH, "#B05A00",   "Archival Vault"),
-        (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS"),
+    for li, (bg, stroke, lbl, st) in enumerate([
+        (_DG_TEAL, _DG_TEAL_DK, "Source Cluster",      _ST_ROUND),
+        (_DG_REPL, "#004A8A",   "Replication Target",   _ST_ROUND),
+        (_DG_ARCH, "#B05A00",   "Archival Vault",        _ST_CAN),
+        (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS",     _ST_CLOUD),
     ]):
         sp = shapes.add_shape(
-            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            st,
             _PptxInches(0.20), _PptxInches(LEG_Y + li * 0.34),
             _PptxInches(1.90), _PptxInches(0.28))
         sp.fill.solid(); sp.fill.fore_color.rgb = _rgb(bg)
@@ -5303,6 +5502,16 @@ def write_pptx(all_data, args, out_path):
         r = p.add_run(); r.text = lbl
         r.font.size = _Pt(7); r.font.bold = True
         r.font.color.rgb = _rgb("#FFFFFF")
+    _notes(slide,
+           "Environment topology map. Green rounded rectangles = source clusters "
+           "(showing software version, protection group count, source count). "
+           "Blue rounded rectangles = replication targets. "
+           "Amber cylinders = archival vaults. "
+           "Dark-green clouds = FortKnox / RPaaS indelible vaults. "
+           "Arrows show data-flow direction with type labels (Replication / "
+           "Archive / FortKnox-Indelible). Use this diagram to verify full "
+           "resilience coverage — every cluster should have at least one "
+           "replication target and one indelible vault.")
     _footer(slide)
 
     # ── Section: Security Deep-Dive ───────────────────────────────────────────
@@ -5346,16 +5555,69 @@ def write_pptx(all_data, args, out_path):
                   (_C_AMB_BG, _C_AMB_TX) if fk == "idle" else
                   (_C_RED_BG, _C_RED_TX))
         dl_f   = ((_C_RED_BG, _C_RED_TX)
-                  if not dl_lbl or dl_lbl == "None" else
+                  if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
                   (_C_AMB_BG, _C_AMB_TX)
                   if "partial" in (dl_lbl or "").lower() else
                   (_C_GRN_BG, _C_GRN_TX))
         mfa_f  = (_C_GRN_BG, _C_GRN_TX) if no_mfa == 0 else (_C_RED_BG, _C_RED_TX)
         fills_sec.append(
             [None, enc_f, sd_f, rpl_f, fk_f, dl_f, mfa_f, _rag(sec_sc)])
-    _table(slide, hdr_sec, rows_sec,
-           [2.3, 1.1, 0.9, 1.2, 1.6, 2.0, 1.3, 1.2],
-           0.22, 0.68, fills=fills_sec)
+    _cw_sec = [2.3, 1.1, 0.9, 1.2, 1.6, 2.0, 1.3, 1.2]
+    rows_sec  = rows_sec[:10];  fills_sec  = fills_sec[:10]
+    _table(slide, hdr_sec, rows_sec, _cw_sec,
+           _cx(_cw_sec), 0.68, fills=fills_sec)
+    # ── Inline scoring methodology ──────────────────────────────────────────
+    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+         size=7.5, bold=True, color="#888888")
+    _sec_cols = [3.8, 1.8]
+    _table(slide,
+           ["Control", "Points"],
+           [
+               ["Cluster encryption at rest",         "+15 pts"],
+               ["Storage domain encryption",          "+15 pts"],
+               ["Vault (archival target) configured", "+15 pts"],
+               ["Replication target configured",      "+15 pts"],
+               ["FortKnox active",                    "+20 pts"],
+               ["FortKnox idle",                      "+10 pts"],
+               ["DataLock Compliance mode",           "+20 pts"],
+               ["DataLock any mode (no compliance)",  "+15 pts"],
+               ["DataLock partial \u226550%",         " +8 pts"],
+               ["DataLock partial <50%",              " +3 pts"],
+               ["Admin accounts without MFA",         "\u221210 pts  (penalty)"],
+           ],
+           _sec_cols, _cx(_sec_cols), 4.02, rh=0.20, body_sz=8,
+           fills=[
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_RED_BG, _C_RED_TX)],
+           ])
+    _txt(slide,
+         "Score capped at 100 \u00b7 Green\u226575  Amber 50\u201374  Red <50",
+         0.15, 6.50, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Security posture scorecard across key protection dimensions per cluster. "
+           "Cluster Enc: cluster-wide encryption at rest (Red = off, Green = on). "
+           "SD Enc: storage domain encryption (Green = all encrypted, Amber = partial/unknown). "
+           "Replication: at least one replication target configured (Red = none). "
+           "FortKnox: indelible/air-gapped vault status — Active (Green), Idle (Amber), "
+           "None (Red). "
+           "DataLock: WORM immutable backup coverage — Full Compliance (Green), "
+           "Partial (Amber), No DataLock (Red — ransomware risk). "
+           "Admin MFA: multi-factor authentication on admin accounts (Red = missing). "
+           "Security Score: overall 0-100 security posture score. "
+           "Additive model: Cluster Enc +15, SD Enc +15, Vault +15, Replication +15, "
+           "FortKnox Active +20 / Idle +10, DataLock Compliance +20 / any +15 / "
+           "partial>=50% +8 / partial<50% +3. Penalty: -10 per admin lacking MFA. "
+           "Thresholds: Green>=75, Amber 50-74, Red<50.")
 
     # ── User Security & MFA ───────────────────────────────────────────────────
     slide = _blank()
@@ -5383,9 +5645,19 @@ def write_pptx(all_data, args, out_path):
     if not rows_usr:
         rows_usr  = [["\u2014", "No user data", "", "", "", ""]]
         fills_usr = [[None] * 6]
-    _table(slide, hdr_usr, rows_usr[:20],
-           [2.0, 2.2, 1.5, 3.0, 1.5, 1.5],
-           0.22, 0.68, fills=fills_usr[:20])
+    _cw_usr = [2.0, 2.2, 1.5, 3.0, 1.5, 1.5]
+    _table(slide, hdr_usr, rows_usr[:20], _cw_usr,
+           _cx(_cw_usr), 0.68, fills=fills_usr[:20])
+    _notes(slide,
+           "User account security status across all clusters. "
+           "MFA Enabled: Green = multi-factor authentication is active for this user, "
+           "Red = MFA is off. Admin accounts without MFA are a HIGH severity security finding "
+           "— they represent the primary attack vector for credential-based intrusions. "
+           "Locked: Red = account is currently locked (possible brute-force attempt or "
+           "deliberate lockout). "
+           "Roles: shows up to 3 roles per user. COHESITY_ADMIN / kAdmin = full admin. "
+           "Table shows first 20 users — see Excel User Security sheet for the full list "
+           "with last-login timestamps.")
     if len(rows_usr) > 20:
         _txt(slide,
              f"  \u2026 and {len(rows_usr) - 20} more \u2014 "
@@ -5423,9 +5695,19 @@ def write_pptx(all_data, args, out_path):
                 (_C_AMB_BG, _C_AMB_TX) if high_risk > 0 else
                 (_C_GRN_BG, _C_GRN_TX))
         fills_aud.append([None, al_f, None, None, None, None, None, hr_f])
-    _table(slide, hdr_aud, rows_aud,
-           [2.0, 1.3, 1.2, 1.5, 1.4, 1.4, 1.4, 1.6],
-           0.22, 0.68, fills=fills_aud)
+    _cw_aud = [2.0, 1.3, 1.2, 1.5, 1.4, 1.4, 1.4, 1.6]
+    _table(slide, hdr_aud, rows_aud, _cw_aud,
+           _cx(_cw_aud), 0.68, fills=fills_aud)
+    _notes(slide,
+           "30-day configuration change audit trail per cluster. "
+           "Audit Logging must be enabled (Green) to collect events — if Red, "
+           "events cannot be monitored (a HIGH security gap). "
+           "Total Events = all change-type events in the lookback window (reads excluded). "
+           "Categories: Policy Changes, Group Changes, User Changes, Vault/Security Changes. "
+           "High-Risk Events = actions matching keywords: delete, destroy, disable, remove, "
+           "revoke, datalock, fortknox, mfa, encryption. "
+           "High-risk count > 5 = Red (investigate), > 0 = Amber (review), 0 = Green. "
+           "See Excel Audit Log sheet for the full event list with timestamps and details.")
 
     # ── Security Recommendations ──────────────────────────────────────────────
     slide = _blank()
@@ -5451,11 +5733,19 @@ def write_pptx(all_data, args, out_path):
     if not rows_sr:
         rows_sr  = [["\u2014", "No security findings", "", "", ""]]
         fills_sr = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    _cw_sr = [1.2, 1.8, 2.0, 4.1, 3.8]
     _table(slide,
-           ["Priority", "Category", "Cluster", "Finding",
-            "Recommended Action"],
-           rows_sr, [1.2, 1.8, 2.0, 4.1, 3.8],
-           0.22, 0.68, fills=fills_sr)
+           ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
+           rows_sr, _cw_sr, _cx(_cw_sr), 0.68, fills=fills_sr)
+    _notes(slide,
+           "Security-focused findings from the automated analysis, sorted by priority. "
+           "Covers: encryption (cluster and storage domain), DataLock/WORM configuration, "
+           "FortKnox vault activity, admin MFA enforcement, quorum settings, "
+           "audit logging status, TLS certificate expiry, and user security posture. "
+           "CRITICAL = active exploitable risk. HIGH = significant gap. "
+           "MEDIUM = best-practice improvement. LOW = optimisation. "
+           "Remediate CRITICAL and HIGH items before the next customer review. "
+           "See Excel Recommendations sheet for the complete prioritised list.")
 
     # ── Section: Backup Engineering ───────────────────────────────────────────
     _sec_starts.append(("Backup Engineering", len(prs.slides)))
@@ -5492,9 +5782,19 @@ def write_pptx(all_data, args, out_path):
                 else (_C_RED_BG, _C_RED_TX)
         eol_f = (_C_RED_BG, _C_RED_TX) if n_eol > 0 else (_C_GRN_BG, _C_GRN_TX)
         fills_sw.append([None, None, sw_f, None, None, eol_f, None])
-    _table(slide, hdr_sw, rows_sw,
-           [2.2, 1.8, 1.5, 1.4, 0.8, 1.0, 4.0],
-           0.22, 0.68, fills=fills_sw)
+    _cw_sw = [2.2, 1.8, 1.5, 1.4, 0.8, 1.0, 4.0]
+    _table(slide, hdr_sw, rows_sw, _cw_sw,
+           _cx(_cw_sw), 0.68, fills=fills_sw)
+    _notes(slide,
+           "Software version lifecycle and hardware end-of-life status per cluster. "
+           "SW Status: In Support (Green) = current release still receiving updates. "
+           "End of Support (Red) = version past its end-of-software-support date — "
+           "upgrade required for continued security patches and bug fixes. "
+           "EOS Date: the date this software version reaches end-of-support. "
+           "EOL Nodes: nodes with hardware models past their hardware end-of-life date — "
+           "these are no longer eligible for hardware replacement from Cohesity. "
+           "EOL Models: the specific hardware model strings flagged as EOL. "
+           "See Excel Infrastructure and Node Hardware sheets for per-node detail.")
 
     # ── Coverage Gaps ─────────────────────────────────────────────────────────
     slide = _blank()
@@ -5512,7 +5812,7 @@ def write_pptx(all_data, args, out_path):
             if st in _SUC: continue
             end_t = lb.get("endTimeUsecs") or lb.get("startTimeUsecs") or 0
             sla_v = bool(lb.get("isSlaViolated") or lr.get("isSlaViolated"))
-            end_s = (_dt.datetime.utcfromtimestamp(end_t / 1_000_000)
+            end_s = (_dt.datetime.fromtimestamp(end_t / 1_000_000, tz=_dt.timezone.utc)
                      .strftime("%Y-%m-%d %H:%M")
                      if end_t else "Never")
             rows_gap.append(
@@ -5529,14 +5829,26 @@ def write_pptx(all_data, args, out_path):
                       "recent successful backups",
                       "", "", ""]]
         fills_gap = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
-    _table(slide, hdr_gap, rows_gap[:18],
-           [2.0, 3.2, 1.8, 2.5, 1.7],
-           0.22, 0.68, fills=fills_gap[:18])
+    _cw_gap = [2.0, 3.2, 1.8, 2.5, 1.7]
+    _table(slide, hdr_gap, rows_gap[:18], _cw_gap,
+           _cx(_cw_gap), 0.68, fills=fills_gap[:18])
     if len(rows_gap) > 18:
         _txt(slide,
-             f"  \u2026 and {len(rows_gap) - 18} more \u2014 "
+             f"\u2026 and {len(rows_gap) - 18} more \u2014 "
              "see Excel Coverage Gaps sheet",
-             0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+             0.1, H - 0.55, W - 0.2, 0.28, size=8, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Protection groups that do not have a recent successful backup. "
+           "These represent data protection gaps — objects in these groups may not "
+           "be recoverable to their expected RPO. "
+           "Last Status: kFailed/Failed (Red) = hard failure. Other statuses (Amber) "
+           "= running, skipped, or unknown. "
+           "Last Run End: timestamp of the most recent run attempt (Never = never run). "
+           "SLA Violated: Yes (Red) = the run exceeded the SLA window defined in the policy. "
+           "Priority: investigate Failed groups with SLA violations first. "
+           "Common causes: network timeout, source agent offline, insufficient storage, "
+           "or a paused protection group. "
+           "See Excel Coverage Gaps sheet for full list.")
 
     # ── Agent Health ──────────────────────────────────────────────────────────
     slide = _blank()
@@ -5566,9 +5878,19 @@ def write_pptx(all_data, args, out_path):
         dg_f = (_C_RED_BG, _C_RED_TX) if degraded > 0 else (_C_GRN_BG, _C_GRN_TX)
         up_f = (_C_AMB_BG, _C_AMB_TX) if upgrades > 0 else (_C_GRN_BG, _C_GRN_TX)
         fills_ag.append([None, None, None, up_f, dg_f, _rag(ag_score)])
-    _table(slide, hdr_ag, rows_ag,
-           [2.5, 1.5, 1.3, 1.5, 1.6, 1.8],
-           0.22, 0.68, fills=fills_ag)
+    _cw_ag = [2.5, 1.5, 1.3, 1.5, 1.6, 1.8]
+    _table(slide, hdr_ag, rows_ag, _cw_ag,
+           _cx(_cw_ag), 0.68, fills=fills_ag)
+    _notes(slide,
+           "Cohesity agent health summary per cluster. "
+           "Agents are software components installed on protected hosts (Windows, Linux, "
+           "NAS, SQL, Oracle, etc.) that facilitate backup and recovery. "
+           "Needs Upgrade (Amber): agents running an older version — should be upgraded "
+           "to match the cluster version for full compatibility and security patches. "
+           "Degraded/Error (Red): agents that are unreachable, in error state, or degraded "
+           "— backups for those hosts may be failing silently. "
+           "Agent Health %: percentage of agents in healthy state (Green >= 90%). "
+           "See Excel Agent Health sheet for per-host agent version and status detail.")
 
     # ── Source Coverage ───────────────────────────────────────────────────────
     slide = _blank()
@@ -5599,14 +5921,25 @@ def write_pptx(all_data, args, out_path):
     if not rows_src:
         rows_src  = [["\u2014", "No source data", "", "", "", "", ""]]
         fills_src = [[None] * 7]
-    _table(slide, hdr_src, rows_src[:18],
-           [2.0, 2.5, 1.5, 1.3, 1.2, 1.3, 1.5],
-           0.22, 0.68, fills=fills_src[:18])
+    _cw_src = [2.0, 2.5, 1.5, 1.3, 1.2, 1.3, 1.5]
+    _table(slide, hdr_src, rows_src[:18], _cw_src,
+           _cx(_cw_src), 0.68, fills=fills_src[:18])
     if len(rows_src) > 18:
         _txt(slide,
-             f"  \u2026 and {len(rows_src) - 18} more \u2014 "
+             f"\u2026 and {len(rows_src) - 18} more \u2014 "
              "see Excel Source Coverage sheet",
-             0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+             0.1, H - 0.55, W - 0.2, 0.28, size=8, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Registered protection sources and their object coverage per cluster. "
+           "A source is a connected system (VMware vCenter, SQL Server, NAS share, "
+           "Oracle DB, physical host, etc.) registered in Cohesity. "
+           "Total Objects = all leaf objects discovered within the source (VMs, DBs, etc.). "
+           "Protected = objects included in at least one active protection group. "
+           "Unprotected (Red if > 0) = objects discovered but not yet protected — "
+           "these represent data that has no backup. "
+           "Coverage % (RAG) = Protected / Total. "
+           "See Excel Source Coverage sheet for the full list. "
+           "Unprotected objects should be reviewed and added to protection groups.")
 
     # ── Workload Risk Heatmap ─────────────────────────────────────────────────
     slide = _blank()
@@ -5633,14 +5966,43 @@ def write_pptx(all_data, args, out_path):
                      "No Critical or High risk workloads \u2014 good standing",
                      "\u2014", "\u2014"]]
         fills_hr = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 3]
-    _table(slide, hdr_hr, rows_hr,
-           [2.5, 6.2, 1.5, 2.0],
-           0.22, 0.68, fills=fills_hr)
+    _cw_hr = [2.5, 6.2, 1.5, 2.0]
+    rows_hr  = rows_hr[:12];  fills_hr  = fills_hr[:12]
+    _table(slide, hdr_hr, rows_hr, _cw_hr,
+           _cx(_cw_hr), 0.68, fills=fills_hr)
+    # ── Inline scoring methodology ──────────────────────────────────────────
+    _rect(slide, 0.15, 4.28, W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, 4.33, W - 0.30, 0.22,
+         size=7.5, bold=True, color="#888888")
+    _risk_cols = [2.0, 1.0, 8.5]
+    _table(slide,
+           ["Factor", "Max Pts", "Detail"],
+           [
+               ["Last run status", "35 pts",
+                "Success=35, Warning=25, Running=20, Skipped=10, Paused=5, Failed=0"],
+               ["SLA compliance",  "25 pts",
+                "25=no violation in the lookback window, 0=at least one SLA breach"],
+               ["RPO gap",         "25 pts",
+                "25=\u22644h, 20=\u22648h, 15=\u226424h, 8=\u226448h, 0=>48h since last success"],
+               ["DataLock",        "15 pts",
+                "15=Compliance or FortKnox-indelible, 10=Administrative, 0=none"],
+           ],
+           _risk_cols, _cx(_risk_cols), 4.55, rh=0.22, body_sz=8)
     _txt(slide,
-         "Risk Score:  Low \u226575  |  Medium 50\u201374  |  "
-         "High 25\u201349  |  Critical <25  "
-         "\u00b7  Only Critical and High risk groups shown",
-         0.22, H - 0.55, W - 0.4, 0.28, size=8, color=_C_DGRY)
+         "Low \u226575  \u00b7  Medium 50\u201374  \u00b7  High 25\u201349  \u00b7  Critical <25"
+         "  \u00b7  Only Critical and High risk groups shown",
+         0.15, 5.60, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Critical and High risk protection groups only, sorted worst-first by risk score. "
+           "Only groups scoring below 50 are shown here — Medium and Low risk groups "
+           "are omitted for brevity. "
+           "Risk Score factors: last run status (35 pts — Success=35, Warning=25, "
+           "Running=20, Skipped=10, Paused=5, Failed=0), SLA compliance (25 pts), "
+           "RPO age from last successful run (25 pts), DataLock coverage (15 pts). "
+           "Critical (< 25) = groups at highest recovery risk — likely failing backups, "
+           "SLA violations, and no DataLock. "
+           "High (25-49) = significant gaps needing prompt attention. "
+           "See Excel Workload Risk Heatmap sheet for all groups including Medium and Low.")
 
     # ── Engineering Recommendations ───────────────────────────────────────────
     slide = _blank()
@@ -5667,11 +6029,94 @@ def write_pptx(all_data, args, out_path):
     if not rows_er:
         rows_er  = [["\u2014", "No engineering findings", "", "", ""]]
         fills_er = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
+    _cw_er = [1.2, 1.8, 2.0, 4.1, 3.8]
     _table(slide,
-           ["Priority", "Category", "Cluster", "Finding",
-            "Recommended Action"],
-           rows_er, [1.2, 1.8, 2.0, 4.1, 3.8],
-           0.22, 0.68, fills=fills_er)
+           ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
+           rows_er, _cw_er, _cx(_cw_er), 0.68, fills=fills_er)
+    _notes(slide,
+           "Infrastructure and backup engineering findings, sorted by priority. "
+           "Covers: software lifecycle (out-of-support versions), hardware EOL, "
+           "storage capacity issues, protection group failures and SLA violations, "
+           "agent health and upgrades, unprotected sources, and policy gaps. "
+           "CRITICAL = immediate action needed (data at risk). "
+           "HIGH = significant gap, address within days. "
+           "MEDIUM = best-practice improvement, address within weeks. "
+           "LOW = optimisation opportunity. "
+           "See Excel Recommendations sheet for the full list with business impact "
+           "descriptions and detailed remediation guidance.")
+
+    # ── Populate Contents slide (now that all slide indices are finalised) ─────
+    _rect(toc_slide, 0, 0, W, H, _C_BG)          # white background
+    _rect(toc_slide, 0, 0, 0.06, H, _C_VACC)     # thin green left bar
+    _header(toc_slide, "Contents", "Click a section to jump directly to it")
+    _footer(toc_slide)
+
+    _toc_items = [
+        ("Executive Summary",
+         "Environment snapshot  \u00b7  Health scorecard  \u00b7  "
+         "Storage capacity  \u00b7  Protection  \u00b7  Ransomware readiness  \u00b7  Priority actions"),
+        ("Environment Topology",
+         "Cluster connections  \u00b7  Replication targets  \u00b7  "
+         "Archival vaults  \u00b7  FortKnox / RPaaS"),
+        ("Security Deep-Dive",
+         "Security posture overview  \u00b7  User & MFA  \u00b7  "
+         "Governance & audit activity  \u00b7  Security recommendations"),
+        ("Backup Engineering",
+         "Software & hardware lifecycle  \u00b7  Coverage gaps  \u00b7  "
+         "Agent health  \u00b7  Source coverage  \u00b7  Workload risk  \u00b7  Recommendations"),
+    ]
+    _sec_dict    = dict(_sec_starts)
+    _toc_row_h   = 1.18
+    _toc_row_gap = 0.22
+    _toc_total   = len(_toc_items) * _toc_row_h + (len(_toc_items) - 1) * _toc_row_gap
+    _toc_y0      = (H - _toc_total) / 2 + 0.05   # vertically centred
+    _toc_x0, _toc_w = 0.18, W - 0.36
+
+    for _ti, (_tsec, _tdesc) in enumerate(_toc_items):
+        _ty = _toc_y0 + _ti * (_toc_row_h + _toc_row_gap)
+        # Row card — light fill, subtle border on white background
+        _row = toc_slide.shapes.add_shape(
+            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            _PptxInches(_toc_x0), _PptxInches(_ty),
+            _PptxInches(_toc_w), _PptxInches(_toc_row_h))
+        _row.fill.solid()
+        _row.fill.fore_color.rgb = _rgb(_C_BGROW)
+        _row.line.color.rgb = _rgb("#D8E8D0")
+        _row.line.width = _PptxInches(0.010)
+        # Hyperlink to section slide
+        _sidx = _sec_dict.get(_tsec)
+        if _sidx is not None and _sidx < len(prs.slides):
+            try:
+                _row.click_action.target_slide = prs.slides[_sidx]
+            except Exception:
+                pass
+        # Left green accent block on card
+        _rect(toc_slide, _toc_x0, _ty, 0.30, _toc_row_h, _C_VACC)
+        # Section number — white on green
+        _txt(toc_slide, f"{_ti + 1:02d}", _toc_x0 + 0.01, _ty + 0.32, 0.28, 0.52,
+             size=15, bold=True, color=_C_WHT, align="center")
+        # Vertical separator line
+        _rect(toc_slide, _toc_x0 + 0.38, _ty + 0.14, 0.022, _toc_row_h - 0.28, "#C8D8C0")
+        # Section name — dark on light
+        _txt(toc_slide, _tsec, _toc_x0 + 0.50, _ty + 0.10, _toc_w - 1.15, 0.40,
+             size=15, bold=True, color=_C_BLK)
+        # Description — medium gray
+        _txt(toc_slide, _tdesc, _toc_x0 + 0.50, _ty + 0.56, _toc_w - 1.15, 0.50,
+             size=8.5, color="#555555")
+        # Right arrow — green
+        _txt(toc_slide, "\u203a", _toc_x0 + _toc_w - 0.48, _ty + 0.26, 0.40, 0.55,
+             size=26, bold=True, color=_C_VACC, align="center")
+
+    _notes(toc_slide,
+           "Contents slide — click any section card to jump directly to that section. "
+           "Executive Summary: overview KPIs, health scorecard, capacity, protection, "
+           "ransomware readiness, and priority action items. "
+           "Environment Topology: live diagram of cluster connections, replication, "
+           "archival vaults, and FortKnox. "
+           "Security Deep-Dive: security posture table, user & MFA status, "
+           "governance and audit activity, security recommendations. "
+           "Backup Engineering: software and hardware lifecycle, coverage gaps, "
+           "agent health, source coverage, workload risk heatmap, recommendations.")
 
     # ── Register native PowerPoint sections then save ─────────────────────────
     _register_sections(prs, _sec_starts)
@@ -6003,7 +6448,7 @@ def _render_topology_word_shapes_inner(doc, all_data, OxmlElement, qn, Emu, Pt):
         "Figure: Environment Topology \u2014 source clusters (green), "
         "replication targets (blue), archival vaults (amber), "
         "FortKnox (dark-green cloud). All shapes are editable in Word. "
-        "An editable draw.io diagram is also saved alongside this report."
+        "A comprehensive PowerPoint deck (~31 slides) is also saved alongside this report."
     )
     cap.runs[0].font.size = Pt(8)
     cap.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
@@ -6565,8 +7010,9 @@ def _sheet_guide(wb, all_data):
                      "from a cluster. Each tab covers a specific area of infrastructure health, "
                      "protection group performance, storage capacity, security posture, and "
                      "recovery readiness. Alongside this workbook, the script also produces a "
-                     "Word narrative report, an editable draw.io topology diagram (.drawio), and "
-                     "optionally a PowerPoint topology slide (.pptx, requires python-pptx). "
+                     "Word narrative report, and optionally a comprehensive ~31-slide PowerPoint "
+                     "deck (.pptx, requires python-pptx) with RAG colour-coding and scoring "
+                     "methodology reference slides. "
                      "Use this Guide tab as a quick reference for understanding what each sheet "
                      "contains and how the scores are calculated."
                  ))
@@ -7757,7 +8203,7 @@ def main():
         ("openpyxl",      EXCEL_OK,     "required", "Excel workbook output (skip with --word-only)"),
         ("python-docx",   DOCX_OK,      "required", "Word document generation (skip with --excel-only)"),
         ("matplotlib",    _pkg_ok("matplotlib"), "optional", "Topology PNG fallback for Word diagram"),
-        ("python-pptx",  PPTX_OK,               "optional", "PowerPoint topology diagram (.pptx)"),
+        ("python-pptx",  PPTX_OK,               "optional", "Comprehensive ~31-slide PowerPoint deck (.pptx)"),
         ("keyring",       _pkg_ok("keyring"),    "optional", "OS keychain credential storage"),
     ]
 
