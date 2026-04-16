@@ -5157,7 +5157,7 @@ def write_pptx(all_data, args, out_path):
             and not (u.get("mfaEnabled") or u.get("isMfaEnabled"))
             and bool(set(u.get("roles") or []) & _ADMIN_ROLES))
         mfa_str = "All enabled" if no_mfa == 0 else f"{no_mfa} missing"
-        quorum  = bool((cd.get("info") or {}).get("quorumConfig"))
+        quorum  = (cd.get("mode") == "direct" or bool(cd.get("quorum_enabled")))
         fk_lbl  = {"active": "Active", "idle": "Idle (no data)",
                    "none": "Not configured"}.get(fk, "\u2014")
         rows_rw.append([cd["name"], rw_score, rw_label,
