@@ -7,6 +7,21 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-16] feat(health_check): Inline scoring methodology + 10pt body font (v1.52)
+
+### Features — `health_check/health_check_report.py`
+
+- **Inline scoring methodology** — removed 4 standalone methodology slides; compact scoring tables now embedded directly in the bottom whitespace of their respective data slides:
+  - **Health Scorecard** — dimension weights + RAG thresholds + grade bands appear below the cluster table
+  - **Ransomware Readiness** — scoring dimensions (DataLock, FortKnox, recovery window, quorum, MFA) with point values and readiness labels
+  - **Security Posture Overview** — all 11 security score controls (additive point model) with color-coded point values
+  - **Workload Risk Heatmap** — 4 risk factors with detail text and level labels
+  - Each inline section is separated by a thin gray rule with a muted "SCORING METHODOLOGY" label
+- **10pt body font** — all table body cells across all slides increased from 8.5pt to 10pt (header rows remain 8.5pt; inline methodology tables use 8pt to stay legible in compact space)
+- **Row caps** — cluster-level data tables capped at 10 rows; Workload Risk Heatmap capped at 12 rows (from 20) to ensure whitespace for methodology section
+
+---
+
 ## [2026-04-16] fix+feat(health_check): PPT storage slide fix, DataLock RAG coloring, scoring matrix (v1.51)
 
 ### Bug Fix — `health_check/health_check_report.py`

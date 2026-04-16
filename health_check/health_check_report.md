@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.51**
+**Current version: 1.52**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~31-slide PowerPoint deck** (optional, requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -54,17 +54,18 @@ Narrative report suitable for printing or sharing with customers:
 
 ### PowerPoint Deck (v1.50+)
 
-Each run produces a **`.pptx` file** (requires `pip install python-pptx`) with ~31 slides organised into 5 native PowerPoint sections:
+Each run produces a **`.pptx` file** (requires `pip install python-pptx`) with ~27 slides organised into 5 native PowerPoint sections:
 
 | Section | Slides |
 |---------|--------|
 | **Cover** | Title, customer name, date |
+| **Contents** | Hyperlinked table of contents |
 | **Executive Summary** | KPI snapshot, health scorecard, capacity & growth, protection, ransomware readiness, top at-risk workloads, priority actions |
 | **Environment Topology** | Cluster/replication/archival/FortKnox diagram with connector labels and legend |
 | **Security Deep-Dive** | Security posture overview, user security & MFA, audit & governance activity, security recommendations |
-| **Backup Engineering** | SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations, **Scoring Methodology Reference (2 slides)** |
+| **Backup Engineering** | SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations |
 
-All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook. DataLock is RAG-coloured (red = no DataLock, amber = partial, green = full) across all slides where it appears. The two Scoring Methodology slides at the end of the deck document all four scoring models: Overall Health Score (6 dimensions + grade bands), Security Score (6 categories + MFA penalty), Ransomware Readiness (5 dimensions), and Workload Risk (4 factors). The topology diagram is also embedded as editable native Word shapes in the Word document's Environment section. Install `matplotlib` as a fallback for the Word topology if native shapes fail: `pip install matplotlib`.
+All data slides use green/amber/red RAG colour-coding consistent with the Excel workbook. DataLock is RAG-coloured (red = no DataLock, amber = partial, green = full) across all slides where it appears. Scoring methodology for all four models (Overall Health Score, Security Score, Ransomware Readiness, Workload Risk) is embedded inline at the bottom of each respective data slide — compact tables separated by a thin gray rule so they don't distract from the main data. Table body font is 10pt throughout. The topology diagram is also embedded as editable native Word shapes in the Word document's Environment section. Install `matplotlib` as a fallback for the Word topology if native shapes fail: `pip install matplotlib`.
 
 ---
 
