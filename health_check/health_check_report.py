@@ -5059,7 +5059,7 @@ def write_pptx(all_data, args, out_path):
                 (_C_AMB_BG, _C_AMB_TX) if gaps_n <= 5 else
                 (_C_RED_BG, _C_RED_TX))
         dl_f = ((_C_RED_BG, _C_RED_TX)
-                if not dl_lbl or dl_lbl.lower() in ("none", "no datalock") else
+                if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
                 (_C_AMB_BG, _C_AMB_TX)
                 if "partial" in (dl_lbl or "").lower() else
                 (_C_GRN_BG, _C_GRN_TX))
@@ -5102,7 +5102,7 @@ def write_pptx(all_data, args, out_path):
         mfa_f = (_C_GRN_BG, _C_GRN_TX) if no_mfa == 0 else (_C_RED_BG, _C_RED_TX)
         qr_f  = (_C_GRN_BG, _C_GRN_TX) if quorum else (_C_AMB_BG, _C_AMB_TX)
         dl_f  = ((_C_RED_BG, _C_RED_TX)
-                 if not dl_lbl or dl_lbl.lower() in ("none", "no datalock") else
+                 if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
                  (_C_AMB_BG, _C_AMB_TX)
                  if "partial" in (dl_lbl or "").lower() else
                  (_C_GRN_BG, _C_GRN_TX))
@@ -5374,7 +5374,7 @@ def write_pptx(all_data, args, out_path):
                   (_C_AMB_BG, _C_AMB_TX) if fk == "idle" else
                   (_C_RED_BG, _C_RED_TX))
         dl_f   = ((_C_RED_BG, _C_RED_TX)
-                  if not dl_lbl or dl_lbl == "None" else
+                  if not dl_lbl or dl_lbl.lower() in ("no", "none", "no datalock") else
                   (_C_AMB_BG, _C_AMB_TX)
                   if "partial" in (dl_lbl or "").lower() else
                   (_C_GRN_BG, _C_GRN_TX))
