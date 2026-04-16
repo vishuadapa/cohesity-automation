@@ -4648,8 +4648,8 @@ def write_pptx(all_data, args, out_path):
     today    = _dt.date.today().strftime("%B %d, %Y")
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    _C_HDR    = "#70AD47"   # Cohesity green — header bars
-    _C_DIV    = "#1A5C3A"   # Dark green — section dividers
+    _C_HDR    = "#70AD47"   # Cohesity green — data-slide header bars
+    _C_DIV    = "#1A5C3A"   # Dark green (legacy — kept for topology/misc use)
     _C_WHT    = "#FFFFFF"
     _C_BLK    = "#000000"
     _C_DGRY   = "#404040"
@@ -4657,6 +4657,10 @@ def write_pptx(all_data, args, out_path):
     _C_GRN_BG = "#E2EFDA"; _C_GRN_TX = "#375623"
     _C_AMB_BG = "#FFF2CC"; _C_AMB_TX = "#7F6000"
     _C_RED_BG = "#FFCCCC"; _C_RED_TX = "#9C0006"
+    # Cover / divider / TOC palette — Cohesity 2025 brand refresh
+    _C_BG     = "#0D0F0D"   # Near-black foundation
+    _C_VACC   = "#67BF1B"   # Vibrant Cohesity green accent
+    _C_BGROW  = "#161A16"   # Slightly lighter row bg for TOC cards
 
     # ── Presentation setup ────────────────────────────────────────────────────
     prs = _PptxPresentation()
@@ -4719,17 +4723,19 @@ def write_pptx(all_data, args, out_path):
 
     def _section_div(title, subtitle=""):
         slide = _blank()
-        _rect(slide, 0, 0, W, H, _C_DIV)
-        _rect(slide, 0, 2.78, W, 0.07, _C_HDR)
-        _rect(slide, 0, 4.00, W, 0.07, _C_HDR)
-        _txt(slide, title, 0.5, 1.1, W - 1.0, 1.6,
-             size=38, bold=True, color=_C_WHT, align="center")
+        _rect(slide, 0, 0, W, H, _C_BG)          # dark near-black bg
+        _rect(slide, 0, 0, 0.35, H, _C_VACC)     # vibrant green left bar
+        # Large section title — vertically centred
+        _txt(slide, title, 0.62, 2.10, W - 0.90, 1.50,
+             size=38, bold=True, color=_C_WHT, align="left")
+        # Thin green accent line below title
+        _rect(slide, 0.62, 3.72, 2.20, 0.04, _C_VACC)
         if subtitle:
-            _txt(slide, subtitle, 0.5, 4.15, W - 1.0, 0.7,
-                 size=13, color="#AAFFAA", align="center")
+            _txt(slide, subtitle, 0.62, 3.90, W - 0.90, 0.55,
+                 size=11, color="#777A77", align="left")
         _txt(slide, f"Cohesity Health Check  v{__version__}",
              0.2, H - 0.28, W - 0.4, 0.25,
-             size=7, color="#55AA77", align="right")
+             size=7, color="#445544", align="right")
         return slide
 
     def _rag(score, hi=75, lo=50):
@@ -4881,25 +4887,30 @@ def write_pptx(all_data, args, out_path):
 
     # ── Cover slide ───────────────────────────────────────────────────────────
     slide = _blank()
-    _rect(slide, 0, 0, W, H, _C_DIV)
-    _rect(slide, 0, 2.78, W, 0.08, _C_HDR)
-    _rect(slide, 0, 3.96, W, 0.08, _C_HDR)
+    _rect(slide, 0, 0, W, H, _C_BG)              # near-black foundation
+    _rect(slide, 0, 0, 0.35, H, _C_VACC)         # vibrant green left bar
+    # Subtle dark rule between title block and metadata
+    _rect(slide, 0.62, 3.46, W - 0.80, 0.03, "#2A2E2A")
+    # Title block
     _txt(slide, "Cohesity Environment",
-         0.5, 0.9, W - 1.0, 1.0,
-         size=40, bold=True, color=_C_WHT, align="center")
+         0.62, 1.30, W - 0.80, 0.80,
+         size=38, bold=True, color=_C_WHT, align="left")
     _txt(slide, "Health Check Report",
-         0.5, 1.86, W - 1.0, 1.0,
-         size=40, bold=True, color=_C_HDR, align="center")
+         0.62, 2.10, W - 0.80, 0.80,
+         size=38, bold=True, color=_C_VACC, align="left")
+    # Thin accent underline
+    _rect(slide, 0.62, 3.02, 3.60, 0.05, _C_VACC)
+    # Customer / date block
     if customer:
-        _txt(slide, customer, 0.5, 2.94, W - 1.0, 0.76,
-             size=24, color=_C_WHT, align="center")
-    _txt(slide, today, 0.5, 4.10, W - 1.0, 0.55,
-         size=16, color="#AAFFAA", align="center")
+        _txt(slide, customer, 0.62, 3.58, W - 0.80, 0.65,
+             size=22, color=_C_WHT, align="left")
+    _txt(slide, today, 0.62, 4.32, W - 0.80, 0.42,
+         size=14, color="#888888", align="left")
     _txt(slide, "Prepared using Cohesity Helios",
-         0.5, 4.75, W - 1.0, 0.40,
-         size=11, color="#88CCAA", align="center")
+         0.62, 4.82, W - 0.80, 0.35,
+         size=10, color="#555A55", align="left")
     _txt(slide, f"v{__version__}", W - 1.4, H - 0.32, 1.2, 0.28,
-         size=8, color="#558866", align="right")
+         size=8, color="#445544", align="right")
     _notes(slide,
            "Cohesity Environment Health Check Report. "
            "This deck was generated live from the Cohesity Helios API and covers all "
@@ -4915,6 +4926,9 @@ def write_pptx(all_data, args, out_path):
            "(narrative report) for a complete customer business review."
            + (f" Customer: {customer}." if customer else ""))
     _sec_starts.append(("Cover", 0))
+
+    # ── Contents slide (placeholder — populated after all slides are built) ───
+    toc_slide = _blank()
 
     # ── Section: Executive Summary ────────────────────────────────────────────
     _sec_starts.append(("Executive Summary", len(prs.slides)))
@@ -6111,6 +6125,77 @@ def write_pptx(all_data, args, out_path):
            "LOW = optimisation opportunity. "
            "See Excel Recommendations sheet for the full list with business impact "
            "descriptions and detailed remediation guidance.")
+
+    # ── Populate Contents slide (now that all slide indices are finalised) ─────
+    _rect(toc_slide, 0, 0, W, H, _C_BG)
+    _rect(toc_slide, 0, 0, 0.35, H, _C_VACC)
+    _header(toc_slide, "Contents", "Click a section to jump directly to it")
+    _footer(toc_slide)
+
+    _toc_items = [
+        ("Executive Summary",
+         "Environment snapshot  \u00b7  Health scorecard  \u00b7  "
+         "Storage capacity  \u00b7  Protection  \u00b7  Ransomware readiness  \u00b7  Priority actions"),
+        ("Environment Topology",
+         "Cluster connections  \u00b7  Replication targets  \u00b7  "
+         "Archival vaults  \u00b7  FortKnox / RPaaS"),
+        ("Security Deep-Dive",
+         "Security posture overview  \u00b7  User & MFA  \u00b7  "
+         "Governance & audit activity  \u00b7  Security recommendations"),
+        ("Backup Engineering",
+         "Software & hardware lifecycle  \u00b7  Coverage gaps  \u00b7  "
+         "Agent health  \u00b7  Source coverage  \u00b7  Workload risk  \u00b7  Recommendations"),
+    ]
+    _sec_dict    = dict(_sec_starts)
+    _toc_row_h   = 1.18
+    _toc_row_gap = 0.22
+    _toc_total   = len(_toc_items) * _toc_row_h + (len(_toc_items) - 1) * _toc_row_gap
+    _toc_y0      = (H - _toc_total) / 2 + 0.05   # vertically centred
+    _toc_x0, _toc_w = 0.55, W - 0.80
+
+    for _ti, (_tsec, _tdesc) in enumerate(_toc_items):
+        _ty = _toc_y0 + _ti * (_toc_row_h + _toc_row_gap)
+        # Row card
+        _row = toc_slide.shapes.add_shape(
+            _MSO_SHAPE.ROUNDED_RECTANGLE,
+            _PptxInches(_toc_x0), _PptxInches(_ty),
+            _PptxInches(_toc_w), _PptxInches(_toc_row_h))
+        _row.fill.solid()
+        _row.fill.fore_color.rgb = _rgb(_C_BGROW)
+        _row.line.color.rgb = _rgb("#252A25")
+        _row.line.width = _PptxInches(0.012)
+        # Hyperlink to section slide
+        _sidx = _sec_dict.get(_tsec)
+        if _sidx is not None and _sidx < len(prs.slides):
+            try:
+                _row.click_action.target_slide = prs.slides[_sidx]
+            except Exception:
+                pass
+        # Section number — vibrant green
+        _txt(toc_slide, f"{_ti + 1:02d}", _toc_x0 + 0.12, _ty + 0.08, 0.55, 0.52,
+             size=22, bold=True, color=_C_VACC)
+        # Vertical separator
+        _rect(toc_slide, _toc_x0 + 0.72, _ty + 0.12, 0.025, _toc_row_h - 0.24, "#2E352E")
+        # Section name
+        _txt(toc_slide, _tsec, _toc_x0 + 0.84, _ty + 0.10, _toc_w - 1.55, 0.40,
+             size=15, bold=True, color=_C_WHT)
+        # Description
+        _txt(toc_slide, _tdesc, _toc_x0 + 0.84, _ty + 0.56, _toc_w - 1.55, 0.50,
+             size=8.5, color="#777A77")
+        # Right arrow
+        _txt(toc_slide, "\u203a", _toc_x0 + _toc_w - 0.50, _ty + 0.28, 0.42, 0.55,
+             size=26, bold=True, color=_C_VACC, align="center")
+
+    _notes(toc_slide,
+           "Contents slide — click any section card to jump directly to that section. "
+           "Executive Summary: overview KPIs, health scorecard, capacity, protection, "
+           "ransomware readiness, and priority action items. "
+           "Environment Topology: live diagram of cluster connections, replication, "
+           "archival vaults, and FortKnox. "
+           "Security Deep-Dive: security posture table, user & MFA status, "
+           "governance and audit activity, security recommendations. "
+           "Backup Engineering: software and hardware lifecycle, coverage gaps, "
+           "agent health, source coverage, workload risk heatmap, recommendations.")
 
     # ── Register native PowerPoint sections then save ─────────────────────────
     _register_sections(prs, _sec_starts)
