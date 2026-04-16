@@ -5871,7 +5871,7 @@ def write_pptx(all_data, args, out_path):
             if st in _SUC: continue
             end_t = lb.get("endTimeUsecs") or lb.get("startTimeUsecs") or 0
             sla_v = bool(lb.get("isSlaViolated") or lr.get("isSlaViolated"))
-            end_s = (_dt.datetime.utcfromtimestamp(end_t / 1_000_000)
+            end_s = (_dt.datetime.fromtimestamp(end_t / 1_000_000, tz=_dt.timezone.utc)
                      .strftime("%Y-%m-%d %H:%M")
                      if end_t else "Never")
             rows_gap.append(
