@@ -8136,6 +8136,7 @@ def write_word(all_data, args):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    _t0 = time.time()
     parser = argparse.ArgumentParser(
         description=f"Cohesity Health Check Report v{__version__}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -8384,7 +8385,9 @@ def main():
     out_parts = [f"{args.output}.xlsx", f"{args.output}.docx"]
     if pptx_path:
         out_parts.append(pptx_path)
+    elapsed = time.time() - _t0
     print(f"\nComplete.  Output: {' / '.join(out_parts)}")
+    print(f"  Runtime  : {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
 
 if __name__ == "__main__":
