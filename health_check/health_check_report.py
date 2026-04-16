@@ -5130,32 +5130,14 @@ def write_pptx(all_data, args, out_path):
     _header(slide, "Protection Summary",
             "Backup success rates, SLA compliance, and coverage gaps per cluster")
     _footer(slide)
-    hdr_prot = ["Cluster", "Groups", "Success Rate", "SLA Violations",
+    hdr_prot = ["Cluster", "Groups", "Success Rate", "SLA Pass %",
                 "DataLock", "Coverage Gaps", "Prot. Score"]
     rows_prot, fills_prot = [], []
     _SUC = {"kSuccess", "Succeeded", "kWarning"}
     for cd in all_data:
         groups   = cd["groups"]
         policies = cd["policies"]
-        if quick:
-            success    = sum(1 for g in groups
-                             if (g.get("lastRun") or {})
-                                .get("localBackupInfo", {})
-                                .get("status", "") in _SUC)
-            sla_viols  = sum(1 for g in groups
-                             if (g.get("lastRun") or {})
-                                .get("isSlaViolated", False))
-            total_runs = len(groups) or 1
-        else:
-            all_runs  = [r for runs in cd["group_runs"].values()
-                         for r in runs]
-            success   = sum(1 for r in all_runs
-                            if (r.get("localBackupInfo") or {})
-                               .get("status", "") in _SUC)
-            sla_viols = sum(1 for r in all_runs
-                            if r.get("isSlaViolated", False))
-            total_runs = len(all_runs) or 1
-        succ_pct  = success / total_runs * 100
+        succ_pct, sla_pct = _success_stats(cd)
         _, dl_lbl, _, _ = _cluster_datalock(policies, groups)
         gaps_n    = sum(1 for g in groups
                         if (g.get("lastRun") or {})
@@ -5163,12 +5145,10 @@ def write_pptx(all_data, args, out_path):
                            .get("status", "") not in _SUC)
         p_score   = _score_protection(cd, quick)
         rows_prot.append([cd["name"], len(groups),
-                          f"{succ_pct:.1f}%", sla_viols,
+                          f"{succ_pct:.1f}%", f"{sla_pct:.1f}%",
                           dl_lbl or "None", gaps_n, p_score])
-        su_f = _rag(succ_pct)
-        sl_f = ((_C_GRN_BG, _C_GRN_TX) if sla_viols == 0 else
-                (_C_AMB_BG, _C_AMB_TX) if sla_viols <= 3 else
-                (_C_RED_BG, _C_RED_TX))
+        su_f = _rag(succ_pct, hi=95, lo=90)
+        sl_f = _rag(sla_pct, hi=99, lo=95)
         gp_f = ((_C_GRN_BG, _C_GRN_TX) if gaps_n == 0 else
                 (_C_AMB_BG, _C_AMB_TX) if gaps_n <= 5 else
                 (_C_RED_BG, _C_RED_TX))
@@ -5183,9 +5163,9 @@ def write_pptx(all_data, args, out_path):
            _cx(_cw_prot), 0.68, fills=fills_prot)
     _notes(slide,
            "Backup health summary per cluster across all protection groups. "
-           "Success Rate = percentage of runs in the lookback window that succeeded "
-           "(kSuccess, Succeeded, or kWarning status). "
-           "SLA Violations = number of runs that exceeded their SLA window. "
+           "Success Rate = average of per-day success % across the lookback window "
+           "(kSuccess + kWarning counted as success) — identical to the Trends tab. "
+           "SLA Pass % = percentage of runs completed within their SLA window. "
            "DataLock (WORM) status: Red = no DataLock on any group (immutable backups "
            "absent — ransomware risk), Amber = partial coverage, Green = all groups covered. "
            "Coverage Gaps = groups whose last run was not successful. "
