@@ -5010,6 +5010,59 @@ def write_pptx(all_data, args, out_path):
            "Overall score is the weighted sum; Grade: A>=90, B>=80, C>=70, D>=60, F<60. "
            "Red = below 50, Amber = 50-74, Green = 75 or above.")
 
+    # ── Health Score — Scoring Methodology ────────────────────────────────────
+    slide = _blank()
+    _header(slide, "Health Score \u2014 Scoring Methodology",
+            "Weighted dimensions (0\u2013100) with grade bands and RAG thresholds")
+    _footer(slide)
+    _hs_cols = [2.6, 1.0, 1.5, 1.5, 1.5]
+    _txt(slide, "Dimension Weights", _cx(_hs_cols), 0.65, sum(_hs_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Dimension", "Weight", "Green \u226575", "Amber 50\u201374", "Red <50"],
+           [
+               ["Protection Success", "25%", "\u226595%",      "90\u201394%",   "<90%"],
+               ["SLA Compliance",     "15%", "\u226599%",      "90\u201398%",   "<90%"],
+               ["Infrastructure",     "15%", "100% nodes",     "\u226590%",     "<90%"],
+               ["Storage Capacity",   "20%", "\u226475% full", "75\u201385%",   ">85%"],
+               ["Security Score",     "15%", "\u226575 pts",   "50\u201374",    "<50"],
+               ["Alerts",             "10%", "No criticals",   "\u22641 crit",  ">1 crit"],
+           ],
+           _hs_cols, _cx(_hs_cols), 0.95, rh=0.32,
+           fills=[[None, None,
+                   (_C_GRN_BG, _C_GRN_TX),
+                   (_C_AMB_BG, _C_AMB_TX),
+                   (_C_RED_BG, _C_RED_TX)]] * 6)
+    _gd_cols = [1.4, 1.4]
+    _txt(slide, "Grade Bands", _cx(_gd_cols), 3.30, sum(_gd_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Grade", "Score"],
+           [["A", "\u226590"], ["B", "\u226580"], ["C", "\u226570"],
+            ["D", "\u226560"], ["F", "<60"]],
+           _gd_cols, _cx(_gd_cols), 3.60, rh=0.32,
+           fills=[
+               [(_C_GRN_BG, _C_GRN_TX), None],
+               [(_C_GRN_BG, _C_GRN_TX), None],
+               [(_C_AMB_BG, _C_AMB_TX), None],
+               [(_C_AMB_BG, _C_AMB_TX), None],
+               [(_C_RED_BG, _C_RED_TX), None],
+           ])
+    _txt(slide,
+         "RAG thresholds: \u25a0 Green \u226575  \u25a0 Amber 50\u201374  \u25a0 Red <50",
+         0.1, H - 0.55, W - 0.2, 0.30, size=9, color=_C_DGRY, align="center")
+    _notes(slide,
+           "Health Score Methodology (0-100). "
+           "Weighted combination of six dimensions: "
+           "Protection Success (25%) — backup run success rate in the lookback window. "
+           "SLA Compliance (15%) — percentage of runs completing within SLA. "
+           "Infrastructure (15%) — healthy node ratio. "
+           "Storage Capacity (20%) — based on used % of usable capacity. "
+           "Security (15%) — composite security posture score. "
+           "Alerts (10%) — open critical/warning alert penalties. "
+           "Overall score = weighted sum; Grade bands: A>=90, B>=80, C>=70, D>=60, F<60. "
+           "RAG thresholds: Green>=75, Amber 50-74, Red<50.")
+
     # ── Capacity & Growth ─────────────────────────────────────────────────────
     slide = _blank()
     _header(slide, "Storage Capacity & Growth",
@@ -5193,6 +5246,53 @@ def write_pptx(all_data, args, out_path):
            "Quorum (10 pts): enabled = 10. "
            "Labels: Strong (>=80), Moderate (60-79), High Risk (40-59), Critical (<40). "
            "Clusters scoring Critical or High Risk should be prioritised for immediate remediation.")
+
+    # ── Ransomware Readiness — Scoring Methodology ────────────────────────────
+    slide = _blank()
+    _header(slide, "Ransomware Readiness \u2014 Scoring Methodology",
+            "How the Ransomware Readiness Score (0\u2013100) is calculated per cluster")
+    _footer(slide)
+    _rw_cols = [2.4, 1.1, 8.5]
+    _txt(slide, "Scoring Dimensions", _cx(_rw_cols), 0.65, sum(_rw_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Dimension", "Max Pts", "Detail"],
+           [
+               ["DataLock (WORM) coverage",   "30 pts",
+                "30=Compliance mode, 20=any mode, 15=partial\u226550%, 8=partial<50%, 0=none"],
+               ["FortKnox / indelible vault",  "25 pts",
+                "25=Active, 10=Idle, 0=Not configured"],
+               ["Clean recovery window",       "20 pts",
+                "20=\u226530d, 15=14\u201329d, 10=7\u201313d, 5=2\u20136d, 2=<2d, 0=none"],
+               ["Quorum",                      "10 pts",
+                "10=enabled (or N/A for direct clusters), 0=disabled"],
+               ["Admin MFA",                   "15 pts",
+                "15=all admins enabled, 8=partial, 0=none enabled"],
+           ],
+           _rw_cols, _cx(_rw_cols), 0.95, rh=0.38)
+    _rw_lbl_cols = [1.8, 1.2]
+    _txt(slide, "Readiness Labels", _cx(_rw_lbl_cols), 3.50, sum(_rw_lbl_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Label", "Score"],
+           [["Strong",    "\u226580"], ["Moderate",  "60\u201379"],
+            ["High Risk", "40\u201359"], ["Critical",  "<40"]],
+           _rw_lbl_cols, _cx(_rw_lbl_cols), 3.80, rh=0.32,
+           fills=[
+               [(_C_GRN_BG, _C_GRN_TX), None],
+               [(_C_AMB_BG, _C_AMB_TX), None],
+               [(_C_RED_BG, _C_RED_TX), None],
+               [(_C_RED_BG, _C_RED_TX), None],
+           ])
+    _notes(slide,
+           "Ransomware Readiness Score Methodology (0-100). "
+           "DataLock WORM coverage (30 pts max): Compliance mode=30, any mode=20, "
+           "partial>=50%=15, partial<50%=8, none=0. "
+           "FortKnox / indelible vault (25 pts): Active=25, Idle=10, none=0. "
+           "Clean recovery window (20 pts): based on age of oldest clean successful snapshot. "
+           "Quorum (10 pts): enabled=10; N/A treated as enabled for direct-mode clusters. "
+           "Admin MFA (15 pts): all enabled=15, partial=8, none=0. "
+           "Labels: Strong>=80, Moderate 60-79, High Risk 40-59, Critical<40.")
 
     # ── Top At-Risk Workloads ─────────────────────────────────────────────────
     slide = _blank()
@@ -5500,7 +5600,58 @@ def write_pptx(all_data, args, out_path):
            "Partial (Amber), No DataLock (Red — ransomware risk). "
            "Admin MFA: multi-factor authentication on admin accounts (Red = missing). "
            "Security Score: overall 0-100 security posture score. "
-           "See the Scoring Methodology slides at the end of this deck for point breakdown.")
+           "See the Security Score Methodology slide on the next slide for the full point breakdown.")
+
+    # ── Security Score — Scoring Methodology ──────────────────────────────────
+    slide = _blank()
+    _header(slide, "Security Score \u2014 Scoring Methodology",
+            "Additive point model (0\u2013100) \u2014 controls present add points; missing admin MFA deducts")
+    _footer(slide)
+    _sec_cols = [3.8, 1.8]
+    _txt(slide, "Security Score Components", _cx(_sec_cols), 0.65, sum(_sec_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Control", "Points"],
+           [
+               ["Cluster encryption at rest",         "+15 pts"],
+               ["Storage domain encryption",          "+15 pts"],
+               ["Vault (archival target) configured", "+15 pts"],
+               ["Replication target configured",      "+15 pts"],
+               ["FortKnox active",                    "+20 pts"],
+               ["FortKnox idle",                      "+10 pts"],
+               ["DataLock Compliance mode",           "+20 pts"],
+               ["DataLock any mode (no compliance)",  "+15 pts"],
+               ["DataLock partial \u226550%",         " +8 pts"],
+               ["DataLock partial <50%",              " +3 pts"],
+               ["Admin accounts without MFA",         "\u221210 pts  (penalty)"],
+           ],
+           _sec_cols, _cx(_sec_cols), 0.95, rh=0.32,
+           fills=[
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_GRN_BG, _C_GRN_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_AMB_BG, _C_AMB_TX)],
+               [None, (_C_RED_BG, _C_RED_TX)],
+           ])
+    _txt(slide,
+         "Score is capped at 100.  Controls stack additively.  "
+         "Thresholds: \u25a0 Green \u226575  \u25a0 Amber 50\u201374  \u25a0 Red <50",
+         _cx(_sec_cols), 4.75, sum(_sec_cols), 0.35, size=9, color=_C_DGRY)
+    _notes(slide,
+           "Security Score Methodology (0-100). "
+           "Additive model — each control present adds points (score capped at 100). "
+           "Cluster encryption: +15. Storage domain encryption: +15. "
+           "Vault/archival configured: +15. Replication configured: +15. "
+           "FortKnox active: +20 (idle: +10). "
+           "DataLock: Compliance mode +20, any mode +15, partial>=50% +8, partial<50% +3. "
+           "Penalty: -10 if any admin account lacks MFA. "
+           "Thresholds: Green>=75, Amber 50-74, Red<50.")
 
     # ── User Security & MFA ───────────────────────────────────────────────────
     slide = _blank()
@@ -5869,6 +6020,51 @@ def write_pptx(all_data, args, out_path):
            "High (25-49) = significant gaps needing prompt attention. "
            "See Excel Workload Risk Heatmap sheet for all groups including Medium and Low.")
 
+    # ── Workload Risk — Scoring Methodology ───────────────────────────────────
+    slide = _blank()
+    _header(slide, "Workload Risk \u2014 Scoring Methodology",
+            "How per-protection-group Risk Score (0\u2013100) is calculated  "
+            "\u00b7  Lower score = higher risk")
+    _footer(slide)
+    _risk_cols = [2.0, 1.0, 8.5]
+    _txt(slide, "Risk Score Factors", _cx(_risk_cols), 0.65, sum(_risk_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Factor", "Max Pts", "Detail"],
+           [
+               ["Last run status", "35 pts",
+                "Success=35, Warning=25, Running=20, Skipped=10, Paused=5, Failed=0"],
+               ["SLA compliance",  "25 pts",
+                "25=no violation in the lookback window, 0=at least one SLA breach"],
+               ["RPO gap",         "25 pts",
+                "25=\u22644h, 20=\u22648h, 15=\u226424h, 8=\u226448h, 0=>48h since last success"],
+               ["DataLock",        "15 pts",
+                "15=Compliance or FortKnox-indelible, 10=Administrative, 0=none"],
+           ],
+           _risk_cols, _cx(_risk_cols), 0.95, rh=0.38)
+    _risk_lbl_cols = [1.8, 1.2]
+    _txt(slide, "Risk Levels", _cx(_risk_lbl_cols), 3.15, sum(_risk_lbl_cols), 0.28,
+         size=11, bold=True, color=_DG_FK)
+    _table(slide,
+           ["Level", "Score"],
+           [["Low",      "\u226575"], ["Medium",   "50\u201374"],
+            ["High",     "25\u201349"], ["Critical", "<25"]],
+           _risk_lbl_cols, _cx(_risk_lbl_cols), 3.45, rh=0.32,
+           fills=[
+               [(_C_GRN_BG, _C_GRN_TX), None],
+               [(_C_AMB_BG, _C_AMB_TX), None],
+               [(_C_RED_BG, _C_RED_TX), None],
+               [(_C_RED_BG, _C_RED_TX), None],
+           ])
+    _notes(slide,
+           "Workload Risk Score Methodology (0-100 per protection group; higher score = lower risk). "
+           "Last run status (35 pts): Success=35, Warning=25, Running=20, Skipped=10, Paused=5, Failed=0. "
+           "SLA compliance (25 pts): 25 if no violation in lookback, 0 if any breach. "
+           "RPO gap (25 pts): time since last successful run — <=4h=25, <=8h=20, <=24h=15, <=48h=8, >48h=0. "
+           "DataLock (15 pts): Compliance or FK-indelible=15, Administrative=10, none=0. "
+           "Risk levels: Low>=75 (Green), Medium 50-74 (Amber), High 25-49 (Red), Critical<25 (Red). "
+           "Excel Workload Risk Heatmap shows all groups; PPT shows Critical and High risk only.")
+
     # ── Engineering Recommendations ───────────────────────────────────────────
     slide = _blank()
     _header(slide, "Engineering Recommendations",
@@ -5909,173 +6105,6 @@ def write_pptx(all_data, args, out_path):
            "LOW = optimisation opportunity. "
            "See Excel Recommendations sheet for the full list with business impact "
            "descriptions and detailed remediation guidance.")
-
-    # ── Scoring Methodology — slide 1: Health Score + Security Score ──────────
-    slide = _blank()
-    _header(slide, "Scoring Methodology Reference",
-            "How Overall Health, Security, Ransomware, and Risk scores are calculated")
-    _footer(slide)
-
-    # Overall Health Score table (left half)
-    _txt(slide, "Overall Health Score  (0\u2013100)", 0.22, 0.65, 5.8, 0.28,
-         size=11, bold=True, color=_DG_FK)
-    hs_hdr  = ["Dimension", "Weight", "Green \u226575", "Amber 50\u201374", "Red <50"]
-    hs_rows = [
-        ["Protection Success", "25%", "\u226595%", "90\u201394%", "<90%"],
-        ["SLA Compliance",     "15%", "\u226599%", "90\u201398%", "<90%"],
-        ["Infrastructure",     "15%", "100% nodes", "\u226590%", "<90%"],
-        ["Storage Capacity",   "20%", "\u226475% full", "75\u201385%", ">85%"],
-        ["Security Score",     "15%", "\u226575 pts",  "50\u201374", "<50"],
-        ["Alerts",             "10%", "No criticals", "\u22641 crit", ">1 crit"],
-    ]
-    hs_fills = [
-        [None, None, (_C_GRN_BG, _C_GRN_TX), (_C_AMB_BG, _C_AMB_TX), (_C_RED_BG, _C_RED_TX)],
-    ] * len(hs_rows)
-    grade_hdr  = ["Grade", "Score"]
-    grade_rows = [["A", "\u226590"], ["B", "\u226580"], ["C", "\u226570"],
-                  ["D", "\u226560"], ["F", "<60"]]
-    grade_fills = [
-        [(_C_GRN_BG, _C_GRN_TX), None],
-        [(_C_GRN_BG, _C_GRN_TX), None],
-        [(_C_AMB_BG, _C_AMB_TX), None],
-        [(_C_AMB_BG, _C_AMB_TX), None],
-        [(_C_RED_BG, _C_RED_TX), None],
-    ]
-    _table(slide, hs_hdr, hs_rows, [2.6, 1.0, 1.5, 1.5, 1.5], 0.22, 0.95,
-           fills=hs_fills)
-    _table(slide, grade_hdr, grade_rows, [1.0, 1.0], _cx([1.0, 1.0]) * 0.5, 4.55, fills=grade_fills)
-
-    # Security Score table (right half)
-    _txt(slide, "Security Score  (0\u2013100)", 8.6, 0.65, 5.0, 0.28,
-         size=11, bold=True, color=_DG_FK)
-    sec_hdr  = ["Dimension", "Points"]
-    sec_rows = [
-        ["Cluster encryption",         "15 pts"],
-        ["Storage domain encryption",  "15 pts"],
-        ["Vault configured",           "15 pts"],
-        ["Replication target",         "15 pts"],
-        ["FortKnox active / idle",     "20 / 10 pts"],
-        ["DataLock Compliance / any",  "20 / 15 pts"],
-        ["DataLock partial \u226550%", " 8 pts"],
-        ["DataLock partial <50%",      " 3 pts"],
-        ["Admin MFA penalty",          "\u221210 pts"],
-    ]
-    sec_fills = [
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_GRN_BG, _C_GRN_TX)],
-        [None, (_C_AMB_BG, _C_AMB_TX)],
-        [None, (_C_AMB_BG, _C_AMB_TX)],
-        [None, (_C_RED_BG, _C_RED_TX)],
-    ]
-    _table(slide, sec_hdr, sec_rows, [3.4, 1.6], 8.6, 0.95, fills=sec_fills)
-    _notes(slide,
-           "Scoring reference for the two primary cluster-level scoring models. "
-           "LEFT — Overall Health Score (0-100): weighted combination of six dimensions. "
-           "Protection Success 25%: backup run success rate in the lookback window. "
-           "SLA Compliance 15%: percentage of runs completing within SLA. "
-           "Infrastructure 15%: healthy node ratio. "
-           "Storage Capacity 20%: score based on used % of usable capacity. "
-           "Security 15%: composite security posture (see right panel). "
-           "Alerts 10%: deducted for open critical and warning alerts. "
-           "Grade bands: A>=90, B>=80, C>=70, D>=60, F<60. "
-           "RIGHT — Security Score (0-100): additive model capped at 100. "
-           "Cluster encryption +15, SD encryption +15, vault +15, replication +15, "
-           "FortKnox active +20 / idle +10, DataLock Compliance +20 / any mode +15 / "
-           "partial >=50% +8 / partial <50% +3. Admin MFA penalty: -10 if any admin lacks MFA.")
-
-    # ── Scoring Methodology — slide 2: Ransomware + Risk + RAG ───────────────
-    slide = _blank()
-    _header(slide, "Scoring Methodology Reference  (continued)",
-            "Ransomware Readiness, Workload Risk, and RAG thresholds")
-    _footer(slide)
-
-    # Ransomware Readiness Score (left)
-    _txt(slide, "Ransomware Readiness Score  (0\u2013100)",
-         0.22, 0.65, 6.0, 0.28, size=11, bold=True, color=_DG_FK)
-    rw_hdr  = ["Dimension", "Max", "Detail"]
-    rw_rows = [
-        ["DataLock (WORM) coverage",  "30 pts",
-         "30=Compliance, 20=any mode, 15=partial\u226550%, 8=partial<50%"],
-        ["FortKnox / indelible vault", "25 pts",
-         "25=Active, 10=Idle, 0=absent"],
-        ["Clean recovery window",      "20 pts",
-         "20=\u226530d, 15=14\u201329d, 10=7\u201313d, 5=2\u20136d, 2=<2d"],
-        ["Quorum",                     "10 pts",
-         "10=enabled, 0=disabled"],
-        ["Admin MFA",                  "15 pts",
-         "15=all enabled, 8=partial, 0=none"],
-    ]
-    rw_lbl_hdr  = ["Label", "Score"]
-    rw_lbl_rows = [
-        ["Strong",    "\u226580"],
-        ["Moderate",  "60\u201379"],
-        ["High Risk", "40\u201359"],
-        ["Critical",  "<40"],
-    ]
-    rw_lbl_fills = [
-        [(_C_GRN_BG, _C_GRN_TX), None],
-        [(_C_AMB_BG, _C_AMB_TX), None],
-        [(_C_RED_BG, _C_RED_TX), None],
-        [(_C_RED_BG, _C_RED_TX), None],
-    ]
-    _table(slide, rw_hdr, rw_rows, [2.4, 1.1, 5.5], 0.22, 0.95)
-    _table(slide, rw_lbl_hdr, rw_lbl_rows, [1.5, 1.1], _cx([1.5, 1.1]) * 0.5, 3.85,
-           fills=rw_lbl_fills)
-
-    # Workload Risk Score (right)
-    _txt(slide, "Workload Risk Score  (per protection group)",
-         9.5, 0.65, 4.5, 0.28, size=11, bold=True, color=_DG_FK)
-    risk_hdr  = ["Factor", "Max", "Detail"]
-    risk_rows = [
-        ["Last run status", "35 pts",
-         "35=Success, 25=Warning, 20=Running, 10=Skipped, 5=Paused, 0=Failed"],
-        ["SLA compliance",  "25 pts", "25=no violation, 0=violated"],
-        ["RPO gap",         "25 pts",
-         "25=\u22644h, 20=\u22648h, 15=\u226424h, 8=\u226448h, 0=>48h"],
-        ["DataLock",        "15 pts",
-         "15=Compliance or FK-indelible, 10=Administrative, 0=none"],
-    ]
-    risk_lbl_hdr  = ["Level", "Score"]
-    risk_lbl_rows = [
-        ["Low",      "\u226575"],
-        ["Medium",   "50\u201374"],
-        ["High",     "25\u201349"],
-        ["Critical", "<25"],
-    ]
-    risk_lbl_fills = [
-        [(_C_GRN_BG, _C_GRN_TX), None],
-        [(_C_AMB_BG, _C_AMB_TX), None],
-        [(_C_RED_BG, _C_RED_TX), None],
-        [(_C_RED_BG, _C_RED_TX), None],
-    ]
-    _table(slide, risk_hdr, risk_rows, [1.8, 1.0, 4.5], 9.5, 0.95)
-    _table(slide, risk_lbl_hdr, risk_lbl_rows, [1.5, 1.0], 9.5, 4.25,
-           fills=risk_lbl_fills)
-
-    # RAG legend at bottom of slide 2
-    _txt(slide,
-         "RAG Colour Legend:  "
-         "\u25a0 Green \u226575  \u25a0 Amber 50\u201374  \u25a0 Red <50  "
-         "(Health/Security/Risk scores)     "
-         "Ransomware: Strong \u226580  |  Moderate 60\u201379  |  "
-         "High Risk 40\u201359  |  Critical <40",
-         0.1, H - 0.55, W - 0.2, 0.30, size=8, color=_C_DGRY, align="center")
-    _notes(slide,
-           "Scoring reference for all four scoring models used throughout this deck. "
-           "LEFT — Ransomware Readiness Score (0-100): DataLock WORM (30 pts), "
-           "FortKnox indelible vault (25 pts), clean recovery window depth (20 pts), "
-           "quorum (10 pts), admin MFA (15 pts). "
-           "Labels: Strong >=80, Moderate 60-79, High Risk 40-59, Critical <40. "
-           "RIGHT — Workload Risk Score (0-100) per protection group: "
-           "last run status (35 pts), SLA compliance (25 pts), RPO gap (25 pts), "
-           "DataLock (15 pts). "
-           "Levels: Low >=75, Medium 50-74, High 25-49, Critical <25. "
-           "RAG thresholds (bottom): Green >=75, Amber 50-74, Red <50 for health/security/risk. "
-           "All scoring models use higher = better convention.")
 
     # ── Register native PowerPoint sections then save ─────────────────────────
     _register_sections(prs, _sec_starts)
