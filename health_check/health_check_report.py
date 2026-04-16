@@ -4648,19 +4648,20 @@ def write_pptx(all_data, args, out_path):
     today    = _dt.date.today().strftime("%B %d, %Y")
 
     # ── Colour palette ────────────────────────────────────────────────────────
-    _C_HDR    = "#70AD47"   # Cohesity green — data-slide header bars
-    _C_DIV    = "#1A5C3A"   # Dark green (legacy — kept for topology/misc use)
+    _C_HDR    = "#67BF1B"   # Cohesity vibrant green — header bars & accents
+    _C_DIV    = "#1A5C3A"   # Dark green (topology/misc legacy use)
     _C_WHT    = "#FFFFFF"
-    _C_BLK    = "#000000"
+    _C_BLK    = "#0C0C0C"
     _C_DGRY   = "#404040"
     _C_LGRY   = "#F5F5F5"   # alternating table row tint
     _C_GRN_BG = "#E2EFDA"; _C_GRN_TX = "#375623"
     _C_AMB_BG = "#FFF2CC"; _C_AMB_TX = "#7F6000"
     _C_RED_BG = "#FFCCCC"; _C_RED_TX = "#9C0006"
-    # Cover / divider / TOC palette — Cohesity 2025 brand refresh
-    _C_BG     = "#0D0F0D"   # Near-black foundation
+    # Cover / divider / TOC palette — Cohesity 2025 template
+    _C_BG     = "#FFFFFF"   # White background
     _C_VACC   = "#67BF1B"   # Vibrant Cohesity green accent
-    _C_BGROW  = "#161A16"   # Slightly lighter row bg for TOC cards
+    _C_BGROW  = "#F4F6F4"   # Very light green-tinted white for TOC cards
+    _C_FLBG   = "#F8FAF8"   # Near-white slide tint (light slides)
 
     # ── Presentation setup ────────────────────────────────────────────────────
     prs = _PptxPresentation()
@@ -4716,26 +4717,30 @@ def write_pptx(all_data, args, out_path):
                  size=9, color="#DDEEDD")
 
     def _footer(slide):
-        _txt(slide,
-             f"Cohesity Health Check  v{__version__}  \u00b7  Generated {today}",
-             0.2, H - 0.24, W - 0.4, 0.22,
+        # COHESITY wordmark — left
+        _txt(slide, "COHESITY", 0.15, H - 0.30, 1.20, 0.24,
+             size=9, bold=True, color=_C_BLK)
+        # Copyright — centre
+        _txt(slide, "\u00a9 2025 Cohesity Inc. All rights reserved.",
+             1.40, H - 0.30, W - 4.0, 0.24,
+             size=7, color="#888888")
+        # Version + date — right
+        _txt(slide, f"v{__version__}  \u00b7  {today}",
+             W - 2.6, H - 0.30, 2.4, 0.24,
              size=7, color="#AAAAAA", align="right")
 
     def _section_div(title, subtitle=""):
         slide = _blank()
-        _rect(slide, 0, 0, W, H, _C_BG)          # dark near-black bg
-        _rect(slide, 0, 0, 0.35, H, _C_VACC)     # vibrant green left bar
-        # Large section title — vertically centred
-        _txt(slide, title, 0.62, 2.10, W - 0.90, 1.50,
-             size=38, bold=True, color=_C_WHT, align="left")
-        # Thin green accent line below title
-        _rect(slide, 0.62, 3.72, 2.20, 0.04, _C_VACC)
+        _rect(slide, 0, 0, W, H, _C_BG)              # white background
+        _rect(slide, 0, 0, 0.06, H, _C_VACC)         # thin green left bar
+        # Green block — left ~62%, vertically centred (matches Cohesity chapter slide)
+        _rect(slide, 0.06, 1.85, 8.20, 2.95, _C_VACC)
+        _txt(slide, title, 0.32, 2.10, 7.70, 2.20,
+             size=36, bold=True, color=_C_WHT, align="left")
         if subtitle:
-            _txt(slide, subtitle, 0.62, 3.90, W - 0.90, 0.55,
-                 size=11, color="#777A77", align="left")
-        _txt(slide, f"Cohesity Health Check  v{__version__}",
-             0.2, H - 0.28, W - 0.4, 0.25,
-             size=7, color="#445544", align="right")
+            _txt(slide, subtitle, 0.15, 4.95, 9.00, 0.55,
+                 size=11, color="#555555", align="left")
+        _footer(slide)
         return slide
 
     def _rag(score, hi=75, lo=50):
@@ -4887,30 +4892,30 @@ def write_pptx(all_data, args, out_path):
 
     # ── Cover slide ───────────────────────────────────────────────────────────
     slide = _blank()
-    _rect(slide, 0, 0, W, H, _C_BG)              # near-black foundation
-    _rect(slide, 0, 0, 0.35, H, _C_VACC)         # vibrant green left bar
-    # Subtle dark rule between title block and metadata
-    _rect(slide, 0.62, 3.46, W - 0.80, 0.03, "#2A2E2A")
-    # Title block
+    _rect(slide, 0, 0, W, H, _C_BG)          # white background
+    _rect(slide, 0, 0, 0.06, H, _C_VACC)     # thin green left bar
+    # Green title block (matches Cohesity cover template)
+    _rect(slide, 0.06, 1.30, 8.20, 3.90, _C_VACC)
+    # Title text inside green block — white bold
     _txt(slide, "Cohesity Environment",
-         0.62, 1.30, W - 0.80, 0.80,
-         size=38, bold=True, color=_C_WHT, align="left")
+         0.28, 1.55, 7.80, 0.80,
+         size=36, bold=True, color=_C_WHT, align="left")
     _txt(slide, "Health Check Report",
-         0.62, 2.10, W - 0.80, 0.80,
-         size=38, bold=True, color=_C_VACC, align="left")
-    # Thin accent underline
-    _rect(slide, 0.62, 3.02, 3.60, 0.05, _C_VACC)
-    # Customer / date block
+         0.28, 2.38, 7.80, 0.80,
+         size=36, bold=True, color=_C_WHT, align="left")
+    # Thin white rule inside block
+    _rect(slide, 0.28, 3.27, 3.80, 0.04, _C_WHT)
+    # Customer / date inside block
     if customer:
-        _txt(slide, customer, 0.62, 3.58, W - 0.80, 0.65,
-             size=22, color=_C_WHT, align="left")
-    _txt(slide, today, 0.62, 4.32, W - 0.80, 0.42,
-         size=14, color="#888888", align="left")
+        _txt(slide, customer, 0.28, 3.40, 7.80, 0.55,
+             size=20, bold=True, color=_C_WHT, align="left")
+    _txt(slide, today, 0.28, 3.97, 7.80, 0.38,
+         size=13, color="#DDFFD0", align="left")
+    # Below block
     _txt(slide, "Prepared using Cohesity Helios",
-         0.62, 4.82, W - 0.80, 0.35,
-         size=10, color="#555A55", align="left")
-    _txt(slide, f"v{__version__}", W - 1.4, H - 0.32, 1.2, 0.28,
-         size=8, color="#445544", align="right")
+         0.15, 5.38, 8.00, 0.32,
+         size=9, color="#888888", align="left")
+    _footer(slide)
     _notes(slide,
            "Cohesity Environment Health Check Report. "
            "This deck was generated live from the Cohesity Helios API and covers all "
@@ -4949,8 +4954,8 @@ def write_pptx(all_data, args, out_path):
         sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
         for cd in all_data)
     kpi_data = [
-        ("Clusters",        len(all_data), _C_DIV,    None),
-        ("Nodes",           n_nodes,       _DG_TEAL,  None),
+        ("Clusters",        len(all_data), "#2E5A8E",  None),
+        ("Nodes",           n_nodes,       _C_VACC,   None),
         ("Prot. Groups",    n_groups,      _C_HDR,    None),
         ("Policies",        n_policies,    "#5B6E8A", None),
         ("Vaults",          n_vaults,      _DG_ARCH,  None),
@@ -6127,8 +6132,8 @@ def write_pptx(all_data, args, out_path):
            "descriptions and detailed remediation guidance.")
 
     # ── Populate Contents slide (now that all slide indices are finalised) ─────
-    _rect(toc_slide, 0, 0, W, H, _C_BG)
-    _rect(toc_slide, 0, 0, 0.35, H, _C_VACC)
+    _rect(toc_slide, 0, 0, W, H, _C_BG)          # white background
+    _rect(toc_slide, 0, 0, 0.06, H, _C_VACC)     # thin green left bar
     _header(toc_slide, "Contents", "Click a section to jump directly to it")
     _footer(toc_slide)
 
@@ -6151,19 +6156,19 @@ def write_pptx(all_data, args, out_path):
     _toc_row_gap = 0.22
     _toc_total   = len(_toc_items) * _toc_row_h + (len(_toc_items) - 1) * _toc_row_gap
     _toc_y0      = (H - _toc_total) / 2 + 0.05   # vertically centred
-    _toc_x0, _toc_w = 0.55, W - 0.80
+    _toc_x0, _toc_w = 0.18, W - 0.36
 
     for _ti, (_tsec, _tdesc) in enumerate(_toc_items):
         _ty = _toc_y0 + _ti * (_toc_row_h + _toc_row_gap)
-        # Row card
+        # Row card — light fill, subtle border on white background
         _row = toc_slide.shapes.add_shape(
             _MSO_SHAPE.ROUNDED_RECTANGLE,
             _PptxInches(_toc_x0), _PptxInches(_ty),
             _PptxInches(_toc_w), _PptxInches(_toc_row_h))
         _row.fill.solid()
         _row.fill.fore_color.rgb = _rgb(_C_BGROW)
-        _row.line.color.rgb = _rgb("#252A25")
-        _row.line.width = _PptxInches(0.012)
+        _row.line.color.rgb = _rgb("#D8E8D0")
+        _row.line.width = _PptxInches(0.010)
         # Hyperlink to section slide
         _sidx = _sec_dict.get(_tsec)
         if _sidx is not None and _sidx < len(prs.slides):
@@ -6171,19 +6176,21 @@ def write_pptx(all_data, args, out_path):
                 _row.click_action.target_slide = prs.slides[_sidx]
             except Exception:
                 pass
-        # Section number — vibrant green
-        _txt(toc_slide, f"{_ti + 1:02d}", _toc_x0 + 0.12, _ty + 0.08, 0.55, 0.52,
-             size=22, bold=True, color=_C_VACC)
-        # Vertical separator
-        _rect(toc_slide, _toc_x0 + 0.72, _ty + 0.12, 0.025, _toc_row_h - 0.24, "#2E352E")
-        # Section name
-        _txt(toc_slide, _tsec, _toc_x0 + 0.84, _ty + 0.10, _toc_w - 1.55, 0.40,
-             size=15, bold=True, color=_C_WHT)
-        # Description
-        _txt(toc_slide, _tdesc, _toc_x0 + 0.84, _ty + 0.56, _toc_w - 1.55, 0.50,
-             size=8.5, color="#777A77")
-        # Right arrow
-        _txt(toc_slide, "\u203a", _toc_x0 + _toc_w - 0.50, _ty + 0.28, 0.42, 0.55,
+        # Left green accent block on card
+        _rect(toc_slide, _toc_x0, _ty, 0.30, _toc_row_h, _C_VACC)
+        # Section number — white on green
+        _txt(toc_slide, f"{_ti + 1:02d}", _toc_x0 + 0.01, _ty + 0.32, 0.28, 0.52,
+             size=15, bold=True, color=_C_WHT, align="center")
+        # Vertical separator line
+        _rect(toc_slide, _toc_x0 + 0.38, _ty + 0.14, 0.022, _toc_row_h - 0.28, "#C8D8C0")
+        # Section name — dark on light
+        _txt(toc_slide, _tsec, _toc_x0 + 0.50, _ty + 0.10, _toc_w - 1.15, 0.40,
+             size=15, bold=True, color=_C_BLK)
+        # Description — medium gray
+        _txt(toc_slide, _tdesc, _toc_x0 + 0.50, _ty + 0.56, _toc_w - 1.15, 0.50,
+             size=8.5, color="#555555")
+        # Right arrow — green
+        _txt(toc_slide, "\u203a", _toc_x0 + _toc_w - 0.48, _ty + 0.26, 0.40, 0.55,
              size=26, bold=True, color=_C_VACC, align="center")
 
     _notes(toc_slide,
