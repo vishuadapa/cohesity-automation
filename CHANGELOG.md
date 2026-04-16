@@ -7,6 +7,26 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-16] fix+feat(health_check): PPT storage slide fix, DataLock RAG coloring, scoring matrix (v1.51)
+
+### Bug Fix — `health_check/health_check_report.py`
+
+- **Storage Capacity & Growth PPT slide** was empty for all clusters because it referenced `cd.get("storage_domains")` and per-domain fields (`usedBytes`, `_runway_days`, `_date_80pct`) that do not exist in the collected data. Fixed to use the same field paths as the Excel sheet: `cd["info"]["stats"]["usagePerfStats"]` for cluster usable/used bytes, `cd["info"]["stats"]["dataReductionRatio"]` for data reduction, and `cd.get("capacity_runway")` for runway/projected-80 fields. Each cluster now shows a `(Cluster Total)` row with real data.
+
+### Features — `health_check/health_check_report.py`
+
+- **DataLock RAG coloring** added to two previously uncolored PPT slides:
+  - **Protection Summary** — DataLock column now colored red (no DataLock), amber (partial coverage), or green (full coverage), matching the Excel Protection Health sheet
+  - **Ransomware Readiness** — DataLock column now colored with the same three-state logic
+  - Security Posture Overview already had DataLock coloring; Ransomware and Protection Summary now consistent with it
+- **Two Scoring Methodology Reference slides** appended at end of PowerPoint deck (Backup Engineering section):
+  - Slide 1: Overall Health Score (6 dimensions + weights + grade bands A–F) and Security Score (6 categories + MFA penalty, point values)
+  - Slide 2: Ransomware Readiness Score (5 dimensions with detail on scoring rules), Workload Risk Score (4 factors), RAG colour legend
+  - All scoring tables use RAG coloring consistent with the rest of the deck
+  - PPT slide count increases from ~29 to ~31 slides
+
+---
+
 ## [2026-04-15] feat(health_check): Comprehensive PowerPoint deck, remove draw.io (v1.50)
 
 ### Output — `health_check/health_check_report.py`
