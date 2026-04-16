@@ -4828,14 +4828,19 @@ def write_pptx(all_data, args, out_path):
                     bg, fg = alt, _C_BLK
                 _cell(tbl.cell(ri + 1, ci), val, bg, fg)
 
-    def _kpi(slide, label, value, x, y, w=1.9, h=1.2,
-             bg=None, vc="#FFFFFF"):
-        bg = bg or _C_HDR
-        _rect(slide, x, y, w, h, bg, rounded=True)
-        _txt(slide, label, x + 0.07, y + 0.08, w - 0.14, 0.35,
-             size=9, color="#FFFFFF", align="center")
-        _txt(slide, str(value), x + 0.07, y + 0.45, w - 0.14, 0.60,
-             size=26, bold=True, color=vc, align="center")
+    def _kpi(slide, label, value, x, y, w=1.90, h=1.25,
+             bg=None, vc=None):
+        accent = bg or _C_HDR
+        # Card: light background, subtle border
+        _rect(slide, x, y, w, h, "#F5F8F5", line="#C5D2C5", lw=0.012, rounded=True)
+        # Thin left accent bar, inset slightly so it sits within the rounded corners
+        _rect(slide, x + 0.03, y + 0.10, 0.06, h - 0.20, accent)
+        # Label — small, uppercase, muted
+        _txt(slide, label.upper(), x + 0.17, y + 0.13, w - 0.22, 0.26,
+             size=7.5, color="#7A8878")
+        # Value — large, bold; dark by default, colored if explicitly overridden
+        _txt(slide, str(value), x + 0.17, y + 0.42, w - 0.22, 0.64,
+             size=26, bold=True, color=vc if vc else "#1A3020")
 
     _P_COLORS = {"CRITICAL": (_C_RED_BG, _C_RED_TX),
                  "HIGH":     ("#FFE0CC", "#7F3000"),
@@ -4930,13 +4935,14 @@ def write_pptx(all_data, args, out_path):
         sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
         for cd in all_data)
     kpi_data = [
-        ("Clusters",        len(all_data), _C_DIV,   "#FFFFFF"),
-        ("Nodes",           n_nodes,       _DG_TEAL,  "#FFFFFF"),
-        ("Prot. Groups",    n_groups,      _C_HDR,    "#FFFFFF"),
-        ("Policies",        n_policies,    "#5B6E8A", "#FFFFFF"),
-        ("Vaults",          n_vaults,      _DG_ARCH,  "#FFFFFF"),
+        ("Clusters",        len(all_data), _C_DIV,    None),
+        ("Nodes",           n_nodes,       _DG_TEAL,  None),
+        ("Prot. Groups",    n_groups,      _C_HDR,    None),
+        ("Policies",        n_policies,    "#5B6E8A", None),
+        ("Vaults",          n_vaults,      _DG_ARCH,  None),
         ("Critical Alerts", n_crits,
-         "#C0392B" if n_crits else "#27AE60", "#FFFFFF"),
+         "#C0392B" if n_crits else "#27AE60",
+         "#C0392B" if n_crits else "#27AE60"),
     ]
     kpi_w, kpi_gap = 1.90, 0.19
     kpi_x0 = (W - (kpi_w * 6 + kpi_gap * 5)) / 2
