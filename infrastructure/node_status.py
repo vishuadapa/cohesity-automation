@@ -22,6 +22,9 @@ API endpoints used:
   Disks:         GET  https://helios.cohesity.com/v2/disks
 
 Version history:
+  1.1 (2026-04-17) — Security: TLS verification enabled by default; added
+                     --ca-bundle and --insecure CLI flags. Excel formula
+                     injection hardening via _safe_cell() on all API data.
   1.0 (2026-04-06) — Initial release. Node health and disk inventory with
                      fault tolerance counts, dual-sheet Excel output,
                      Cohesity green header styling.
@@ -33,23 +36,30 @@ Usage:
   python3 node_status.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
 import os
 import sys
-import urllib3
 from datetime import datetime
 
 import requests
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
 COHESITY_GREEN  = "70AD47"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(val):
+    if isinstance(val, str) and val and val[0] in _FORMULA_PREFIXES:
+        return "'" + val
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +131,7 @@ def helios_headers(api_key: str, cluster_id: int = None) -> dict:
 def get_helios_clusters(api_key: str) -> list:
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -142,7 +152,7 @@ def get_nodes(api_key: str, cluster_id: int) -> list:
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/nodes"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         verify=False, timeout=20)
+                         verify=_verify, timeout=20)
         r.raise_for_status()
         data = r.json()
         return data if isinstance(data, list) else data.get("nodes", [])
@@ -210,7 +220,7 @@ def write_excel(node_rows: list, disk_rows: list, output_path: str):
     ]
     ws_n.append(node_headers)
     for row in node_rows:
-        ws_n.append([row.get(h, "") for h in node_headers])
+        ws_n.append([_safe_cell(row.get(h, "")) for h in node_headers])
     style_ws(ws_n)
     auto_fit(ws_n)
 
@@ -222,7 +232,7 @@ def write_excel(node_rows: list, disk_rows: list, output_path: str):
     ]
     ws_d.append(disk_headers)
     for row in disk_rows:
-        ws_d.append([row.get(h, "") for h in disk_headers])
+        ws_d.append([_safe_cell(row.get(h, "")) for h in disk_headers])
     style_ws(ws_d)
     auto_fit(ws_d)
 
@@ -248,7 +258,26 @@ def main():
     parser.add_argument("--debug",   action="store_true", help="Print raw API responses")
     parser.add_argument("--clear-credentials",   action="store_true",
                         help="Remove stored Helios API key and exit")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
     args = parser.parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     if args.clear_credentials:
         clear_stored_credentials()

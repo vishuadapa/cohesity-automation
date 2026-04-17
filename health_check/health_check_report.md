@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.52**
+**Current version: 1.53**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
@@ -102,6 +102,8 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin [--domai
 | `--excel-only` | off | Skip Word document generation |
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
+| `--ca-bundle PATH` | *(system bundle)* | Path to a CA certificate `.pem` for TLS verification — use for self-signed cluster certs or corporate HTTPS-inspection proxies (e.g. Zscaler) |
+| `--insecure` | off | Disable TLS certificate validation entirely — prints a startup warning; use only on isolated/trusted networks |
 
 ### Examples
 
@@ -117,6 +119,29 @@ python3 health_check_report.py --apikey abc123 --output /reports/q2_review --exc
 
 # 90-day lookback with debug logging
 python3 health_check_report.py --apikey abc123 --days 90 --debug
+```
+
+### TLS certificate validation
+
+TLS verification is **on by default** as of v1.53. All HTTPS connections validate against the system CA bundle.
+
+| Scenario | How to run |
+|----------|-----------|
+| Helios (public cloud) | No extra flags — `helios.cohesity.com` uses a publicly-trusted cert |
+| Direct cluster with trusted cert | No extra flags |
+| Direct cluster with self-signed cert | `--ca-bundle /path/to/cluster-ca.pem` |
+| Corporate HTTPS proxy (e.g. Zscaler) | `--ca-bundle /path/to/proxy-ca.pem` |
+| Isolated lab / legacy environment | `--insecure` *(prints a warning)* |
+
+To get the cluster CA certificate:
+```bash
+openssl s_client -connect <cluster-host>:443 -showcerts </dev/null 2>/dev/null \
+  | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' > cluster-ca.pem
+```
+
+Validate your bundle before running:
+```bash
+curl --cacert cluster-ca.pem https://<cluster-host>
 ```
 
 ---

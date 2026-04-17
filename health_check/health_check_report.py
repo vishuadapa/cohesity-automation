@@ -87,6 +87,21 @@ Requirements
 
 Version history
 ───────────────
+  1.53 (2026-04-17) — fix(security): TLS certificate validation and Excel formula
+                     injection hardening.
+                     TLS: remove all hardcoded verify=False; add --ca-bundle PATH
+                     and --insecure flags. Default is now verify=True (full
+                     validation). --insecure prints a loud startup warning and
+                     is the only path that suppresses urllib3 warnings.
+                     session.verify is set once and inherited by all _get() calls.
+                     get_auth_token() and get_helios_clusters() accept verify=
+                     param threaded from main(). Same changes applied to
+                     utils/cohesity_auth.py.
+                     Formula injection: add _safe_cell() sanitizer that prefixes
+                     strings starting with =, +, -, @, tab, CR with a single
+                     quote, preventing openpyxl from writing them as formula
+                     cells. Applied to _reg() and all 25 inline ws.cell writes
+                     that write API-sourced data.
   1.52 (2026-04-16) — feat: Inline scoring methodology — remove 4 standalone
                      methodology slides; embed compact scoring tables directly in
                      the bottom whitespace of Health Scorecard, Ransomware Readiness,
@@ -535,7 +550,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.52"
+__version__ = "1.53"
 
 import argparse
 import datetime
@@ -546,18 +561,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 
 # ── Core HTTP client ──────────────────────────────────────────────────────────
-# requests must be present.  urllib3 is bundled inside requests; we suppress
-# the SSL-verify warning through whichever path is available.
-# If requests is missing we exit here with a clear install command rather than
-# propagating a cryptic "No module named 'urllib3'" traceback.
+# requests must be present.  If missing, exit with a clear install command
+# rather than propagating a cryptic "No module named 'urllib3'" traceback.
+# urllib3 InsecureRequestWarning is only suppressed when --insecure is passed
+# explicitly; by default TLS verification is on.
 try:
     import requests
-    try:
-        import urllib3 as _urllib3
-        _urllib3.disable_warnings(_urllib3.exceptions.InsecureRequestWarning)
-    except ImportError:
-        requests.packages.urllib3.disable_warnings(
-            requests.packages.urllib3.exceptions.InsecureRequestWarning)
 except ImportError:
     print("=" * 65)
     print("  MISSING REQUIRED PACKAGE: requests")
@@ -662,7 +671,8 @@ except ImportError:
             else:
                 print("[*] No stored Helios API key found — nothing to clear.")
 
-    def get_auth_token(cluster, username, password, domain, mfa_code=None):
+    def get_auth_token(cluster, username, password, domain, mfa_code=None,
+                       verify=True):
         _hdrs  = {"Content-Type": "application/json", "Accept": "application/json"}
         url_v1 = f"https://{cluster}/irisservices/api/v1/public/accessTokens"
         _v1_note = ""
@@ -670,7 +680,7 @@ except ImportError:
             r = requests.post(url_v1,
                               json={"username": username, "password": password,
                                     "domain": domain},
-                              headers=_hdrs, verify=False, timeout=30)
+                              headers=_hdrs, verify=verify, timeout=30)
             r.raise_for_status()
             data = r.json()
             token_val = data.get("accessToken", "")
@@ -689,7 +699,7 @@ except ImportError:
             pl2["otpCode"] = mfa_code
             pl2["otpType"] = "Totp"
         try:
-            r = requests.post(url_v2, json=pl2, headers=_hdrs, verify=False, timeout=30)
+            r = requests.post(url_v2, json=pl2, headers=_hdrs, verify=verify, timeout=30)
             r.raise_for_status()
         except requests.exceptions.ConnectionError:
             print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
@@ -731,11 +741,11 @@ except ImportError:
             h["accessClusterId"] = str(cluster_id)
         return h
 
-    def get_helios_clusters(api_key):
+    def get_helios_clusters(api_key, verify=True):
         url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
         try:
             r = requests.get(url, headers=make_helios_headers(api_key),
-                             verify=False, timeout=30)
+                             verify=verify, timeout=30)
             r.raise_for_status()
         except requests.exceptions.ConnectionError:
             print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -956,8 +966,16 @@ def _title(ws, text, span):
     c.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 22
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+def _safe_cell(val):
+    """Prefix strings starting with formula metacharacters to prevent injection."""
+    if isinstance(val, str) and val and val[0] in _FORMULA_PREFIXES:
+        return "'" + val
+    return val
+
 def _reg(ws, row, col, val):
-    cell = ws.cell(row=row, column=col, value=val)
+    cell = ws.cell(row=row, column=col, value=_safe_cell(val))
     cell.font = _FONT_NORMAL
     return cell
 
@@ -1022,8 +1040,7 @@ def _get(session, headers, path, params=None, debug=False, silent=False):
     base = getattr(session, "base_url", f"https://{HELIOS_HOST}")
     url  = f"{base}{path}"
     try:
-        r = session.get(url, headers=headers, params=params,
-                        verify=False, timeout=60)
+        r = session.get(url, headers=headers, params=params, timeout=60)
         if debug:
             print(f"    DEBUG {path} → {r.status_code}")
         if r.status_code == 200:
@@ -2602,7 +2619,7 @@ def _sheet_summary(wb, all_data):
                len(cd["recommendations"]), top]
         r = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=r, column=c, value=val).font = _FONT_NORMAL
+            ws.cell(row=r, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
         # RAG color on overall score + grade
         for col in (4, 5):
@@ -2696,7 +2713,7 @@ def _sheet_infrastructure(wb, all_data):
                "Connected"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
         # color SW Lifecycle Status cell (col 3)
         sw_cell = ws.cell(row=rn, column=3)
@@ -2788,7 +2805,7 @@ def _sheet_hardware(wb, all_data):
                    eol_str, hw_status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             # color HW EOL Status cell (col 12)
             eol_cell = ws.cell(row=rn, column=12)
@@ -2895,7 +2912,7 @@ def _sheet_protection(wb, all_data):
                    rpo_hrs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             # DataLock col 18 — color by mode
             dc = ws.cell(row=rn, column=18)
@@ -2986,7 +3003,7 @@ def _sheet_storage(wb, all_data):
                runway_str, proj_str, growth_str]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            cell = ws.cell(row=rn, column=c, value=val)
+            cell = ws.cell(row=rn, column=c, value=_safe_cell(val))
             cell.font = _font(bold=(c == 2))
 
         sc = ws.cell(row=rn, column=12)
@@ -3025,7 +3042,7 @@ def _sheet_storage(wb, all_data):
                     "", "", ""]
             rn2 = ws.max_row + 1
             for c, val in enumerate(drow, 1):
-                ws.cell(row=rn2, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn2, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
 
@@ -3246,7 +3263,7 @@ def _sheet_policies(wb, all_data):
                    "; ".join(gaps) if gaps else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             # DataLock col 15 — color by mode
             dl_cell = ws.cell(row=rn, column=15)
@@ -3303,7 +3320,7 @@ def _sheet_policy_groups(wb, all_data):
                    status]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             # Highlight paused groups
             if paused:
@@ -3351,7 +3368,7 @@ def _sheet_alerts(wb, all_data):
                    "Yes" if a.get("acknowledgeTimestampUsecs") else "No"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=2)
             if a.get("severity") == "kCritical":
@@ -3512,7 +3529,7 @@ def _sheet_security(wb, all_data):
                "; ".join(gaps) if gaps else "OK"]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
         # Cluster Encryption col 2, SD Encryption col 3
         ce_cell = ws.cell(row=rn, column=2)
@@ -3748,7 +3765,7 @@ def _sheet_replication(wb, all_data):
                    "", "", "", status, "",
                    ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
         # ── Archival / vault rows ─────────────────────────────────────────
         shown = set()
@@ -3767,7 +3784,7 @@ def _sheet_replication(wb, all_data):
                       status, note,
                       ", ".join(groups)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
             shown.add(tname)
 
         # Vaults that exist in the API but are not referenced by any policy
@@ -3785,7 +3802,7 @@ def _sheet_replication(wb, all_data):
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
                      "Vault exists — not referenced by any policy", note, ""]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
     auto_fit_columns(ws)
     ws.column_dimensions["K"].width = 60
@@ -3841,7 +3858,7 @@ def _sheet_fortknox_detail(wb, all_data):
                 row = [cd["name"], vname, vtype, jname,
                        logical, physical, consumed, snaps, period]
                 for c, val in enumerate(row, 1):
-                    ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                    ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
                 has_rows = True
 
         if not has_rows:
@@ -3904,7 +3921,7 @@ def _sheet_views(wb, all_data):
                    created, smb, nfs, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=12)
             if "CRITICAL" in flag:
@@ -3971,7 +3988,7 @@ def _sheet_coverage(wb, all_data):
                    st, sev]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=9)
             if sev in ("FAILED", "CRITICAL RPO GAP"):
@@ -4063,7 +4080,7 @@ def _sheet_trends(wb, all_data):
                    d["warn"], d["cancel"], pct, d["viols"],
                    round(bytes_to_gb(d["logical"]), 1)]
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
             sc = ws.cell(row=rn, column=8)
             if pct < SUCCESS_CRIT_PCT:
                 sc.fill = _fill(RED);    sc.font = _font(bold=True, color=WHITE)
@@ -4181,7 +4198,7 @@ def _sheet_recommendations(wb, all_data):
                rec["finding"], rec["action"], rec["impact"]]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
-            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
         pc = ws.cell(row=rn, column=2)
         if rec["priority"] == "CRITICAL":
@@ -4243,7 +4260,7 @@ def _sheet_disk_health(wb, all_data):
                    tier]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             # color Status cell (col 8)
             sc = ws.cell(row=rn, column=8)
@@ -4327,7 +4344,7 @@ def _sheet_agent_health(wb, all_data):
                    status, upg, cert_exp, notes]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             sc = ws.cell(row=rn, column=6)
             if status.lower() in ("kunhealthy", "unhealthy", "unreachable",
@@ -4402,7 +4419,7 @@ def _sheet_source_coverage(wb, all_data):
                    prot or "", unprot or "", pct, flag]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             fc = ws.cell(row=rn, column=8)
             if isinstance(pct, float) and pct < 75:
@@ -4472,7 +4489,7 @@ def _sheet_user_security(wb, all_data):
                    "; ".join(notes) if notes else "OK"]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
-                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
             if locked:
                 ws.cell(row=rn, column=7).fill = _fill(RED)
@@ -5130,32 +5147,14 @@ def write_pptx(all_data, args, out_path):
     _header(slide, "Protection Summary",
             "Backup success rates, SLA compliance, and coverage gaps per cluster")
     _footer(slide)
-    hdr_prot = ["Cluster", "Groups", "Success Rate", "SLA Violations",
+    hdr_prot = ["Cluster", "Groups", "Success Rate", "SLA Pass %",
                 "DataLock", "Coverage Gaps", "Prot. Score"]
     rows_prot, fills_prot = [], []
     _SUC = {"kSuccess", "Succeeded", "kWarning"}
     for cd in all_data:
         groups   = cd["groups"]
         policies = cd["policies"]
-        if quick:
-            success    = sum(1 for g in groups
-                             if (g.get("lastRun") or {})
-                                .get("localBackupInfo", {})
-                                .get("status", "") in _SUC)
-            sla_viols  = sum(1 for g in groups
-                             if (g.get("lastRun") or {})
-                                .get("isSlaViolated", False))
-            total_runs = len(groups) or 1
-        else:
-            all_runs  = [r for runs in cd["group_runs"].values()
-                         for r in runs]
-            success   = sum(1 for r in all_runs
-                            if (r.get("localBackupInfo") or {})
-                               .get("status", "") in _SUC)
-            sla_viols = sum(1 for r in all_runs
-                            if r.get("isSlaViolated", False))
-            total_runs = len(all_runs) or 1
-        succ_pct  = success / total_runs * 100
+        succ_pct, sla_pct = _success_stats(cd)
         _, dl_lbl, _, _ = _cluster_datalock(policies, groups)
         gaps_n    = sum(1 for g in groups
                         if (g.get("lastRun") or {})
@@ -5163,12 +5162,10 @@ def write_pptx(all_data, args, out_path):
                            .get("status", "") not in _SUC)
         p_score   = _score_protection(cd, quick)
         rows_prot.append([cd["name"], len(groups),
-                          f"{succ_pct:.1f}%", sla_viols,
+                          f"{succ_pct:.1f}%", f"{sla_pct:.1f}%",
                           dl_lbl or "None", gaps_n, p_score])
-        su_f = _rag(succ_pct)
-        sl_f = ((_C_GRN_BG, _C_GRN_TX) if sla_viols == 0 else
-                (_C_AMB_BG, _C_AMB_TX) if sla_viols <= 3 else
-                (_C_RED_BG, _C_RED_TX))
+        su_f = _rag(succ_pct, hi=95, lo=90)
+        sl_f = _rag(sla_pct, hi=99, lo=95)
         gp_f = ((_C_GRN_BG, _C_GRN_TX) if gaps_n == 0 else
                 (_C_AMB_BG, _C_AMB_TX) if gaps_n <= 5 else
                 (_C_RED_BG, _C_RED_TX))
@@ -5183,9 +5180,9 @@ def write_pptx(all_data, args, out_path):
            _cx(_cw_prot), 0.68, fills=fills_prot)
     _notes(slide,
            "Backup health summary per cluster across all protection groups. "
-           "Success Rate = percentage of runs in the lookback window that succeeded "
-           "(kSuccess, Succeeded, or kWarning status). "
-           "SLA Violations = number of runs that exceeded their SLA window. "
+           "Success Rate = average of per-day success % across the lookback window "
+           "(kSuccess + kWarning counted as success) — identical to the Trends tab. "
+           "SLA Pass % = percentage of runs completed within their SLA window. "
            "DataLock (WORM) status: Red = no DataLock on any group (immutable backups "
            "absent — ransomware risk), Amber = partial coverage, Green = all groups covered. "
            "Coverage Gaps = groups whose last run was not successful. "
@@ -6799,7 +6796,7 @@ def _sheet_risk_heatmap(wb, all_data):
                     row_data["sla"], row_data["rpo"], row_data["datalock"],
                     row_data["last_succ"], row_data["obj_fail"], row_data["rec"]]
             for c, val in enumerate(vals, 1):
-                cell = ws.cell(row=rn, column=c, value=val)
+                cell = ws.cell(row=rn, column=c, value=_safe_cell(val))
                 cell.fill = PatternFill("solid", fgColor=bg)
                 cell.font = Font(name="Calibri", size=9, bold=bold,
                                  color=fg)
@@ -6878,7 +6875,7 @@ def _sheet_audit_log(wb, all_data):
         rn = ws.max_row + 1
         bg, fg = CAT_COLORS.get(cat, ("F2F2F2", "000000"))
         for c, val in enumerate([cat, cat_counts[cat], notable_str or "—"], 1):
-            cell = ws.cell(row=rn, column=c, value=val)
+            cell = ws.cell(row=rn, column=c, value=_safe_cell(val))
             cell.fill = PatternFill("solid", fgColor=bg)
             cell.font = Font(name="Calibri", size=9, color=fg)
 
@@ -6910,7 +6907,7 @@ def _sheet_audit_log(wb, all_data):
             bg, fg = HIGH_RISK_COLOR if ev["high_risk"] else CAT_COLORS.get(ev["cat"], ("FFFFFF", "000000"))
             bold = ev["high_risk"]
             for c, val in enumerate(vals, 1):
-                cell = ws.cell(row=rn, column=c, value=val)
+                cell = ws.cell(row=rn, column=c, value=_safe_cell(val))
                 cell.fill = PatternFill("solid", fgColor=bg)
                 cell.font = Font(name="Calibri", size=9, bold=bold, color=fg)
 
@@ -6968,7 +6965,7 @@ def _sheet_guide(wb, all_data):
     def _row(a, b, c, bg=None, bold_a=False, bold_b=False, h=15, wrap_c=True):
         rn = _nxt()
         for ci, (val, bold) in enumerate([(a, bold_a), (b, bold_b), (c, False)], 1):
-            cell = ws.cell(row=rn, column=ci, value=val)
+            cell = ws.cell(row=rn, column=ci, value=_safe_cell(val))
             cell.font = _Fnt(size=9, bold=bold, name="Calibri")
             cell.alignment = _Aln(wrap_text=(ci == 3 and wrap_c), vertical="top")
         if bg:
@@ -8136,6 +8133,7 @@ def write_word(all_data, args):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    _t0 = time.time()
     parser = argparse.ArgumentParser(
         description=f"Cohesity Health Check Report v{__version__}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -8174,6 +8172,13 @@ def main():
                         help="Generate Word only, skip Excel")
     parser.add_argument("--debug",            action="store_true",
                         help="Print HTTP status for each API call")
+    # ── TLS options ───────────────────────────────────────────────────────────
+    parser.add_argument("--ca-bundle",        dest="ca_bundle", default=None,
+                        metavar="PATH",
+                        help="Path to CA bundle (.pem) for TLS verification "
+                             "(use for self-signed or corporate proxy certs)")
+    parser.add_argument("--insecure",         action="store_true",
+                        help="Disable TLS certificate validation (NOT recommended)")
     args = parser.parse_args()
 
     # ── Clear stored credentials and exit ─────────────────────────────────────
@@ -8264,8 +8269,26 @@ def main():
         parts.append(ts)
         args.output = "_".join(parts)
 
+    # ── TLS verification ──────────────────────────────────────────────────────
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
+    else:
+        _verify = True
+
     # ── Authenticate and discover clusters ────────────────────────────────────
     session = requests.Session()
+    session.verify = _verify
     api_key = None
 
     if args.cluster_host:
@@ -8276,14 +8299,13 @@ def main():
         pwd   = get_cluster_password(args.cluster_host, args.username, args.domain,
                                      cli_password=args.password)
         token = get_auth_token(args.cluster_host, args.username, pwd, args.domain,
-                               mfa_code=args.mfa_code)
+                               mfa_code=args.mfa_code, verify=_verify)
         session.base_url = f"https://{args.cluster_host}"
         # Fetch cluster name from the cluster itself
         try:
-            import urllib3 as _u3; _u3.disable_warnings()
             _r = session.get(
                 f"https://{args.cluster_host}/irisservices/api/v1/public/cluster",
-                headers=make_headers(token), verify=False, timeout=30)
+                headers=make_headers(token), timeout=30)
             _r.raise_for_status()
             cname = _r.json().get("name", args.cluster_host)
         except Exception:
@@ -8315,7 +8337,7 @@ def main():
         # ── Helios API key (default) ──────────────────────────────────────────
         api_key = get_api_key(args.apikey)
         session.base_url = f"https://{HELIOS_HOST}"
-        clusters = get_helios_clusters(api_key)
+        clusters = get_helios_clusters(api_key, verify=_verify)
         if not clusters:
             print("ERROR: No clusters returned from Helios.")
             sys.exit(1)
@@ -8384,7 +8406,9 @@ def main():
     out_parts = [f"{args.output}.xlsx", f"{args.output}.docx"]
     if pptx_path:
         out_parts.append(pptx_path)
+    elapsed = time.time() - _t0
     print(f"\nComplete.  Output: {' / '.join(out_parts)}")
+    print(f"  Runtime  : {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
 
 if __name__ == "__main__":

@@ -39,6 +39,9 @@ Version history:
   3.2 (2026-04-04) — Policy ID replaced with Policy Name. Name resolved via
                      GET /v2/data-protect/policies/{id}; results cached so
                      each unique policy is fetched only once per run.
+  4.6 (2026-04-17) — Security: TLS verification enabled by default; added
+                     --ca-bundle and --insecure CLI flags. Excel formula
+                     injection hardening via _safe_cell().
   4.4 (2026-04-06) — Reverted trend mode Storage Consumed to stats/consumers
                      (same source as summary mode). Previous snapshot-summing
                      approach grossly exceeded cluster capacity because
@@ -86,23 +89,30 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 """
 
-__version__ = "4.5"
+__version__ = "4.6"
 
 import argparse
 import getpass
 import os
 import sys
-import urllib3
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
 _KR_SVC_CLUSTER = "cohesity_cluster"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(val):
+    if isinstance(val, str) and val and val[0] in _FORMULA_PREFIXES:
+        return "'" + val
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +227,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str) -> s
     payload = {"username": username, "password": password, "domain": domain}
     hdrs = {"Content-Type": "application/json", "Accept": "application/json"}
     try:
-        r = requests.post(url, json=payload, headers=hdrs, verify=False, timeout=30)
+        r = requests.post(url, json=payload, headers=hdrs, verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
@@ -262,7 +272,7 @@ def get_helios_clusters(api_key: str, filter_name: str = None) -> list:
     """
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=make_helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=make_helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -297,7 +307,7 @@ def get_cluster_timezone(base_url: str, headers: dict) -> str:
     """
     url = f"{base_url}/irisservices/api/v1/public/cluster"
     try:
-        r = requests.get(url, headers=headers, verify=False, timeout=15)
+        r = requests.get(url, headers=headers, verify=_verify, timeout=15)
         r.raise_for_status()
         tz_name = r.json().get("timezone") or "UTC"
         ZoneInfo(tz_name)          # validate it's a recognised timezone
@@ -320,7 +330,7 @@ def get_policy_name(base_url: str, headers: dict, policy_id: str,
         return _cache[cache_key]
     url = f"{base_url}/v2/data-protect/policies/{policy_id}"
     try:
-        r = requests.get(url, headers=headers, verify=False, timeout=15)
+        r = requests.get(url, headers=headers, verify=_verify, timeout=15)
         r.raise_for_status()
         name = r.json().get("name", policy_id)
     except Exception:
@@ -342,7 +352,7 @@ def get_storage_stats(base_url: str, headers: dict) -> dict:
     url = f"{base_url}/irisservices/api/v1/public/stats/consumers"
     params = {"consumerType": "kProtectionRuns", "fetchViewBoxName": "true"}
     try:
-        r = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
+        r = requests.get(url, headers=headers, params=params, verify=_verify, timeout=30)
         r.raise_for_status()
         return {
             item["id"]: item.get("stats", {}).get("storageConsumedBytes", 0)
@@ -443,7 +453,7 @@ def get_protection_groups(base_url: str, headers: dict) -> list:
     url = f"{base_url}/v2/data-protect/protection-groups"
     params = {"isDeleted": "false", "includeTenants": "true"}
     try:
-        r = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
+        r = requests.get(url, headers=headers, params=params, verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.HTTPError as e:
         print(f"    WARNING: Failed to fetch groups ({r.status_code}): {r.text[:200]}")
@@ -474,7 +484,7 @@ def get_runs(base_url: str, headers: dict, group_id: str,
     else:
         params["numRuns"] = 1
     try:
-        r = requests.get(url, headers=headers, params=params, verify=False, timeout=60)
+        r = requests.get(url, headers=headers, params=params, verify=_verify, timeout=60)
         r.raise_for_status()
     except requests.exceptions.HTTPError as e:
         print(f"      WARNING: Could not fetch runs ({r.status_code}): {r.text[:150]}")
@@ -1113,7 +1123,7 @@ def write_excel(rows: list, output_file: str, mode: str = "summary"):
                     group_ranges[key]["any_nonzero"] = True
 
         for r in sorted_rows:
-            ws.append([r[key] for _, key in TREND_COLUMNS])
+            ws.append([_safe_cell(r[key]) if isinstance(r[key], str) else r[key] for _, key in TREND_COLUMNS])
 
         headers = col_names
 
@@ -1126,7 +1136,7 @@ def write_excel(rows: list, output_file: str, mode: str = "summary"):
             cell.fill      = header_fill
             cell.alignment = Alignment(horizontal="center")
         for row in rows:
-            ws.append(list(row.values()))
+            ws.append([_safe_cell(v) if isinstance(v, str) else v for v in row.values()])
 
     # Auto-fit column widths
     for col_idx, header in enumerate(headers, start=1):
@@ -1200,6 +1210,10 @@ Examples:
                              "Defaults to last 30 days when no date range is given.")
     parser.add_argument("--debug", action="store_true",
                         help="Print raw timeSeriesStats API response for metric verification")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
 
     dg = parser.add_argument_group("Date range (required for trend mode; optional for summary)")
     dg.add_argument("--start", metavar="YYYY-MM-DD",
@@ -1226,6 +1240,21 @@ def resolve_date_range(args):
 
 def main():
     args = parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     # Handle --clear-credentials before anything else
     if args.clear_creds:

@@ -7,6 +7,27 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] fix(security): TLS validation + Excel formula injection hardening (v1.53)
+
+### Security fixes — `health_check/health_check_report.py` + `utils/cohesity_auth.py`
+
+**TLS certificate validation (CVE-class: MITM credential interception)**
+- Removed all hardcoded `verify=False` from every HTTP call site (7 total across both files)
+- Removed unconditional `urllib3.InsecureRequestWarning` suppression from module level
+- Added `--ca-bundle PATH` flag: path to a CA bundle `.pem` for self-signed or corporate proxy certs
+- Added `--insecure` flag: explicit opt-in to disable validation (prints a loud startup warning; suppresses urllib3 warning only when this flag is set)
+- Default is now `verify=True` — TLS certificates are validated against the system CA bundle by default
+- `session.verify` set once in `main()` and inherited by all `_get()` calls automatically
+- `get_auth_token()` and `get_helios_clusters()` accept `verify=` parameter threaded from `main()`
+- Same changes applied consistently to `utils/cohesity_auth.py`
+
+**Excel formula injection (CVE-class: CSV/formula injection)**
+- Added `_safe_cell(val)` sanitizer: prefixes strings beginning with `=`, `+`, `-`, `@`, tab, or CR with a single quote, preventing openpyxl from writing them as formula-type cells
+- Applied to `_reg()` helper and all 25 inline `ws.cell(row=…, value=…)` writes that carry API-sourced data
+- Static header writes (`_hdr()`, `_sub_hdr()`) left unchanged — they only write hardcoded Python constants
+
+---
+
 ## [2026-04-16] feat(health_check): Inline scoring methodology + 10pt body font (v1.52)
 
 ### Features — `health_check/health_check_report.py`

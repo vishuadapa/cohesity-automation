@@ -34,23 +34,30 @@ Usage:
   python3 list_snapshots.py --clear-credentials
 """
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import argparse
 import getpass
 import os
 import sys
-import urllib3
 from datetime import datetime, timezone
 
 import requests
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
 COHESITY_GREEN  = "70AD47"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(val):
+    if isinstance(val, str) and val and val[0] in _FORMULA_PREFIXES:
+        return "'" + val
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +129,7 @@ def helios_headers(api_key: str, cluster_id: int = None) -> dict:
 def get_helios_clusters(api_key: str) -> list:
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -149,7 +156,7 @@ def search_objects(api_key: str, cluster_id: int, name: str) -> list:
     params = {"searchString": name, "count": 50}
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=20)
+                         params=params, verify=_verify, timeout=20)
         r.raise_for_status()
         return r.json().get("objects", [])
     except Exception:
@@ -160,7 +167,7 @@ def get_snapshots(api_key: str, cluster_id: int, object_id: int) -> list:
     url = f"https://{HELIOS_HOST}/v2/data-protect/objects/{object_id}/snapshots"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         verify=False, timeout=20)
+                         verify=_verify, timeout=20)
         r.raise_for_status()
         return r.json().get("snapshots", [])
     except Exception:
@@ -198,7 +205,7 @@ def write_excel(rows: list, output_path: str):
     ws.freeze_panes = "A2"
 
     for row in rows:
-        ws.append([row.get(h, "") for h in headers])
+        ws.append([_safe_cell(row.get(h, "")) for h in headers])
 
     for col in ws.columns:
         best = 10
@@ -229,7 +236,26 @@ def main():
     parser.add_argument("--debug",  action="store_true", help="Print raw API responses")
     parser.add_argument("--clear-credentials", action="store_true",
                         help="Remove stored Helios API key and exit")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
     args = parser.parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     if args.clear_credentials:
         clear_stored_credentials()
