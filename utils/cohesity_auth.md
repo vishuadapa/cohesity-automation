@@ -9,7 +9,7 @@ Required packages:
 pip install requests keyring
 ```
 
-**Version:** 1.1
+**Version:** 1.7
 
 ---
 
@@ -168,5 +168,11 @@ Callers should catch and handle these as needed.
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.7 | 2026-04-17 | fix(security): raw API response bodies (`r.text[:N]`) removed from auth error messages — HTTP status only — to prevent token/credential fragments leaking into terminal history and CI logs |
+| 1.6 | 2026-04-10 | fix: `get_auth_token()` v1 failure now printed as `[!] v1 endpoint failed (HTTP NNN) — trying v2 ...` instead of being silently swallowed; final error message includes actionable troubleshooting hints (`--clear-credentials`, `--domain`, account locked) |
+| 1.5 | 2026-04-10 | fix: `get_auth_token()` tries v1 endpoint first (POST `/irisservices/api/v1/public/accessTokens`) then falls back to v2 (POST `/v2/users/sessions`) for widest compatibility across Cohesity versions and account types |
+| 1.4 | 2026-04-09 | fix: removed `helios_login()` / `get_helios_password()` — Helios login endpoints require OIDC/OAuth2 (not plain username/password); Helios access now requires an API key |
+| 1.3 | 2026-04-09 | fix: `helios_login()` `/mcm/login` returned 404; added fallback to `/irisservices/api/v1/mcm/login` (removed in 1.4 as the endpoint requires OIDC) |
+| 1.2 | 2026-04-09 | feat: Helios username/password + MFA login attempt; `mfa_code` param for `get_auth_token()`; `cli_password` param for `get_cluster_password()` |
 | 1.1 | 2026-04-07 | fix: parse response JSON once in `get_auth_token`; validate access token non-empty before returning |
 | 1.0 | 2026-04-06 | feat: initial module — extracted shared auth patterns from reporting scripts into a reusable module |
