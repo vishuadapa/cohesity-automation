@@ -7,6 +7,15 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): PowerPoint visual improvements (v1.54)
+
+- **Green header bar**: height increased from 0.55" to 0.77" on all content slides; subtitle text repositioned to y=0.50"; all table/KPI content start Y shifted to 0.82" to clear the taller bar
+- **Contents slide**: serial numbers now display without leading zero (1, 2, 3, 4 instead of 01, 02, 03, 04)
+- **KPI tiles (Environment Snapshot)**: replaced flat card with two-stop linear gradient fill (60% tint → accent color, 120°); white label and value text for contrast on colored background
+- **Thank You end slide**: added final slide matching cover/section-divider style — green block, large "Thank You" heading, white rule, cohesity.com URL, contact prompt, and footer
+
+---
+
 ## [2026-04-17] fix(security): TLS validation + Excel formula injection hardening (v1.53)
 
 ### Security fixes — `health_check/health_check_report.py` + `utils/cohesity_auth.py`
