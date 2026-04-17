@@ -110,8 +110,7 @@ def style_worksheet(ws):
 
 def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
     """
-    Auto-fit column widths in an openpyxl worksheet based on cell content.
-    Caps width between min_width and max_width.
+    Auto-fit column widths, set zoom to 130%, and left-align data cells.
 
     Handles merged cells gracefully — MergedCell objects have no column_letter,
     so we fall back to get_column_letter(cell.column) and skip their content
@@ -123,14 +122,21 @@ def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
     try:
         from openpyxl.cell.cell import MergedCell
         from openpyxl.utils import get_column_letter as _gcl
+        from openpyxl.styles import Alignment
     except ImportError:
         return
 
+    # 130% zoom for comfortable viewing without manual adjustment
+    try:
+        ws.sheet_view.zoomScale = 130
+    except Exception:
+        pass
+
+    # Autofit column widths
     for col in ws.columns:
         if not col:
             continue
         first = col[0]
-        # MergedCell lacks column_letter; derive it from the column index instead
         col_letter = (first.column_letter
                       if hasattr(first, "column_letter")
                       else _gcl(first.column))
@@ -139,8 +145,14 @@ def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
             if isinstance(cell, MergedCell):
                 continue
             if cell.value is not None:
-                # For multiline values measure the longest line, not the full string
                 lines    = str(cell.value).split("\n")
                 cell_len = max(len(line) for line in lines) + 2
                 best     = max(best, cell_len)
         ws.column_dimensions[col_letter].width = min(best, max_width)
+
+    # Left-align data cells — only cells without explicit horizontal alignment
+    _al = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    for row_cells in ws.iter_rows(min_row=2):
+        for cell in row_cells:
+            if not isinstance(cell, MergedCell) and cell.alignment.horizontal is None:
+                cell.alignment = _al

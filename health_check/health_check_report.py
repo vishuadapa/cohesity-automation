@@ -87,6 +87,13 @@ Requirements
 
 Version history
 ───────────────
+  1.59 (2026-04-17) — feat: Excel tabs zoom 130%+autofit+left-align; Word tables
+                     autofit. PPT: copyright 2026, page numbers on all data
+                     slides, table headers 10pt left-aligned, contents slide
+                     bars dynamically sized to widest item, Protection Summary
+                     gets inline scoring methodology, topology legend is now a
+                     horizontal row (active columns only) with bottom margin
+                     increased to 0.60" for clear visibility.
   1.58 (2026-04-17) — feat(pptx): Topology diagram — wider node spacing for
                      elegant connector-line visibility. T_NODE_W 2.50→2.30",
                      T_NODE_H 0.80→0.85", T_V_GAP 0.18→0.32" (near-double
@@ -591,7 +598,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.58"
+__version__ = "1.59"
 
 import argparse
 import datetime
@@ -823,8 +830,13 @@ except ImportError:
         try:
             from openpyxl.cell.cell import MergedCell
             from openpyxl.utils import get_column_letter as _gcl
+            from openpyxl.styles import Alignment as _Aln2
         except ImportError:
             return
+        try:
+            ws.sheet_view.zoomScale = 130
+        except Exception:
+            pass
         for col in ws.columns:
             if not col:
                 continue
@@ -839,6 +851,11 @@ except ImportError:
                     lines = str(cell.value).split("\n")
                     best = max(best, max(len(ln) for ln in lines) + 2)
             ws.column_dimensions[col_letter].width = min(best, max_width)
+        _al = _Aln2(horizontal="left", vertical="center", wrap_text=True)
+        for row_cells in ws.iter_rows(min_row=2):
+            for cell in row_cells:
+                if not isinstance(cell, MergedCell) and cell.alignment.horizontal is None:
+                    cell.alignment = _al
 
 try:
     from openpyxl import Workbook
@@ -4782,18 +4799,26 @@ def write_pptx(all_data, args, out_path):
             _txt(slide, subtitle, 0.15, 0.50, W - 0.3, 0.24,
                  size=9, color="#DDEEDD")
 
-    def _footer(slide):
+    _page_n = [0]  # mutable page counter for data slides
+
+    def _footer(slide, show_page=True):
         # COHESITY wordmark — left
         _txt(slide, "COHESITY", 0.15, H - 0.30, 1.20, 0.24,
              size=9, bold=True, color=_C_BLK)
         # Copyright — centre
-        _txt(slide, "\u00a9 2025 Cohesity Inc. All rights reserved.",
+        _txt(slide, "\u00a9 2026 Cohesity Inc. All rights reserved.",
              1.40, H - 0.30, W - 4.0, 0.24,
              size=7, color="#888888")
         # Version + date — right
         _txt(slide, f"v{__version__}  \u00b7  {today}",
              W - 2.6, H - 0.30, 2.4, 0.24,
              size=7, color="#AAAAAA", align="right")
+        # Page number — bottom centre (data slides only)
+        if show_page:
+            _page_n[0] += 1
+            _txt(slide, str(_page_n[0]),
+                 W / 2 - 0.20, H - 0.30, 0.40, 0.24,
+                 size=7, color="#888888", align="center")
 
     def _section_div(title, subtitle=""):
         slide = _blank()
@@ -4806,7 +4831,7 @@ def write_pptx(all_data, args, out_path):
         if subtitle:
             _txt(slide, subtitle, 0.15, 4.95, 9.00, 0.55,
                  size=11, color="#555555", align="left")
-        _footer(slide)
+        _footer(slide, show_page=False)
         return slide
 
     def _rag(score, hi=75, lo=50):
@@ -4892,7 +4917,7 @@ def write_pptx(all_data, args, out_path):
 
         for ci, hdr in enumerate(headers):
             _cell(tbl.cell(0, ci), hdr, hbg, _C_WHT,
-                  bold=True, sz=8.5, align="center")
+                  bold=True, sz=10, align="left")
         for ri, row in enumerate(rows):
             alt = _C_LGRY if ri % 2 == 0 else _C_WHT
             for ci, val in enumerate(row):
@@ -5001,7 +5026,7 @@ def write_pptx(all_data, args, out_path):
     _txt(slide, "Prepared using Cohesity Helios",
          0.15, 5.38, 8.00, 0.32,
          size=9, color="#888888", align="left")
-    _footer(slide)
+    _footer(slide, show_page=False)
     _notes(slide,
            "Cohesity Environment Health Check Report. "
            "This deck was generated live from the Cohesity Helios API and covers all "
@@ -5243,9 +5268,33 @@ def write_pptx(all_data, args, out_path):
                 if "partial" in (dl_lbl or "").lower() else
                 (_C_GRN_BG, _C_GRN_TX))
         fills_prot.append([None, None, su_f, sl_f, dl_f, gp_f, _rag(p_score)])
+    rows_prot = rows_prot[:10]; fills_prot = fills_prot[:10]
     _cw_prot = [2.6, 1.0, 1.5, 1.5, 2.0, 1.5, 1.7]
+    # meth block: rule(0.015)+gap(0.05)+label(0.22)+gap(0.27)+2-row tbl(0.44)+gap(0.08)+note(0.22)
+    _prot_meth_h = 0.015 + 0.05 + 0.22 + 0.27 + 2 * 0.22 + 0.08 + 0.22  # ≈ 1.30"
+    _prot_y, _prot_my = _layout_mixed(len(rows_prot), _prot_meth_h)
     _table(slide, hdr_prot, rows_prot, _cw_prot,
-           _cx(_cw_prot), _tbl_y(len(rows_prot)), fills=fills_prot)
+           _cx(_cw_prot), _prot_y, fills=fills_prot)
+    # ── Inline scoring methodology ──────────────────────────────────────────
+    _rect(slide, 0.15, _prot_my,         W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, _prot_my + 0.05, W - 0.30, 0.22,
+         size=7.5, bold=True, color="#888888")
+    _pm_cols = [2.6, 1.0, 1.5, 1.5, 1.5]
+    _table(slide,
+           ["Dimension", "Max Pts", "Green \u226575", "Amber 50\u201374", "Red <50"],
+           [["Backup Success Rate", "100 pts",
+             "\u226595% runs pass", "90\u201394%", "<90%"]],
+           _pm_cols, _cx(_pm_cols), round(_prot_my + 0.32, 3), rh=0.22, body_sz=8,
+           fills=[[None, None,
+                   (_C_GRN_BG, _C_GRN_TX),
+                   (_C_AMB_BG, _C_AMB_TX),
+                   (_C_RED_BG, _C_RED_TX)]])
+    _txt(slide,
+         "Quick mode: last-run status per group  \u00b7  "
+         "Full mode: average daily success % across the lookback window  \u00b7  "
+         "kWarning counted as success",
+         0.15, round(_prot_my + 0.32 + 2 * 0.22 + 0.10, 3),
+         W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
     _notes(slide,
            "Backup health summary per cluster across all protection groups. "
            "Success Rate = average of per-day success % across the lookback window "
@@ -5467,11 +5516,12 @@ def write_pptx(all_data, args, out_path):
         _s = _max_col_h / _raw_col_h
         T_NODE_H = round(T_NODE_H * _s, 3); T_V_GAP = round(T_V_GAP * _s, 3)
     _col_h   = _n_max * T_NODE_H + max(0, _n_max - 1) * T_V_GAP
-    _n_leg   = len(_t_active)
-    _leg_h   = 0.28 + max(0, _n_leg - 1) * 0.34
+    # Horizontal legend — single row, one item per active column
+    _LEG_ITEM_W = 1.90; _LEG_ITEM_H = 0.28; _LEG_ITEM_GAP = 0.25
+    _leg_h   = _LEG_ITEM_H   # single-row height regardless of column count
     _hdr_h   = 0.26; _hdr_gap = 0.14; _leg_gap = 0.30
     _total_h = _hdr_h + _hdr_gap + _col_h + _leg_gap + _leg_h
-    _DIAG_TOP = 0.85; _DIAG_BOT = H - 0.40
+    _DIAG_TOP = 0.85; _DIAG_BOT = H - 0.60  # 0.60" bottom margin → legend clearly visible
     _top_margin = max(0.0, (_DIAG_BOT - _DIAG_TOP - _total_h) / 2)
     HDR_Y     = round(_DIAG_TOP + _top_margin, 3)
     T_START_Y = round(HDR_Y + _hdr_h + _hdr_gap, 3)
@@ -5583,16 +5633,23 @@ def write_pptx(all_data, args, out_path):
             _seen_lbl.add((sid, etype))
             _t_lbl(_E_LBLS.get(etype, ""), cx, cy)
 
-    for li, (bg, stroke, lbl, st) in enumerate([
-        (_DG_TEAL, _DG_TEAL_DK, "Source Cluster",      _ST_ROUND),
-        (_DG_REPL, "#004A8A",   "Replication Target",   _ST_ROUND),
-        (_DG_ARCH, "#B05A00",   "Archival Vault",        _ST_CAN),
-        (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS",     _ST_CLOUD),
-    ]):
+    # Legend — horizontal row, one item per active column, centred on slide
+    _LEG_ALL = {
+        "C": (_DG_TEAL, _DG_TEAL_DK, "Source Cluster",    _ST_ROUND),
+        "R": (_DG_REPL, "#004A8A",   "Replication Target", _ST_ROUND),
+        "A": (_DG_ARCH, "#B05A00",   "Archival Vault",     _ST_CAN),
+        "F": (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS",  _ST_CLOUD),
+    }
+    _leg_active = [_LEG_ALL[key] for _, key in _t_active]
+    _leg_total_w = (len(_leg_active) * _LEG_ITEM_W
+                    + max(0, len(_leg_active) - 1) * _LEG_ITEM_GAP)
+    _leg_x0 = (W - _leg_total_w) / 2
+    for li, (bg, stroke, lbl, st) in enumerate(_leg_active):
         sp = shapes.add_shape(
             st,
-            _PptxInches(0.20), _PptxInches(LEG_Y + li * 0.34),
-            _PptxInches(1.90), _PptxInches(0.28))
+            _PptxInches(_leg_x0 + li * (_LEG_ITEM_W + _LEG_ITEM_GAP)),
+            _PptxInches(LEG_Y),
+            _PptxInches(_LEG_ITEM_W), _PptxInches(_LEG_ITEM_H))
         sp.fill.solid(); sp.fill.fore_color.rgb = _rgb(bg)
         sp.line.color.rgb = _rgb(stroke)
         sp.line.width = _PptxInches(0.01)
@@ -6184,7 +6241,7 @@ def write_pptx(all_data, args, out_path):
     _rect(toc_slide, 0, 0, W, H, _C_BG)          # white background
     _rect(toc_slide, 0, 0, 0.06, H, _C_VACC)     # thin green left bar
     _header(toc_slide, "Contents", "Click a section to jump directly to it")
-    _footer(toc_slide)
+    _footer(toc_slide, show_page=False)
 
     _toc_items = [
         ("Executive Summary",
@@ -6205,7 +6262,15 @@ def write_pptx(all_data, args, out_path):
     _toc_row_gap = 0.22
     _toc_total   = len(_toc_items) * _toc_row_h + (len(_toc_items) - 1) * _toc_row_gap
     _toc_y0      = (H - _toc_total) / 2 + 0.05   # vertically centred
-    _toc_x0, _toc_w = 0.18, W - 0.36
+    _toc_x0 = 0.18
+    # Dynamic bar width — size to the widest text item (title at 15pt, desc at 8.5pt)
+    # Estimate: char_count × pt_size × 0.58 / 72 (proportional font width in inches)
+    def _est_w(text, pt): return len(text) * pt * 0.58 / 72
+    _toc_max_content = max(
+        max(_est_w(_ts, 15)  for _ts, _   in _toc_items),
+        max(_est_w(_td, 8.5) for _,  _td  in _toc_items))
+    # 1.60" fixed chrome: green block(0.30)+sep(0.38)+text-indent(0.50)+arrow(0.42)
+    _toc_w = min(W - _toc_x0 - 0.18, round(_toc_max_content + 1.60, 2))
 
     for _ti, (_tsec, _tdesc) in enumerate(_toc_items):
         _ty = _toc_y0 + _ti * (_toc_row_h + _toc_row_gap)
@@ -6266,7 +6331,7 @@ def write_pptx(all_data, args, out_path):
     _txt(slide_ty,
          "Questions? Contact your Cohesity SE or Customer Success Manager.",
          0.15, 5.15, 9.00, 0.38, size=10, color="#888888", align="left")
-    _footer(slide_ty)
+    _footer(slide_ty, show_page=False)
     _notes(slide_ty,
            "Thank you for your time. "
            "Please reach out to your Cohesity SE or Customer Success Manager "
@@ -7529,6 +7594,15 @@ def write_word(all_data, args):
         shd.set(qn("w:fill"),  hex_color)
         tcPr.append(shd)
 
+    def _word_autofit(table):
+        """Mark a python-docx table as autofit so Word resizes columns to content."""
+        tblPr = table._tbl.tblPr
+        tblLayout = tblPr.find(qn("w:tblLayout"))
+        if tblLayout is None:
+            tblLayout = OxmlElement("w:tblLayout")
+            tblPr.append(tblLayout)
+        tblLayout.set(qn("w:type"), "autofit")
+
     def _tbl_header(table, cols, bg=COH_GREEN):
         row = table.rows[0].cells
         for i, col in enumerate(cols):
@@ -7594,7 +7668,7 @@ def write_word(all_data, args):
     doc.add_paragraph(summary)
 
     t1 = doc.add_table(rows=1, cols=5)
-    t1.style = "Table Grid"
+    t1.style = "Table Grid"; _word_autofit(t1)
     _tbl_header(t1, ["Cluster", "Health Score", "Grade", "Open Criticals", "Top Finding"])
     for cd in all_data:
         row = t1.add_row().cells
@@ -7644,7 +7718,7 @@ def write_word(all_data, args):
 
     if _risk_top:
         t_risk = doc.add_table(rows=1, cols=5)
-        t_risk.style = "Table Grid"
+        t_risk.style = "Table Grid"; _word_autofit(t_risk)
         _tbl_header(t_risk, ["Cluster", "Group Name", "Policy", "Risk Level", "Primary Issue"])
         for _, cl_name, grp_name, pol_n, lvl, iss in _risk_top:
             row = t_risk.add_row().cells
@@ -7677,7 +7751,7 @@ def write_word(all_data, args):
         "The table below summarizes key infrastructure attributes for each cluster."
     )
     t2 = doc.add_table(rows=1, cols=7)
-    t2.style = "Table Grid"
+    t2.style = "Table Grid"; _word_autofit(t2)
     _tbl_header(t2, ["Cluster", "Version", "Nodes", "Healthy",
                      "Cluster Enc", "SD Enc", "Status"])
     for cd in all_data:
@@ -7707,7 +7781,7 @@ def write_word(all_data, args):
     )
     # SW lifecycle table
     tbl = doc.add_table(rows=1, cols=4)
-    tbl.style = "Table Grid"
+    tbl.style = "Table Grid"; _word_autofit(tbl)
     hdr = tbl.rows[0].cells
     for i, h in enumerate(["Cluster", "Version", "Lifecycle Status", "EOS Date"]):
         hdr[i].text = h
@@ -7738,7 +7812,7 @@ def write_word(all_data, args):
         "and archival/vault destinations, including FortKnox vaults."
     )
     t_topo = doc.add_table(rows=1, cols=4)
-    t_topo.style = "Table Grid"
+    t_topo.style = "Table Grid"; _word_autofit(t_topo)
     _tbl_header(t_topo, ["Source Cluster", "Replication Targets",
                           "Archival Targets", "FortKnox Vaults"])
     for cd in all_data:
@@ -7840,7 +7914,7 @@ def write_word(all_data, args):
         "for per-group detail."
     )
     t3 = doc.add_table(rows=1, cols=6)
-    t3.style = "Table Grid"
+    t3.style = "Table Grid"; _word_autofit(t3)
     _tbl_header(t3, ["Cluster", "Groups", "Paused", "Failed Last Run",
                       "30d Success %", "SLA Score"])
     for cd in all_data:
@@ -7864,7 +7938,7 @@ def write_word(all_data, args):
         "compared to the logical data ingested."
     )
     t4 = doc.add_table(rows=1, cols=7)
-    t4.style = "Table Grid"
+    t4.style = "Table Grid"; _word_autofit(t4)
     _tbl_header(t4, ["Cluster", "Usable (TB)", "Used (TB)", "Free (TB)",
                       "Used %", "Data Reduction", "Status"])
     for cd in all_data:
@@ -7966,7 +8040,7 @@ def write_word(all_data, args):
         )
 
     t5 = doc.add_table(rows=1, cols=11)
-    t5.style = "Table Grid"
+    t5.style = "Table Grid"; _word_autofit(t5)
     _tbl_header(t5, ["Cluster", "Cluster Enc", "SD Enc", "Vault",
                       "Indelible (FK)", "DataLock (WORM)",
                       "Replication", "Quorum", "Admins w/o MFA",
@@ -8197,7 +8271,7 @@ def write_word(all_data, args):
     )
 
     t_usr = doc.add_table(rows=1, cols=5)
-    t_usr.style = "Table Grid"
+    t_usr.style = "Table Grid"; _word_autofit(t_usr)
     _tbl_header(t_usr, ["Cluster", "Total Users", "Admins w/o MFA",
                          "Locked Accounts", "SSO Configured"])
     for cd in all_data:
@@ -8225,7 +8299,7 @@ def write_word(all_data, args):
     sorted_recs = sorted(all_recs, key=lambda x: _PRIORITY_ORDER.get(x[1]["priority"], 99))
     if sorted_recs:
         t6 = doc.add_table(rows=1, cols=5)
-        t6.style = "Table Grid"
+        t6.style = "Table Grid"; _word_autofit(t6)
         _tbl_header(t6, ["Priority", "Cluster", "Category", "Finding", "Action"])
         for cname, rec in sorted_recs:
             row = t6.add_row().cells

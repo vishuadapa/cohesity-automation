@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.58**
+**Current version: 1.59**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
@@ -265,6 +265,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.59 | 2026-04-17 | feat: Excel 130% zoom + autofit + left-align; Word tables autofit; PPT copyright 2026, page numbers on data slides, table headers 10pt left-aligned, Contents bars dynamically sized, Protection Summary methodology panel, topology legend horizontal row (active columns only, 0.60" bottom margin). |
 | 1.58 | 2026-04-17 | feat(pptx): Topology diagram wider spacing — T_NODE_W 2.50→2.30", T_NODE_H 0.80→0.85", T_V_GAP 0.18→0.32", T_COL_GAP 0.40→0.80" (double connector gap), connector line weight 0.025→0.030". |
 | 1.57 | 2026-04-17 | fix(pptx): All data tables top-aligned at y=0.90" (0.13" below header bar); mixed slides top-align table with methodology immediately below — eliminates bottom whitespace. |
 | 1.56 | 2026-04-17 | feat(pptx): KPI tiles — solid #D9D9D9 fill + accent side bar + outer shadow. All data tables vertically centred (`_tbl_y`). Mixed slides (Scorecard, Ransomware, Security, Risk) table+methodology block centred as unit (`_layout_mixed`). Topology diagram vertically centred with auto-scaling; all topology shapes grouped into a single PowerPoint group for easy user arrangement. |

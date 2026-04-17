@@ -7,6 +7,19 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): Polish pass — Excel/Word/PPT formatting (v1.59)
+
+- **Excel**: all 22 tabs open at 130% zoom; `auto_fit_columns` now sets zoom, autofits widths, and applies `horizontal=left` alignment to all data cells with unset alignment
+- **Word**: all 10 tables marked `autofit` in OOXML so Word resizes columns to content when opened
+- **PPT copyright**: footer year corrected to 2026
+- **PPT page numbers**: sequential number shown at slide bottom-centre on all data slides; suppressed on Cover, Contents, section dividers, and Thank You
+- **PPT table headers**: 10pt left-aligned (was 8.5pt centre)
+- **Contents slide**: grey bar width now derived from the widest text item (title + description) instead of spanning the full slide width; all bars identical
+- **Protection Summary**: inline scoring methodology panel added below data table (matching Scorecard / Ransomware style)
+- **Topology legend**: changed from vertical stack to a horizontal row of active-column icons only, centred on slide; bottom margin increased from 0.40" to 0.60" so legend is clearly visible in presentation mode
+
+---
+
 ## [2026-04-17] feat(health_check): Topology diagram wider node spacing (v1.58)
 
 - Node width `T_NODE_W`: 2.50" → 2.30" — slightly narrower to make room for wider gaps
