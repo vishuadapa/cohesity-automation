@@ -69,11 +69,8 @@ __version__ = "1.6"
 
 import getpass
 import sys
-import urllib3
 
 import requests
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
@@ -204,7 +201,7 @@ def clear_stored_credentials(cluster: str = None, username: str = "admin",
 # ---------------------------------------------------------------------------
 
 def get_auth_token(cluster: str, username: str, password: str, domain: str,
-                   mfa_code: str = None) -> str:
+                   mfa_code: str = None, verify=True) -> str:
     """
     Authenticate to a Cohesity cluster and return a Bearer token.
 
@@ -223,7 +220,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
     _v1_note   = ""
     try:
         r = requests.post(url_v1, json=payload_v1, headers=hdrs,
-                          verify=False, timeout=30)
+                          verify=verify, timeout=30)
         r.raise_for_status()
         data         = r.json()
         access_token = data.get("accessToken", "")
@@ -246,7 +243,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         payload_v2["otpType"] = "Totp"
     try:
         r = requests.post(url_v2, json=payload_v2, headers=hdrs,
-                          verify=False, timeout=30)
+                          verify=verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
@@ -308,7 +305,7 @@ def make_helios_headers(api_key: str, cluster_id: int = None) -> dict:
     return h
 
 
-def get_helios_clusters(api_key: str) -> list:
+def get_helios_clusters(api_key: str, verify=True) -> list:
     """
     Return [{name, clusterId}, ...] for all Helios-connected clusters.
     Endpoint: GET /mcm/clusters/connectionStatus
@@ -316,7 +313,7 @@ def get_helios_clusters(api_key: str) -> list:
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
         r = requests.get(url, headers=make_helios_headers(api_key),
-                         verify=False, timeout=30)
+                         verify=verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
