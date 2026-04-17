@@ -34,6 +34,10 @@ Typical import pattern:
   )
 
 Version history:
+  1.7 (2026-04-17) — fix(security): raw API response bodies removed from
+                     authentication error messages to prevent token/credential
+                     fragments leaking into terminal history and CI logs.
+                     Error output now shows only HTTP status codes.
   1.6 (2026-04-10) — fix: get_auth_token() v1 failure is now printed as
                      "[!] v1 endpoint failed (HTTP NNN) — trying v2 ..."
                      instead of being silently swallowed. Final error message
@@ -65,7 +69,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.6"
+__version__ = "1.7"
 
 import getpass
 import sys
@@ -232,7 +236,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
         sys.exit(1)
     except requests.exceptions.HTTPError:
-        _v1_note = f"HTTP {r.status_code}: {r.text[:120]}"
+        _v1_note = f"HTTP {r.status_code}"
         print(f"  [!] v1 endpoint failed ({r.status_code}) — trying v2 ...")
 
     # ── Attempt 2 — v2 /users/sessions ───────────────────────────────────
@@ -249,15 +253,14 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
         print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
         sys.exit(1)
     except requests.exceptions.HTTPError as e:
-        body = r.text[:400]
-        if r.status_code == 401 and "otp" in body.lower():
+        _body = r.text[:400]
+        if r.status_code == 401 and "otp" in _body.lower():
             print("ERROR: Cluster requires an MFA code. Re-run with --mfa-code <code>.")
             sys.exit(1)
         print(f"ERROR: Authentication failed on both endpoints.")
         if _v1_note:
             print(f"  v1: {_v1_note}")
-        print(f"  v2: {e}")
-        print(f"      {body}")
+        print(f"  v2: HTTP {r.status_code}")
         print()
         print("  Troubleshooting:")
         print("    • Wrong password?   Run --clear-credentials to wipe the stored")
@@ -269,7 +272,7 @@ def get_auth_token(cluster: str, username: str, password: str, domain: str,
     data         = r.json()
     access_token = data.get("accessToken", "")
     if not access_token:
-        print(f"ERROR: No access token in response: {r.text[:200]}")
+        print("ERROR: No access token in response.")
         sys.exit(1)
     token = f"{data.get('tokenType', 'Bearer')} {access_token}"
     print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v2)")

@@ -87,6 +87,18 @@ Requirements
 
 Version history
 ───────────────
+  1.62 (2026-04-17) — fix(security): input validation and credential hygiene.
+                     --days bounded 1–3650 (previously unchecked). --cluster-host
+                     validated as hostname or IPv4 before first network call.
+                     --output rejected if path contains '..' traversal sequences.
+                     --ca-bundle existence check added.
+                     --password / --mfa-code print a process-list exposure warning
+                     when supplied on the command line (still accepted — callers
+                     directed toward interactive prompt or system keychain).
+                     Raw API response bodies removed from authentication error
+                     messages (r.text[:120] / [:200] / [:400] → HTTP status only)
+                     to prevent token or credential fragments leaking into terminal
+                     history and CI logs. Same changes applied to utils/cohesity_auth.py.
   1.61 (2026-04-17) — feat(pptx): Topology diagram — legend removed; FortKnox
                      column given wider separation gap (T_FK_GAP=1.60" vs
                      T_COL_GAP=0.80"); all non-source columns (R, A, F) now
@@ -612,7 +624,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.61"
+__version__ = "1.62"
 
 import argparse
 import datetime
@@ -753,7 +765,7 @@ except ImportError:
             print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
             sys.exit(1)
         except requests.exceptions.HTTPError:
-            _v1_note = f"HTTP {r.status_code}: {r.text[:120]}"
+            _v1_note = f"HTTP {r.status_code}"
             print(f"  [!] v1 endpoint failed ({r.status_code}) — trying v2 ...")
         url_v2 = f"https://{cluster}/v2/users/sessions"
         pl2 = {"username": username, "password": password, "domain": domain}
@@ -767,15 +779,14 @@ except ImportError:
             print(f"ERROR: Cannot connect to '{cluster}'. Check hostname/IP and network.")
             sys.exit(1)
         except requests.exceptions.HTTPError as e:
-            body = r.text[:400]
-            if r.status_code == 401 and "otp" in body.lower():
+            _body = r.text[:400]
+            if r.status_code == 401 and "otp" in _body.lower():
                 print("ERROR: Cluster requires MFA. Re-run with --mfa-code <code>.")
                 sys.exit(1)
             print(f"ERROR: Authentication failed on both endpoints.")
             if _v1_note:
                 print(f"  v1: {_v1_note}")
-            print(f"  v2: {e}")
-            print(f"      {body}")
+            print(f"  v2: HTTP {r.status_code}")
             print()
             print("  Troubleshooting:")
             print("    • Wrong password?   Run --clear-credentials to wipe the stored")
@@ -787,7 +798,7 @@ except ImportError:
         data = r.json()
         token_val = data.get("accessToken", "")
         if not token_val:
-            print(f"ERROR: No access token in response: {r.text[:200]}")
+            print("ERROR: No access token in response.")
             sys.exit(1)
         print(f"[+] Authenticated to {cluster} as {domain}\\{username} (v2)")
         return f"{data.get('tokenType', 'Bearer')} {token_val}"
@@ -8481,6 +8492,36 @@ def main():
     parser.add_argument("--insecure",         action="store_true",
                         help="Disable TLS certificate validation (NOT recommended)")
     args = parser.parse_args()
+
+    # ── Input validation ───────────────────────────────────────────────────────
+    # Credentials passed on the command line are visible to every local user
+    # via /proc/<pid>/cmdline (Linux) or process-monitoring tools elsewhere.
+    # Warn — but don't block — so automated runners can still use them.
+    if args.password:
+        print("WARNING: --password on the command line is visible to other users "
+              "via the process list. Prefer the interactive prompt or system keychain.")
+    if args.mfa_code:
+        print("WARNING: --mfa-code on the command line is visible to other users "
+              "via the process list.")
+
+    if not (1 <= args.days <= 3650):
+        parser.error("--days must be between 1 and 3650")
+
+    if args.cluster_host:
+        _valid_host = re.compile(
+            r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*'
+            r'[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$'
+            r'|^(?:\d{1,3}\.){3}\d{1,3}$'
+        )
+        if not _valid_host.match(args.cluster_host):
+            parser.error(f"--cluster-host: '{args.cluster_host}' is not a valid "
+                         "hostname or IPv4 address")
+
+    if ".." in os.path.normpath(args.output).split(os.sep):
+        parser.error("--output: path must not contain '..' directory traversal sequences")
+
+    if args.ca_bundle and not os.path.isfile(args.ca_bundle):
+        parser.error(f"--ca-bundle: file not found: {args.ca_bundle}")
 
     # ── Clear stored credentials and exit ─────────────────────────────────────
     if args.clear_credentials:

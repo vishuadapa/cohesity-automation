@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.61**
+**Current version: 1.62**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
@@ -265,6 +265,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.62 | 2026-04-17 | fix(security): Input validation and credential hygiene. `--days` bounded 1–3650; `--cluster-host` validated as hostname/IPv4; `--output` rejected if path contains `..` traversal; `--ca-bundle` existence check added. `--password` / `--mfa-code` print a process-list exposure warning when used on the CLI. Raw API response bodies (`r.text[:N]`) removed from auth error messages — HTTP status only — to prevent token/credential leakage to terminal history and CI logs. `cohesity_auth.py` v1.7 — same error-message scrub. |
 | 1.61 | 2026-04-17 | feat(pptx): Topology — legend removed; FortKnox gap widened to 1.60" (was 0.80"); R/A/F columns vertically centred vs source cluster column; diagram uses full height (DIAG_BOT H−0.30"). |
 | 1.60 | 2026-04-17 | fix: True content-driven column widths across all outputs. Excel: min_width 12→6, max_width 45→60, wrap_text removed. Word: new _word_fit_widths() measures all cells after population and sets proportional column widths (all 10 tables). PPT: _table() auto-computes column widths from content, overrides hardcoded col_w. |
 | 1.59 | 2026-04-17 | feat: Excel 130% zoom + autofit + left-align; Word tables autofit; PPT copyright 2026, page numbers on data slides, table headers 10pt left-aligned, Contents bars dynamically sized, Protection Summary methodology panel, topology legend horizontal row (active columns only, 0.60" bottom margin). |

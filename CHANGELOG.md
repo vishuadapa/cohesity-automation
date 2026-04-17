@@ -7,6 +7,20 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] fix(health_check): security hardening — input validation and credential hygiene (v1.62)
+
+### Security — `health_check/health_check_report.py` and `utils/cohesity_auth.py`
+
+- **Raw API response bodies removed from auth error messages** — `r.text[:N]` fragments were printed on authentication failure, leaking token/credential hints into terminal history and CI logs. Error output now shows only the HTTP status code.
+- **`--password` / `--mfa-code` process-list warning** — using these flags exposes secrets in `/proc/<pid>/cmdline` to every local user. A warning is printed on use, directing callers to the interactive prompt or system keychain.
+- **`--days` bounds** — must be 1–3650; previously any integer (including negative) was accepted.
+- **`--cluster-host` format validation** — rejected if not a hostname or IPv4 literal, before the first network call.
+- **`--output` path traversal check** — paths containing `..` components are rejected before any file is written.
+- **`--ca-bundle` existence check** — file must exist and be readable before the first HTTPS call.
+- `utils/cohesity_auth.py` bumped to **v1.7** — same error-message scrub.
+
+---
+
 ## [2026-04-17] feat(health_check): Topology diagram — legend removed, FK wider gap, columns centred (v1.61)
 
 - Legend removed entirely; column labels above each group already identify node types
