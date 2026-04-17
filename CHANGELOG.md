@@ -7,6 +7,13 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] fix(health_check): Table top-alignment on all PPT data slides (v1.57)
+
+- All data tables now anchor to `y=0.90"` (0.13" gap below the 0.77" green bar) instead of being vertically centred — eliminates excessive bottom whitespace while keeping a clean gap from the header
+- Mixed slides (Health Scorecard, Ransomware, Security Posture, Workload Risk) also top-align their table; methodology section follows immediately below the table
+
+---
+
 ## [2026-04-17] feat(health_check): PowerPoint layout polish and topology grouping (v1.56)
 
 - **KPI tiles**: replaced two-stop gradient with solid `#D9D9D9` fill + accent-colour side bar + outer drop shadow (30 % opacity, 3 pt blur, SE direction)

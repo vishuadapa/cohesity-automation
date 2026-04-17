@@ -87,6 +87,13 @@ Requirements
 
 Version history
 ───────────────
+  1.57 (2026-04-17) — fix(pptx): Table top-alignment on all data slides.
+                     Tables now anchor to y=0.90" (0.13" below the 0.77"
+                     green header bar) instead of being vertically centred.
+                     Mixed slides (Scorecard, Ransomware, Security, Risk)
+                     also top-align their table; methodology section follows
+                     immediately below. Removes the excessive bottom whitespace
+                     at the cost of centering.
   1.56 (2026-04-17) — feat(pptx): PowerPoint layout and visual polish.
                      KPI tiles: solid #D9D9D9 fill with accent colour side bar
                      and outer drop shadow (30 % opacity) — replaces gradient.
@@ -578,7 +585,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.56"
+__version__ = "1.57"
 
 import argparse
 import datetime
@@ -4892,28 +4899,16 @@ def write_pptx(all_data, args, out_path):
                     bg, fg = alt, _C_BLK
                 _cell(tbl.cell(ri + 1, ci), val, bg, fg, sz=body_sz)
 
-    def _tbl_y(n_data_rows, rh=0.27, top=0.84, bot=None):
-        """Return the y that centres n_data_rows table between top and bot."""
-        if bot is None:
-            bot = H - 0.40
-        tbl_h = (n_data_rows + 1) * rh
-        y = top + (bot - top - tbl_h) / 2
-        return max(top, round(y, 3))
+    def _tbl_y(n_data_rows, rh=0.27, top=0.90, bot=None):
+        """Return table top Y — anchored just below the header bar."""
+        return top
 
     def _layout_mixed(n_main_rows, meth_total_h, rh=0.27):
-        """Centre a table + methodology block vertically on the slide.
-
-        Returns (main_tbl_y, meth_y) so the combined block is vertically
-        centred in the available space between header and footer.
-        """
-        main_h  = (n_main_rows + 1) * rh
-        gap     = 0.22
-        total   = main_h + gap + meth_total_h
-        top, bot = 0.84, H - 0.40
-        avail   = bot - top
-        margin  = max(0.0, (avail - total) / 2)
-        main_y  = round(top + margin, 3)
-        meth_y  = round(main_y + main_h + gap, 3)
+        """Return (main_tbl_y, meth_y) — table top-aligned, methodology below."""
+        main_h = (n_main_rows + 1) * rh
+        gap    = 0.22
+        main_y = round(0.90, 3)
+        meth_y = round(main_y + main_h + gap, 3)
         return main_y, meth_y
 
     def _kpi(slide, label, value, x, y, w=1.90, h=1.25, bg=None, vc=None):
