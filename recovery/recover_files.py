@@ -37,7 +37,7 @@ Usage:
           --cluster <name> --dest-path /tmp/restore
   python3 recover_files.py --source "win-host" --paths "C:\\Users\\jdoe" \
           --cluster <name> --snapshot 1 --dry-run
-  python3 recover_files.py --source "host" --paths /var/log --cluster <name> --ca-bundle /path/to/ca.crt
+  python3 recover_files.py --source "host" --paths /var/log --cluster <name> --ca-bundle /path/to/ca.pem
   python3 recover_files.py --clear-credentials
 """
 

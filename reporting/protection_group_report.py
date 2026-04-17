@@ -89,7 +89,7 @@ Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 
 Usage — corporate proxy / custom CA:
-  python3 protection_group_report.py --ca-bundle /path/to/ca.crt
+  python3 protection_group_report.py --ca-bundle /path/to/ca.pem
 """
 
 __version__ = "4.6"

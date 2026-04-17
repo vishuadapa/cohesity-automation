@@ -34,7 +34,7 @@ All scripts support the following flags for environments with custom PKI or self
 
 | Flag | Description |
 |------|-------------|
-| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--ca-bundle PATH` | Path to a PEM-format CA bundle (`.pem`; extension does not matter, file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
 
 ---
@@ -45,7 +45,7 @@ All scripts support the following flags for environments with custom PKI or self
 python3 cluster_info_report.py
 python3 cluster_info_report.py --cluster prod-cluster
 python3 cluster_info_report.py --output inventory.xlsx
-python3 cluster_info_report.py --ca-bundle /path/to/ca.crt
+python3 cluster_info_report.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `cluster_info_report_YYYYMMDD_HHMMSS.xlsx`
@@ -59,7 +59,7 @@ Fields: Cluster Name, Cluster ID, Incarnation ID, Software Version, Cluster Type
 python3 node_status.py
 python3 node_status.py --cluster prod-cluster
 python3 node_status.py --unhealthy-only    # only nodes/disks with issues
-python3 node_status.py --ca-bundle /path/to/ca.crt
+python3 node_status.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `node_status_YYYYMMDD_HHMMSS.xlsx`
@@ -75,7 +75,7 @@ python3 upgrade_readiness.py
 python3 upgrade_readiness.py --cluster prod-cluster
 python3 upgrade_readiness.py --min-version 7.1
 python3 upgrade_readiness.py --output readiness.xlsx
-python3 upgrade_readiness.py --ca-bundle /path/to/ca.crt
+python3 upgrade_readiness.py --ca-bundle /path/to/ca.pem
 ```
 
 Runs PASS/WARN/FAIL checks per cluster: node health, disk health, active runs in progress, version meets minimum, and available capacity margin (warns below 20%, fails below 10%).

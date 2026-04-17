@@ -38,7 +38,7 @@ Usage:
   python3 clone_protection_group.py --source "SQL Daily" --name "SQL Weekly" \
           --cluster <name> --no-objects --dry-run
   python3 clone_protection_group.py --source "VMware Prod" --name "VMware DR" \
-          --cluster <name> --ca-bundle /path/to/ca.crt
+          --cluster <name> --ca-bundle /path/to/ca.pem
   python3 clone_protection_group.py --clear-credentials
 """
 

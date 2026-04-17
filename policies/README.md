@@ -34,7 +34,7 @@ All scripts support the following flags for environments with custom PKI or self
 
 | Flag | Description |
 |------|-------------|
-| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--ca-bundle PATH` | Path to a PEM-format CA bundle (`.pem`; extension does not matter, file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
 
 ---
@@ -45,7 +45,7 @@ All scripts support the following flags for environments with custom PKI or self
 python3 list_policies.py
 python3 list_policies.py --cluster prod-cluster
 python3 list_policies.py --output policies.xlsx
-python3 list_policies.py --ca-bundle /path/to/ca.crt
+python3 list_policies.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `list_policies_YYYYMMDD_HHMMSS.xlsx`
@@ -60,7 +60,7 @@ python3 policy_compliance_report.py
 python3 policy_compliance_report.py --min-retention 14
 python3 policy_compliance_report.py --require-replication --require-archival
 python3 policy_compliance_report.py --rpo-hours 24 --cluster prod-cluster
-python3 policy_compliance_report.py --ca-bundle /path/to/ca.crt
+python3 policy_compliance_report.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `policy_compliance_report_YYYYMMDD_HHMMSS.xlsx` — color-coded (green/yellow/red) by status.
@@ -82,7 +82,7 @@ python3 policy_compliance_report.py --ca-bundle /path/to/ca.crt
 python3 clone_policy.py --source "Gold 30-Day" --name "Gold 60-Day" --cluster prod-cluster
 python3 clone_policy.py --source-id <id> --name "New Policy" --cluster prod-cluster
 python3 clone_policy.py --source "Silver" --name "Silver DR" --cluster prod-cluster --dry-run
-python3 clone_policy.py --source "Gold" --name "Gold-2" --cluster prod-cluster --ca-bundle /path/to/ca.crt
+python3 clone_policy.py --source "Gold" --name "Gold-2" --cluster prod-cluster --ca-bundle /path/to/ca.pem
 ```
 
 Fetches the source policy, strips server-managed fields (ID, timestamps, group counts), renames it, and POSTs a new policy. Use `--dry-run` to preview the payload before creating.

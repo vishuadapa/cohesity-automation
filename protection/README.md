@@ -30,7 +30,7 @@ All scripts support the following flags for environments with custom PKI or self
 
 | Flag | Description |
 |------|-------------|
-| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--ca-bundle PATH` | Path to a PEM-format CA bundle (`.pem`; extension does not matter, file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
 
 ---
@@ -41,7 +41,7 @@ All scripts support the following flags for environments with custom PKI or self
 python3 run_protection_group.py --group "VMware Daily" --cluster prod-cluster
 python3 run_protection_group.py --group "SQL Prod" --run-type kFull --cluster prod-cluster
 python3 run_protection_group.py --group "NAS" --cluster prod-cluster --wait --timeout 90
-python3 run_protection_group.py --group "VMware Daily" --cluster prod-cluster --ca-bundle /path/to/ca.crt
+python3 run_protection_group.py --group "VMware Daily" --cluster prod-cluster --ca-bundle /path/to/ca.pem
 ```
 
 `--cluster` is required. `--group` uses partial name matching — if multiple groups match, all are triggered.
@@ -62,7 +62,7 @@ python3 pause_resume_groups.py --action resume --pattern "SQL" --cluster prod-cl
 python3 pause_resume_groups.py --action pause --pattern "NAS" --cluster prod-cluster \
         --resume-after 60
 python3 pause_resume_groups.py --action pause --pattern "VMware" --cluster prod-cluster \
-        --ca-bundle /path/to/ca.crt
+        --ca-bundle /path/to/ca.pem
 ```
 
 Prints matching groups and prompts for confirmation before changing state. Use `--yes` to skip.
@@ -79,7 +79,7 @@ python3 clone_protection_group.py --source "VMware Prod" --name "VMware DR" \
 python3 clone_protection_group.py --source "SQL Daily" --name "SQL Weekly" \
         --cluster prod-cluster --no-objects --dry-run
 python3 clone_protection_group.py --source "VMware Prod" --name "VMware DR" \
-        --cluster prod-cluster --ca-bundle /path/to/ca.crt
+        --cluster prod-cluster --ca-bundle /path/to/ca.pem
 ```
 
 Clones a group's full configuration (policy, schedule, settings) to a new group. The clone is created in a **paused** state so it doesn't run immediately.

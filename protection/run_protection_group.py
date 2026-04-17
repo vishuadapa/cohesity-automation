@@ -33,7 +33,7 @@ Usage:
   python3 run_protection_group.py --group "VMware Daily" --cluster <cluster-name>
   python3 run_protection_group.py --group "SQL Prod" --run-type kFull --cluster <name>
   python3 run_protection_group.py --group "NAS Weekly" --cluster <name> --wait
-  python3 run_protection_group.py --group "VMware Daily" --cluster <name> --ca-bundle /path/to/ca.crt
+  python3 run_protection_group.py --group "VMware Daily" --cluster <name> --ca-bundle /path/to/ca.pem
   python3 run_protection_group.py --clear-credentials
 """
 

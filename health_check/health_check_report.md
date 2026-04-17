@@ -102,7 +102,7 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin [--domai
 | `--excel-only` | off | Skip Word document generation |
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
-| `--ca-bundle PATH` | *(system bundle)* | Path to a CA certificate `.pem` for TLS verification — use for self-signed cluster certs or corporate HTTPS-inspection proxies (e.g. Zscaler) |
+| `--ca-bundle PATH` | *(system bundle)* | Path to a PEM-format CA bundle (typically `.pem`; extension doesn't matter — file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies (e.g. Zscaler) |
 | `--insecure` | off | Disable TLS certificate validation entirely — prints a startup warning; use only on isolated/trusted networks |
 
 ### Examples
@@ -119,6 +119,12 @@ python3 health_check_report.py --apikey abc123 --output /reports/q2_review --exc
 
 # 90-day lookback with debug logging
 python3 health_check_report.py --apikey abc123 --days 90 --debug
+
+# Corporate HTTPS-inspection proxy (e.g. Zscaler) or self-signed cluster cert
+python3 health_check_report.py --apikey abc123 --ca-bundle /path/to/ca.pem
+
+# Direct cluster with self-signed certificate
+python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bundle /path/to/ca.pem
 ```
 
 ### TLS certificate validation

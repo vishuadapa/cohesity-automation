@@ -141,7 +141,7 @@ Usage:
   python3 fortknox_vault_report.py                         # prompts for key on first run
   python3 fortknox_vault_report.py --days 30               # uses stored key
   python3 fortknox_vault_report.py --mode trend --days 30  # trend mode
-  python3 fortknox_vault_report.py --ca-bundle /path/to/ca.crt  # corporate proxy cert
+  python3 fortknox_vault_report.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
