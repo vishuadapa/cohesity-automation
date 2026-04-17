@@ -4675,6 +4675,7 @@ def write_pptx(all_data, args, out_path):
     if not PPTX_OK:
         return None
 
+    print("  Writing PowerPoint deck...")
     import datetime as _dt
     import lxml.etree as _letree
     from pptx.util import Pt as _Pt
@@ -6196,6 +6197,7 @@ def write_pptx(all_data, args, out_path):
     try:
         pptx_path = out_path + ".pptx"
         prs.save(pptx_path)
+        print(f"  PowerPoint → {pptx_path}")
         return pptx_path
     except Exception as exc:
         print(f"  WARN: Could not write PowerPoint deck: {exc}")
