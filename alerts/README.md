@@ -28,6 +28,17 @@ API key is stored in the OS keychain after the first use — `--apikey` is optio
 
 ---
 
+## TLS / certificate options
+
+All scripts support the following flags for environments with custom PKI or self-signed certificates:
+
+| Flag | Description |
+|------|-------------|
+| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--insecure` | Disable TLS certificate verification — **not recommended for production** |
+
+---
+
 ## alert_summary_report.py
 
 ```bash

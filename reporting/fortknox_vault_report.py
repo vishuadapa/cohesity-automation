@@ -25,6 +25,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.11 (2026-04-17) — Security: TLS verification enabled by default; added
+                     --ca-bundle and --insecure CLI flags. Excel formula
+                     injection hardening via _safe_cell().
   4.10 (2026-04-07) — Fixed blank Logical/Physical Transferred: vault ID in
                      protectionRuns copyRun is nested at
                      target.archivalTarget.vaultId, not target.vaultId.
@@ -141,23 +144,30 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.10"
+__version__ = "4.11"
 
 import argparse
 import getpass
 import os
 import sys
-import urllib3
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 HELIOS_HOST     = "helios.cohesity.com"
 _KEYRING_SVC    = "cohesity_helios"
 _KEYRING_USER   = "apikey"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(val):
+    if isinstance(val, str) and val and val[0] in _FORMULA_PREFIXES:
+        return "'" + val
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +259,7 @@ def get_helios_clusters(api_key: str) -> list:
     """Return [{name, clusterId}, ...] for all Helios-connected clusters."""
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -273,7 +283,7 @@ def get_cluster_timezone(api_key: str, cluster_id: int, cluster_name: str) -> st
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/cluster"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         verify=False, timeout=15)
+                         verify=_verify, timeout=15)
         r.raise_for_status()
         tz = r.json().get("timezone", "")
         if tz:
@@ -290,7 +300,7 @@ def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
                          params={"includeFortKnoxVault": "true"},
-                         verify=False, timeout=30)
+                         verify=_verify, timeout=30)
         r.raise_for_status()
         vaults = r.json() or []
         return [v["id"] for v in vaults if "id" in v]
@@ -323,7 +333,7 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=60)
+                         params=params, verify=_verify, timeout=60)
         if debug:
             import json
             print(f"\n[DEBUG] {cluster_name} — exact request URL:\n        {r.url}")
@@ -405,7 +415,7 @@ def get_protection_runs_transfer(api_key: str, cluster_id: int, cluster_name: st
 
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=120)
+                         params=params, verify=_verify, timeout=120)
         if debug:
             print(f"\n[DEBUG] {cluster_name} — protectionRuns URL:\n        {r.url}")
         r.raise_for_status()
@@ -798,7 +808,7 @@ def write_excel(rows: list, output_file: str, mode: str):
     # Data rows — byte columns written as integers so Excel can sort/chart them
     for row in sorted_rows:
         ws.append([
-            int(row[key]) if key.endswith("_bytes") else row[key]
+            int(row[key]) if key.endswith("_bytes") else _safe_cell(row[key]) if isinstance(row[key], str) else row[key]
             for _, key in COLUMNS
         ])
 
@@ -864,6 +874,10 @@ Examples:
                              "storage utilization trend lines over time.")
     parser.add_argument("--debug",   action="store_true",
                         help="Print raw API response samples")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
 
     dg = parser.add_argument_group("Date range (default: last 7 days)")
     dg.add_argument("--days",        type=int, metavar="N",        help="Last N days")
@@ -878,6 +892,21 @@ Examples:
 
 def main():
     args = parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     # Handle --clear-credentials before doing anything else
     if args.clear_creds:

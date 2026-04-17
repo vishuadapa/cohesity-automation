@@ -25,3 +25,14 @@ python3 <script>.py --apikey <key> --cluster <cluster-name>
 # Direct cluster:
 python3 <script>.py --cluster <ip> --username admin --domain LOCAL
 ```
+
+---
+
+## TLS / certificate options
+
+All scripts support the following flags for environments with custom PKI or self-signed certificates:
+
+| Flag | Description |
+|------|-------------|
+| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--insecure` | Disable TLS certificate verification — **not recommended for production** |

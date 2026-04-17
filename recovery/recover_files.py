@@ -40,21 +40,20 @@ Usage:
   python3 recover_files.py --clear-credentials
 """
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 import argparse
 import getpass
 import sys
-import urllib3
 from datetime import datetime, timezone
 
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +119,7 @@ def helios_headers(api_key: str, cluster_id: int = None) -> dict:
 def get_helios_clusters(api_key: str) -> list:
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -147,7 +146,7 @@ def search_objects(api_key: str, cluster_id: int, name: str) -> list:
     params = {"searchString": name, "count": 20}
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=20)
+                         params=params, verify=_verify, timeout=20)
         r.raise_for_status()
         return r.json().get("objects", [])
     except Exception:
@@ -158,7 +157,7 @@ def get_snapshots(api_key: str, cluster_id: int, object_id: int) -> list:
     url = f"https://{HELIOS_HOST}/v2/data-protect/objects/{object_id}/snapshots"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         verify=False, timeout=20)
+                         verify=_verify, timeout=20)
         r.raise_for_status()
         return r.json().get("snapshots", [])
     except Exception:
@@ -169,7 +168,7 @@ def initiate_file_recovery(api_key: str, cluster_id: int, payload: dict) -> dict
     url = f"https://{HELIOS_HOST}/v2/data-protect/recoveries"
     try:
         r = requests.post(url, headers=helios_headers(api_key, cluster_id),
-                          json=payload, verify=False, timeout=30)
+                          json=payload, verify=_verify, timeout=30)
         r.raise_for_status()
         return r.json()
     except requests.exceptions.HTTPError:
@@ -204,7 +203,26 @@ def main():
                         help="Print payload without submitting")
     parser.add_argument("--clear-credentials", action="store_true",
                         help="Remove stored Helios API key and exit")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
     args = parser.parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     if args.clear_credentials:
         clear_stored_credentials()

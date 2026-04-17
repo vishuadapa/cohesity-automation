@@ -23,6 +23,8 @@ API endpoints used:
                       body: {"alertIdList": [...]}
 
 Version history:
+  1.1 (2026-04-17) — Security: TLS verification enabled by default; added
+                     --ca-bundle and --insecure CLI flags.
   1.0 (2026-04-06) — Initial release. Filter by severity, category, alert
                      code, or cluster name. Dry-run by default — explicit
                      --yes required to resolve. Prints match count and list
@@ -35,21 +37,20 @@ Usage:
   python3 resolve_alerts.py --clear-credentials
 """
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 import argparse
 import getpass
 import sys
-import urllib3
 from datetime import datetime, timezone
 
 import requests
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 HELIOS_HOST     = "helios.cohesity.com"
 _KR_SVC_HELIOS  = "cohesity_helios"
 _KR_USER_HELIOS = "apikey"
+
+_verify = True   # overridden in main() via --insecure / --ca-bundle
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ def helios_headers(api_key: str, cluster_id: int = None) -> dict:
 def get_helios_clusters(api_key: str) -> list:
     url = f"https://{HELIOS_HOST}/mcm/clusters/connectionStatus"
     try:
-        r = requests.get(url, headers=helios_headers(api_key), verify=False, timeout=30)
+        r = requests.get(url, headers=helios_headers(api_key), verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.ConnectionError:
         print("ERROR: Cannot connect to Helios. Check your network/VPN.")
@@ -137,7 +138,7 @@ def get_open_alerts(api_key: str, cluster_id: int) -> list:
     params = {"alertStateList": "kOpen", "maxAlerts": 1000}
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=False, timeout=30)
+                         params=params, verify=_verify, timeout=30)
         r.raise_for_status()
     except requests.exceptions.HTTPError:
         print(f"    WARN: alerts fetch failed ({r.status_code}) — skipping")
@@ -151,7 +152,7 @@ def resolve_alerts(api_key: str, cluster_id: int, alert_ids: list) -> bool:
     payload = {"alertIdList": alert_ids}
     try:
         r = requests.post(url, headers=helios_headers(api_key, cluster_id),
-                          json=payload, verify=False, timeout=30)
+                          json=payload, verify=_verify, timeout=30)
         r.raise_for_status()
         return True
     except requests.exceptions.HTTPError:
@@ -184,7 +185,26 @@ def main():
                         help="Skip confirmation prompt and resolve immediately")
     parser.add_argument("--clear-credentials", action="store_true",
                         help="Remove stored Helios API key and exit")
+    parser.add_argument("--ca-bundle", dest="ca_bundle", default=None, metavar="PATH",
+                        help="Path to CA bundle for TLS verification (e.g. corporate proxy cert)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Disable TLS certificate verification (NOT recommended)")
     args = parser.parse_args()
+
+    global _verify
+    if args.insecure:
+        _verify = False
+        print("=" * 65)
+        print("  WARN: --insecure — TLS certificate validation DISABLED.")
+        print("        Credentials and tokens may be intercepted (MITM).")
+        print("=" * 65)
+        try:
+            import urllib3 as _u3
+            _u3.disable_warnings(_u3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            requests.packages.urllib3.disable_warnings()
+    elif args.ca_bundle:
+        _verify = args.ca_bundle
 
     if args.clear_credentials:
         clear_stored_credentials()
