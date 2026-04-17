@@ -5545,8 +5545,8 @@ def write_pptx(all_data, args, out_path):
     _t_active_no_fk = [(n, k) for n, k in _t_active if k != "F"]
     _t_total_w = (len(_t_active_no_fk) * T_NODE_W
                   + max(0, len(_t_active_no_fk) - 1) * T_COL_GAP
-                  + (_has_fk and _t_active_no_fk) * (T_FK_GAP + T_NODE_W)
-                  + (_has_fk and not _t_active_no_fk) * T_NODE_W)
+                  + (bool(_has_fk and _t_active_no_fk)) * (T_FK_GAP + T_NODE_W)
+                  + (bool(_has_fk and not _t_active_no_fk)) * T_NODE_W)
     _t_x0 = (W - _t_total_w) / 2
     _t_xs = {}
     _xc = _t_x0
