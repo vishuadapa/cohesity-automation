@@ -28,6 +28,7 @@ Version history:
 Usage:
   python3 clone_policy.py --source "Gold 30-Day" --name "Gold 60-Day" --cluster <name>
   python3 clone_policy.py --source-id <policy-id> --name "Cloned Policy" --cluster <name>
+  python3 clone_policy.py --source "Gold" --name "Gold-2" --cluster <name> --ca-bundle /path/to/ca.crt
   python3 clone_policy.py --clear-credentials
 """
 

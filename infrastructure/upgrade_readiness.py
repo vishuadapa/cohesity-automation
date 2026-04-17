@@ -43,6 +43,7 @@ Usage:
   python3 upgrade_readiness.py --cluster <name>
   python3 upgrade_readiness.py --min-version 7.1
   python3 upgrade_readiness.py --output readiness.xlsx
+  python3 upgrade_readiness.py --ca-bundle /path/to/ca.crt  # corporate proxy cert
   python3 upgrade_readiness.py --clear-credentials
 """
 

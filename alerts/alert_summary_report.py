@@ -36,6 +36,7 @@ Usage:
   python3 alert_summary_report.py                        # prompts for key on first run
   python3 alert_summary_report.py --days 7               # last 7 days (default 1)
   python3 alert_summary_report.py --cluster <name>       # one cluster via Helios
+  python3 alert_summary_report.py --ca-bundle /path/to/ca.crt  # corporate proxy cert
   python3 alert_summary_report.py --clear-credentials    # remove stored key
 """
 

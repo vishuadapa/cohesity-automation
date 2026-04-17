@@ -34,6 +34,7 @@ Usage:
   python3 resolve_alerts.py --severity kCritical
   python3 resolve_alerts.py --category kDisk --cluster <cluster-name> --yes
   python3 resolve_alerts.py --code CE01516014 --yes
+  python3 resolve_alerts.py --ca-bundle /path/to/ca.crt  # corporate proxy cert
   python3 resolve_alerts.py --clear-credentials
 """
 

@@ -45,6 +45,7 @@ All scripts support the following flags for environments with custom PKI or self
 python3 cluster_info_report.py
 python3 cluster_info_report.py --cluster prod-cluster
 python3 cluster_info_report.py --output inventory.xlsx
+python3 cluster_info_report.py --ca-bundle /path/to/ca.crt
 ```
 
 **Output:** `cluster_info_report_YYYYMMDD_HHMMSS.xlsx`
@@ -58,6 +59,7 @@ Fields: Cluster Name, Cluster ID, Incarnation ID, Software Version, Cluster Type
 python3 node_status.py
 python3 node_status.py --cluster prod-cluster
 python3 node_status.py --unhealthy-only    # only nodes/disks with issues
+python3 node_status.py --ca-bundle /path/to/ca.crt
 ```
 
 **Output:** `node_status_YYYYMMDD_HHMMSS.xlsx`
@@ -73,6 +75,7 @@ python3 upgrade_readiness.py
 python3 upgrade_readiness.py --cluster prod-cluster
 python3 upgrade_readiness.py --min-version 7.1
 python3 upgrade_readiness.py --output readiness.xlsx
+python3 upgrade_readiness.py --ca-bundle /path/to/ca.crt
 ```
 
 Runs PASS/WARN/FAIL checks per cluster: node health, disk health, active runs in progress, version meets minimum, and available capacity margin (warns below 20%, fails below 10%).

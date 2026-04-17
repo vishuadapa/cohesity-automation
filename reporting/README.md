@@ -36,3 +36,9 @@ All scripts support the following flags for environments with custom PKI or self
 |------|-------------|
 | `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
+
+**Example:**
+```bash
+python3 protection_group_report.py --days 30 --ca-bundle /path/to/ca.crt
+python3 fortknox_vault_report.py --days 30 --ca-bundle /path/to/ca.crt
+```

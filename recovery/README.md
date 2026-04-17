@@ -40,6 +40,7 @@ All scripts support the following flags for environments with custom PKI or self
 ```bash
 python3 list_snapshots.py --object "vm-prod-01" --cluster prod-cluster
 python3 list_snapshots.py --object "NAS-Share" --cluster prod-cluster --output snaps.xlsx
+python3 list_snapshots.py --object "vm-prod-01" --cluster prod-cluster --ca-bundle /path/to/ca.crt
 ```
 
 Searches for the protected object by name (partial match), then lists all available snapshots with timestamp, run type, status, expiry, and whether local / replicated / archived copies exist.
@@ -55,6 +56,7 @@ python3 restore_vm.py --vm "vm-prod-01" --cluster prod-cluster
 python3 restore_vm.py --vm "vm-prod-01" --cluster prod-cluster --suffix "-restored"
 python3 restore_vm.py --vm "vm-prod-01" --cluster prod-cluster --snapshot 2 --power-on
 python3 restore_vm.py --vm "vm-prod-01" --cluster prod-cluster --dry-run
+python3 restore_vm.py --vm "vm-prod-01" --cluster prod-cluster --ca-bundle /path/to/ca.crt
 ```
 
 Restores a VMware VM to its original location. `--suffix` appends a string to the VM name so the original is preserved. `--snapshot N` selects a specific snapshot by index (0 = latest).
@@ -77,6 +79,8 @@ python3 recover_files.py --source "nas-share" --paths /data/reports \
         --cluster prod-cluster --dest-path /tmp/restore
 python3 recover_files.py --source "win-host" --paths "C:\\Users\\jdoe" \
         --cluster prod-cluster --snapshot 1 --dry-run
+python3 recover_files.py --source "linux-host-01" --paths /var/log \
+        --cluster prod-cluster --ca-bundle /path/to/ca.crt
 ```
 
 Recovers files or folders from a physical host or NAS snapshot. Multiple `--paths` can be specified in a single run.

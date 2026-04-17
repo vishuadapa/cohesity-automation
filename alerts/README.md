@@ -46,6 +46,7 @@ python3 alert_summary_report.py                        # last 1 day (default)
 python3 alert_summary_report.py --days 7               # last 7 days
 python3 alert_summary_report.py --cluster prod-cluster # one cluster
 python3 alert_summary_report.py --output alerts.xlsx
+python3 alert_summary_report.py --ca-bundle /path/to/ca.crt
 ```
 
 **Output:** `alert_summary_report_YYYYMMDD_HHMMSS.xlsx`
@@ -60,6 +61,7 @@ python3 alert_summary_report.py --output alerts.xlsx
 python3 resolve_alerts.py --severity kCritical --cluster prod-cluster
 python3 resolve_alerts.py --category kDisk --yes
 python3 resolve_alerts.py --code CE01516014 --cluster prod-cluster --yes
+python3 resolve_alerts.py --severity kCritical --cluster prod-cluster --ca-bundle /path/to/ca.crt
 ```
 
 Prints matching alerts and prompts for confirmation before resolving. Use `--yes` to skip the prompt.
@@ -75,6 +77,7 @@ At least one filter is required — resolving all alerts with no filter is block
 python3 alert_to_csv.py --days 30
 python3 alert_to_csv.py --start 2026-03-01 --end 2026-04-01
 python3 alert_to_csv.py --days 7 --severity kCritical
+python3 alert_to_csv.py --days 30 --ca-bundle /path/to/ca.crt
 ```
 
 **Output:** `alert_to_csv_YYYYMMDD_HHMMSS.csv`
