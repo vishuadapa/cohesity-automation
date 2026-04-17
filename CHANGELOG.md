@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] fix(health_check): True content-driven column widths across Excel, Word, PPT (v1.60)
+
+- **Excel**: `min_width` lowered from 12 → 6, `max_width` raised from 45 → 60; `wrap_text` removed so content fits without forced line breaks; columns now shrink to actual content width
+- **Word**: new `_word_fit_widths(table)` helper measures all cell content after rows are added and distributes 9360-twip page width proportionally across columns (capped at 55 chars per column to prevent one long-text column dominating); applied to all 10 Word tables
+- **PPT**: `_table()` now computes content-based column widths from headers + row values; overrides any passed-in `col_w` array; automatically centres the table horizontally on slide
+
+---
+
 ## [2026-04-17] feat(health_check): Polish pass — Excel/Word/PPT formatting (v1.59)
 
 - **Excel**: all 22 tabs open at 130% zoom; `auto_fit_columns` now sets zoom, autofits widths, and applies `horizontal=left` alignment to all data cells with unset alignment

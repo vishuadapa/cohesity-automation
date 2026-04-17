@@ -108,16 +108,12 @@ def style_worksheet(ws):
     ws.freeze_panes = "A2"
 
 
-def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
+def auto_fit_columns(ws, min_width: int = 6, max_width: int = 60):
     """
-    Auto-fit column widths, set zoom to 130%, and left-align data cells.
+    Auto-fit column widths to content, set zoom to 130%, and left-align data cells.
 
-    Handles merged cells gracefully — MergedCell objects have no column_letter,
-    so we fall back to get_column_letter(cell.column) and skip their content
-    when measuring width.
-
-    Handles multiline cell values (newline-separated) by measuring the longest
-    line rather than the full string.
+    Column width = max content length + 2 padding chars, clamped to [min_width, max_width].
+    Handles merged cells gracefully and multiline values (measures longest line).
     """
     try:
         from openpyxl.cell.cell import MergedCell
@@ -132,7 +128,7 @@ def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
     except Exception:
         pass
 
-    # Autofit column widths
+    # Autofit column widths based on content
     for col in ws.columns:
         if not col:
             continue
@@ -151,7 +147,7 @@ def auto_fit_columns(ws, min_width: int = 12, max_width: int = 45):
         ws.column_dimensions[col_letter].width = min(best, max_width)
 
     # Left-align data cells — only cells without explicit horizontal alignment
-    _al = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    _al = Alignment(horizontal="left", vertical="center")
     for row_cells in ws.iter_rows(min_row=2):
         for cell in row_cells:
             if not isinstance(cell, MergedCell) and cell.alignment.horizontal is None:

@@ -87,6 +87,14 @@ Requirements
 
 Version history
 ───────────────
+  1.60 (2026-04-17) — fix: Excel column widths now truly content-driven —
+                     min_width lowered from 12→6, max_width raised 45→60,
+                     wrap_text removed so all content fits without line breaks.
+                     Word tables get proportional column widths via new
+                     _word_fit_widths() measured after all rows are added
+                     (10 tables). PPT _table() auto-computes column widths from
+                     content and centres the table horizontally; passed col_w
+                     arrays are overridden.
   1.59 (2026-04-17) — feat: Excel tabs zoom 130%+autofit+left-align; Word tables
                      autofit. PPT: copyright 2026, page numbers on all data
                      slides, table headers 10pt left-aligned, contents slide
@@ -598,7 +606,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.59"
+__version__ = "1.60"
 
 import argparse
 import datetime
@@ -826,7 +834,7 @@ except ImportError:
     def bytes_to_tb(b):
         return round(b / 1_000_000_000_000, 4) if b else 0.0
 
-    def auto_fit_columns(ws, min_width=12, max_width=45):
+    def auto_fit_columns(ws, min_width=6, max_width=60):
         try:
             from openpyxl.cell.cell import MergedCell
             from openpyxl.utils import get_column_letter as _gcl
@@ -851,7 +859,7 @@ except ImportError:
                     lines = str(cell.value).split("\n")
                     best = max(best, max(len(ln) for ln in lines) + 2)
             ws.column_dimensions[col_letter].width = min(best, max_width)
-        _al = _Aln2(horizontal="left", vertical="center", wrap_text=True)
+        _al = _Aln2(horizontal="left", vertical="center")
         for row_cells in ws.iter_rows(min_row=2):
             for cell in row_cells:
                 if not isinstance(cell, MergedCell) and cell.alignment.horizontal is None:
@@ -4880,6 +4888,23 @@ def write_pptx(all_data, args, out_path):
     def _table(slide, headers, rows, col_w, x, y, rh=0.27,
                hdr_bg=None, fills=None, body_sz=10):
         """Styled table. fills[row][col] = (bg_hex, tx_hex) or None."""
+        # Auto-fit column widths to content
+        _cw_ch = max(body_sz, 10) * 0.58 / 72  # proportional char-width estimate (inches)
+        _pad_w = 0.22
+        auto_w = []
+        for ci in range(len(headers)):
+            best = len(str(headers[ci]))
+            for row in rows:
+                if ci < len(row) and row[ci] is not None:
+                    best = max(best, max(len(s) for s in str(row[ci]).split('\n')))
+            auto_w.append(max(0.50, round(best * _cw_ch + _pad_w, 3)))
+        _avail = W - 0.30
+        if sum(auto_w) > _avail:
+            _s = _avail / sum(auto_w)
+            auto_w = [round(w * _s, 3) for w in auto_w]
+        col_w = auto_w
+        x = round((W - sum(col_w)) / 2, 3)
+
         nr, nc = len(rows) + 1, len(headers)
         tw = sum(col_w)
         tbl = slide.shapes.add_table(
@@ -7603,6 +7628,40 @@ def write_word(all_data, args):
             tblPr.append(tblLayout)
         tblLayout.set(qn("w:type"), "autofit")
 
+    def _word_fit_widths(table):
+        """Redistribute column widths proportional to content. Call after rows are added."""
+        _PAGE_W = 9360   # twips — 6.5 inch usable width at 1440 twips/inch
+        _MIN_C  = 720    # 0.5 inch minimum per column
+        _CAP_CH = 55     # cap contribution at 55 chars to prevent one column dominating
+
+        nc = len(table.columns)
+        col_lens = [1] * nc
+        for row in table.rows:
+            for ci, cell in enumerate(row.cells):
+                for para in cell.paragraphs:
+                    for line in para.text.split("\n"):
+                        col_lens[ci] = max(col_lens[ci], min(len(line), _CAP_CH))
+
+        total_len = sum(col_lens)
+        raw = [max(_MIN_C, int(_PAGE_W * l / total_len)) for l in col_lens]
+
+        # Scale to exactly _PAGE_W and fix any rounding residual
+        diff = _PAGE_W - sum(raw)
+        raw[-1] = max(_MIN_C, raw[-1] + diff)
+
+        tblPr = table._tbl.tblPr
+        tblW = tblPr.find(qn("w:tblW"))
+        if tblW is None:
+            tblW = OxmlElement("w:tblW")
+            tblPr.insert(0, tblW)
+        tblW.set(qn("w:w"), str(_PAGE_W))
+        tblW.set(qn("w:type"), "dxa")
+
+        col_els = table._tbl.tblGrid.findall(qn("w:gridCol"))
+        for i, col_el in enumerate(col_els):
+            if i < len(raw):
+                col_el.set(qn("w:w"), str(raw[i]))
+
     def _tbl_header(table, cols, bg=COH_GREEN):
         row = table.rows[0].cells
         for i, col in enumerate(cols):
@@ -7682,6 +7741,7 @@ def write_word(all_data, args):
         for para in row[1].paragraphs:
             for run in para.runs:
                 run.font.bold = True
+    _word_fit_widths(t1)
 
     # ── Top At-Risk Workloads ──────────────────────────────────────────────
     _h2("Top At-Risk Workloads")
@@ -7739,6 +7799,7 @@ def write_word(all_data, args):
                     for run in para.runs:
                         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
                         run.font.bold = True
+        _word_fit_widths(t_risk)
     else:
         doc.add_paragraph("No critical or high-risk protection groups identified.")
 
@@ -7770,6 +7831,7 @@ def write_word(all_data, args):
                                   "Yes" if cluster_enc_w else "No",
                                   sd_enc_str_w, status]):
             row[i].text = str(val)
+    _word_fit_widths(t2)
 
     _h2("Software & Hardware Lifecycle")
     doc.add_paragraph(
@@ -7795,6 +7857,7 @@ def write_word(all_data, args):
         row[1].text = sw_ver
         row[2].text = sw_label
         row[3].text = sw_eos_date.isoformat() if sw_eos_date else "—"
+    _word_fit_widths(tbl)
     doc.add_paragraph("")
 
     doc.add_paragraph(
@@ -7875,6 +7938,7 @@ def write_word(all_data, args):
             _cell_shade(row_t[3], "E2EFDA")   # light green
         elif fk_st_t == "idle":
             _cell_shade(row_t[3], "FFF2CC")   # amber/yellow
+    _word_fit_widths(t_topo)
 
     # ── Topology diagram ─────────────────────────────────────────────────────
     # Primary: native Word shapes (editable). Fallback: matplotlib PNG.
@@ -7928,6 +7992,7 @@ def write_word(all_data, args):
                                   paused, failed, f"{succ_pct}%",
                                   f"{cd['scores']['sla']}/100"]):
             row[i].text = str(val)
+    _word_fit_widths(t3)
     doc.add_page_break()
 
     # ── 4. Storage & Capacity ──────────────────────────────────────────────
@@ -7957,6 +8022,7 @@ def write_word(all_data, args):
                                   round(bytes_to_tb(free), 2) or "N/A",
                                   pct_str, f"{dr}x", status]):
             row[i].text = str(val)
+    _word_fit_widths(t4)
 
     # Capacity runway alerts
     _runway_alerts = []
@@ -8134,6 +8200,7 @@ def write_word(all_data, args):
             if rw_score_w >= 80:   _sec_green(row[10])
             elif rw_score_w >= 60: _sec_amber(row[10])
             else:                  _sec_red(row[10])
+    _word_fit_widths(t5)
 
     # ── Governance & Change Activity ───────────────────────────────────────
     _h2("Governance & Change Activity")
@@ -8286,6 +8353,7 @@ def write_word(all_data, args):
                                   ano_mfa, locked,
                                   "Yes" if cd.get("idps") else "No"]):
             row[i].text = str(val)
+    _word_fit_widths(t_usr)
     doc.add_page_break()
 
     # ── 8. Recommendations ─────────────────────────────────────────────────
@@ -8310,6 +8378,7 @@ def write_word(all_data, args):
                     for para in row[i].paragraphs:
                         for run in para.runs:
                             run.font.bold = True
+        _word_fit_widths(t6)
     else:
         doc.add_paragraph("No recommendations generated — environment appears healthy.")
 

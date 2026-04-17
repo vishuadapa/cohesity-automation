@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.59**
+**Current version: 1.60**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
@@ -265,6 +265,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.60 | 2026-04-17 | fix: True content-driven column widths across all outputs. Excel: min_width 12→6, max_width 45→60, wrap_text removed. Word: new _word_fit_widths() measures all cells after population and sets proportional column widths (all 10 tables). PPT: _table() auto-computes column widths from content, overrides hardcoded col_w. |
 | 1.59 | 2026-04-17 | feat: Excel 130% zoom + autofit + left-align; Word tables autofit; PPT copyright 2026, page numbers on data slides, table headers 10pt left-aligned, Contents bars dynamically sized, Protection Summary methodology panel, topology legend horizontal row (active columns only, 0.60" bottom margin). |
 | 1.58 | 2026-04-17 | feat(pptx): Topology diagram wider spacing — T_NODE_W 2.50→2.30", T_NODE_H 0.80→0.85", T_V_GAP 0.18→0.32", T_COL_GAP 0.40→0.80" (double connector gap), connector line weight 0.025→0.030". |
 | 1.57 | 2026-04-17 | fix(pptx): All data tables top-aligned at y=0.90" (0.13" below header bar); mixed slides top-align table with methodology immediately below — eliminates bottom whitespace. |
