@@ -87,6 +87,20 @@ Requirements
 
 Version history
 ───────────────
+  1.56 (2026-04-17) — feat(pptx): PowerPoint layout and visual polish.
+                     KPI tiles: solid #D9D9D9 fill with accent colour side bar
+                     and outer drop shadow (30 % opacity) — replaces gradient.
+                     All data slides: tables are now vertically centred in the
+                     available content area (_tbl_y helper) instead of being
+                     pinned to y=0.82 with large bottom whitespace.
+                     Mixed slides (Health Scorecard, Ransomware, Security
+                     Posture, Workload Risk Heatmap): entire table + methodology
+                     block centred as a unit (_layout_mixed helper).
+                     Environment Topology: diagram vertically centred; auto-
+                     scales node height/gap when many nodes would overflow;
+                     HDR_Y and LEG_Y derived dynamically; all topology shapes
+                     are wrapped in a single PowerPoint group ("Topology Group")
+                     for easy user rearrangement.
   1.55 (2026-04-17) — feat(pptx): Centre environment topology diagram horizontally.
                      Column X positions are now computed dynamically based on
                      which column types (Source Clusters, Replication, Archival,
@@ -564,7 +578,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.55"
+__version__ = "1.56"
 
 import argparse
 import datetime
@@ -4878,50 +4892,51 @@ def write_pptx(all_data, args, out_path):
                     bg, fg = alt, _C_BLK
                 _cell(tbl.cell(ri + 1, ci), val, bg, fg, sz=body_sz)
 
-    def _tint(hex6, factor=0.55):
-        """Blend hex6 toward white by factor (0=original, 1=white)."""
-        h = hex6.lstrip("#")
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        return (f"{int(r + (255 - r) * factor):02X}"
-                f"{int(g + (255 - g) * factor):02X}"
-                f"{int(b + (255 - b) * factor):02X}")
+    def _tbl_y(n_data_rows, rh=0.27, top=0.84, bot=None):
+        """Return the y that centres n_data_rows table between top and bot."""
+        if bot is None:
+            bot = H - 0.40
+        tbl_h = (n_data_rows + 1) * rh
+        y = top + (bot - top - tbl_h) / 2
+        return max(top, round(y, 3))
 
-    def _grad_rect(slide, x, y, w, h, c_light, c_dark, angle_deg=120, rounded=False):
-        """Rectangle with a two-stop linear gradient fill."""
-        st = _MSO_SHAPE.ROUNDED_RECTANGLE if rounded else _MSO_SHAPE.RECTANGLE
-        sp = slide.shapes.add_shape(
-            st, _PptxInches(x), _PptxInches(y),
-            _PptxInches(w), _PptxInches(h))
-        sp.fill.solid()          # initialise spPr structure
-        sp.line.fill.background()
-        spPr = sp._element.find(_qn("p:spPr"))
-        for sf in (spPr.findall(_qn("a:solidFill"))
-                   + spPr.findall(_qn("a:gradFill"))):
-            spPr.remove(sf)
-        gf  = _letree.SubElement(spPr, _qn("a:gradFill"))
-        gl  = _letree.SubElement(gf,   _qn("a:gsLst"))
-        gs0 = _letree.SubElement(gl,   _qn("a:gs"));  gs0.set("pos", "0")
-        c0e = _letree.SubElement(gs0,  _qn("a:srgbClr"))
-        c0e.set("val", c_light.lstrip("#"))
-        gs1 = _letree.SubElement(gl,   _qn("a:gs"));  gs1.set("pos", "100000")
-        c1e = _letree.SubElement(gs1,  _qn("a:srgbClr"))
-        c1e.set("val", c_dark.lstrip("#"))
-        lin = _letree.SubElement(gf,   _qn("a:lin"))
-        lin.set("ang", str(int(angle_deg * 60000)))
-        lin.set("scaled", "0")
-        return sp
+    def _layout_mixed(n_main_rows, meth_total_h, rh=0.27):
+        """Centre a table + methodology block vertically on the slide.
 
-    def _kpi(slide, label, value, x, y, w=1.90, h=1.25,
-             bg=None, vc=None):
+        Returns (main_tbl_y, meth_y) so the combined block is vertically
+        centred in the available space between header and footer.
+        """
+        main_h  = (n_main_rows + 1) * rh
+        gap     = 0.22
+        total   = main_h + gap + meth_total_h
+        top, bot = 0.84, H - 0.40
+        avail   = bot - top
+        margin  = max(0.0, (avail - total) / 2)
+        main_y  = round(top + margin, 3)
+        meth_y  = round(main_y + main_h + gap, 3)
+        return main_y, meth_y
+
+    def _kpi(slide, label, value, x, y, w=1.90, h=1.25, bg=None, vc=None):
         accent = bg or _C_HDR
-        light  = _tint(accent, 0.60)   # 60% toward white for gradient top
-        _grad_rect(slide, x, y, w, h, light, accent, angle_deg=120, rounded=True)
-        # Label — small, uppercase, white
-        _txt(slide, label.upper(), x + 0.13, y + 0.10, w - 0.18, 0.26,
-             size=7.5, color=_C_WHT)
-        # Value — large, bold, white
-        _txt(slide, str(value), x + 0.13, y + 0.38, w - 0.18, 0.70,
-             size=26, bold=True, color=_C_WHT)
+        # Card: White, Background 1, Darker 15% = #D9D9D9; thin border
+        card = _rect(slide, x, y, w, h, "#D9D9D9", line="#BBBBBB", lw=0.012, rounded=True)
+        # Outer shadow — "intense" effect
+        spPr = card._element.find(_qn("p:spPr"))
+        eff  = _letree.SubElement(spPr, _qn("a:effectLst"))
+        shdw = _letree.SubElement(eff,  _qn("a:outerShdw"))
+        shdw.set("blurRad", "50800"); shdw.set("dist", "25400")
+        shdw.set("dir",     "2700000"); shdw.set("rotWithShape", "0")
+        sclr = _letree.SubElement(shdw, _qn("a:srgbClr")); sclr.set("val", "000000")
+        _letree.SubElement(sclr, _qn("a:alpha")).set("val", "30000")
+        # Thin left accent bar (inset slightly to respect rounded corners)
+        _rect(slide, x + 0.015, y + 0.04, 0.07, h - 0.08, accent)
+        # Label — small, uppercase, muted
+        _txt(slide, label.upper(), x + 0.14, y + 0.10, w - 0.18, 0.26,
+             size=7.5, color="#595959")
+        # Value — large, bold, accent colour for visual coding
+        _txt(slide, str(value), x + 0.14, y + 0.38, w - 0.18, 0.66,
+             size=26, bold=True, color=vc if vc else accent)
+
 
     _P_COLORS = {"CRITICAL": (_C_RED_BG, _C_RED_TX),
                  "HIGH":     ("#FFE0CC", "#7F3000"),
@@ -5052,8 +5067,10 @@ def write_pptx(all_data, args, out_path):
         fills_snap.append(
             [None, None, None, None, None, cr_f, _rag(ov), _grade_color(grd)])
     _cw_snap = [2.5, 1.4, 0.8, 0.8, 0.8, 1.0, 1.3, 0.8]
+    _kpi_bot = 0.82 + 1.25 + 0.20          # tiles bottom + gap
     _table(slide, hdr_snap, rows_snap, _cw_snap,
-           _cx(_cw_snap), 2.05, fills=fills_snap)
+           _cx(_cw_snap), _tbl_y(len(rows_snap), top=_kpi_bot),
+           fills=fills_snap)
     _notes(slide,
            "Summary of all Cohesity clusters in scope. "
            "KPI tiles at the top show total clusters, nodes, protection groups, "
@@ -5090,11 +5107,14 @@ def write_pptx(all_data, args, out_path):
             + [_grade_color(grd)])
     _cw_sc = [2.6, 1.1, 1.0, 1.1, 1.1, 1.1, 1.0, 1.1, 0.8]
     rows_sc  = rows_sc[:10];  fills_sc  = fills_sc[:10]
+    # meth block: rule(0.015) + gap(0.05) + label(0.22) + gap(0.27) + 7-row table + gap(0.08) + grade(0.22)
+    _sc_meth_h = 0.015 + 0.05 + 0.22 + 0.27 + 7 * 0.22 + 0.08 + 0.22  # ≈ 2.42"
+    _sc_y, _sc_my = _layout_mixed(len(rows_sc), _sc_meth_h)
     _table(slide, hdr_sc, rows_sc, _cw_sc,
-           _cx(_cw_sc), 0.82, fills=fills_sc)
+           _cx(_cw_sc), _sc_y, fills=fills_sc)
     # ── Inline scoring methodology ──────────────────────────────────────────
-    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
-    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+    _rect(slide, 0.15, _sc_my,         W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, _sc_my + 0.05, W - 0.30, 0.22,
          size=7.5, bold=True, color="#888888")
     _hs_cols = [2.6, 1.0, 1.5, 1.5, 1.5]
     _table(slide,
@@ -5107,7 +5127,7 @@ def write_pptx(all_data, args, out_path):
                ["Security Score",     "15%", "\u226575 pts",   "50\u201374",    "<50"],
                ["Alerts",             "10%", "No criticals",   "\u22641 crit",  ">1 crit"],
            ],
-           _hs_cols, _cx(_hs_cols), 4.02, rh=0.22, body_sz=8,
+           _hs_cols, _cx(_hs_cols), round(_sc_my + 0.32, 3), rh=0.22, body_sz=8,
            fills=[[None, None,
                    (_C_GRN_BG, _C_GRN_TX),
                    (_C_AMB_BG, _C_AMB_TX),
@@ -5115,7 +5135,8 @@ def write_pptx(all_data, args, out_path):
     _txt(slide,
          "Grade: A\u226590  B\u226580  C\u226570  D\u226560  F<60"
          "  \u00b7  Green\u226575  Amber 50\u201374  Red <50",
-         0.15, 5.62, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+         0.15, round(_sc_my + 0.32 + 7 * 0.22 + 0.10, 3),
+         W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
     _notes(slide,
            "Per-cluster health scorecard with six weighted dimensions. "
            "Protection Success (25%) — backup run success rate in the lookback window. "
@@ -5176,7 +5197,7 @@ def write_pptx(all_data, args, out_path):
         ])
     _cw_cap = [2.2, 1.8, 1.0, 1.0, 0.9, 1.2, 1.2, 1.8]
     _table(slide, hdr_cap, rows_cap, _cw_cap,
-           _cx(_cw_cap), 0.82, fills=fills_cap)
+           _cx(_cw_cap), _tbl_y(len(rows_cap)), fills=fills_cap)
     _notes(slide,
            "Storage utilisation and capacity runway per cluster. "
            "Used and Usable columns show cluster-total capacity in terabytes. "
@@ -5223,7 +5244,7 @@ def write_pptx(all_data, args, out_path):
         fills_prot.append([None, None, su_f, sl_f, dl_f, gp_f, _rag(p_score)])
     _cw_prot = [2.6, 1.0, 1.5, 1.5, 2.0, 1.5, 1.7]
     _table(slide, hdr_prot, rows_prot, _cw_prot,
-           _cx(_cw_prot), 0.82, fills=fills_prot)
+           _cx(_cw_prot), _tbl_y(len(rows_prot)), fills=fills_prot)
     _notes(slide,
            "Backup health summary per cluster across all protection groups. "
            "Success Rate = average of per-day success % across the lookback window "
@@ -5276,11 +5297,14 @@ def write_pptx(all_data, args, out_path):
         fills_rw.append([None, _rag(rw_score), lv_f, dl_f, fk_f, mfa_f, qr_f])
     _cw_rw = [2.4, 1.2, 1.5, 2.2, 1.8, 1.8, 1.5]
     rows_rw  = rows_rw[:10];  fills_rw  = fills_rw[:10]
+    # meth: rule + label + 6-row table (rh=0.22) + legend text
+    _rw_meth_h = 0.015 + 0.05 + 0.22 + 0.27 + 6 * 0.22 + 0.08 + 0.22  # ≈ 2.20"
+    _rw_y, _rw_my = _layout_mixed(len(rows_rw), _rw_meth_h)
     _table(slide, hdr_rw, rows_rw, _cw_rw,
-           _cx(_cw_rw), 0.82, fills=fills_rw)
+           _cx(_cw_rw), _rw_y, fills=fills_rw)
     # ── Inline scoring methodology ──────────────────────────────────────────
-    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
-    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+    _rect(slide, 0.15, _rw_my,         W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, _rw_my + 0.05, W - 0.30, 0.22,
          size=7.5, bold=True, color="#888888")
     _rw_cols = [2.4, 1.1, 8.5]
     _table(slide,
@@ -5297,11 +5321,12 @@ def write_pptx(all_data, args, out_path):
                ["Admin MFA",                   "15 pts",
                 "15=all admins enabled, 8=partial, 0=none enabled"],
            ],
-           _rw_cols, _cx(_rw_cols), 4.02, rh=0.22, body_sz=8)
+           _rw_cols, _cx(_rw_cols), round(_rw_my + 0.32, 3), rh=0.22, body_sz=8)
     _txt(slide,
          "Strong \u226580  \u00b7  Moderate 60\u201379  \u00b7  "
          "High Risk 40\u201359  \u00b7  Critical <40",
-         0.15, 5.30, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+         0.15, round(_rw_my + 0.32 + 6 * 0.22 + 0.10, 3),
+         W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
     _notes(slide,
            "Composite ransomware recovery readiness score per cluster (0-100). "
            "DataLock (WORM) coverage (30 pts): Compliance mode = 30, any mode = 20, "
@@ -5346,7 +5371,7 @@ def write_pptx(all_data, args, out_path):
         fills_risk = [[None] * 6]
     _cw_risk = [2.2, 3.5, 1.2, 1.4, 2.1, 1.4]
     _table(slide, hdr_risk, rows_risk, _cw_risk,
-           _cx(_cw_risk), 0.82, fills=fills_risk)
+           _cx(_cw_risk), _tbl_y(len(rows_risk)), fills=fills_risk)
     _notes(slide,
            "Top 16 protection groups most at risk of recovery failure, sorted worst-first. "
            "Risk Score factors: last run status (35 pts — Success=35, Warning=25, "
@@ -5384,7 +5409,7 @@ def write_pptx(all_data, args, out_path):
     _table(slide,
            ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
            [(p, c, cl, f, a) for p, c, cl, f, a in pri_rows],
-           _cw_pri, _cx(_cw_pri), 0.82, fills=pri_fills)
+           _cw_pri, _cx(_cw_pri), _tbl_y(len(pri_rows)), fills=pri_fills)
     _notes(slide,
            "CRITICAL and HIGH priority findings requiring immediate attention, "
            "sorted by priority then category. "
@@ -5415,10 +5440,10 @@ def write_pptx(all_data, args, out_path):
             "Source Clusters  \u00b7  Replication  \u00b7  Archival  "
             "\u00b7  FortKnox / RPaaS"
             + (f"  \u2014  {customer}" if customer else ""))
+    _topo_pre = len(list(slide.shapes._spTree))
 
-    T_START_Y = 0.90; T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18
-    T_COL_GAP = 0.40
-    # Centre the diagram: compute X positions for whichever columns are present
+    T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18; T_COL_GAP = 0.40
+    # Horizontal centering: only for active (non-empty) columns
     _t_active = [(nlist, key) for nlist, key in [
         (t_clusters, "C"), (repl_nodes, "R"), (arch_nodes, "A"), (fk_nodes, "F")
     ] if nlist]
@@ -5430,6 +5455,26 @@ def write_pptx(all_data, args, out_path):
     T_COL_R = _t_xs.get("R", T_COL_C + T_NODE_W + T_COL_GAP)
     T_COL_A = _t_xs.get("A", T_COL_R + T_NODE_W + T_COL_GAP)
     T_COL_F = _t_xs.get("F", T_COL_A + T_NODE_W + T_COL_GAP)
+    # Vertical centering: fit nodes + column headers + legend in available space
+    _n_max = max(len(t_clusters), len(repl_nodes) if repl_nodes else 0,
+                 len(arch_nodes) if arch_nodes else 0,
+                 len(fk_nodes)   if fk_nodes   else 0, 1)
+    # Auto-scale if too many rows would overflow
+    _max_col_h = 4.20
+    _raw_col_h = _n_max * T_NODE_H + max(0, _n_max - 1) * T_V_GAP
+    if _raw_col_h > _max_col_h:
+        _s = _max_col_h / _raw_col_h
+        T_NODE_H = round(T_NODE_H * _s, 3); T_V_GAP = round(T_V_GAP * _s, 3)
+    _col_h   = _n_max * T_NODE_H + max(0, _n_max - 1) * T_V_GAP
+    _n_leg   = len(_t_active)
+    _leg_h   = 0.28 + max(0, _n_leg - 1) * 0.34
+    _hdr_h   = 0.26; _hdr_gap = 0.14; _leg_gap = 0.30
+    _total_h = _hdr_h + _hdr_gap + _col_h + _leg_gap + _leg_h
+    _DIAG_TOP = 0.85; _DIAG_BOT = H - 0.40
+    _top_margin = max(0.0, (_DIAG_BOT - _DIAG_TOP - _total_h) / 2)
+    HDR_Y     = round(_DIAG_TOP + _top_margin, 3)
+    T_START_Y = round(HDR_Y + _hdr_h + _hdr_gap, 3)
+    LEG_Y     = round(T_START_Y + _col_h + _leg_gap, 3)
 
     def _t_ny(idx):
         return T_START_Y + idx * (T_NODE_H + T_V_GAP)
@@ -5506,7 +5551,6 @@ def write_pptx(all_data, args, out_path):
                shape_type=_ST_CLOUD)
         t_anchor[n["id"]] = (T_COL_F + T_NODE_W, y + T_NODE_H / 2, T_COL_F)
 
-    HDR_Y = T_START_Y - 0.30
     for nodelist, cx, lbl, color in [
         (t_clusters, T_COL_C, "Source Clusters",    _DG_TEAL),
         (repl_nodes, T_COL_R, "Replication Targets", _DG_REPL),
@@ -5538,7 +5582,6 @@ def write_pptx(all_data, args, out_path):
             _seen_lbl.add((sid, etype))
             _t_lbl(_E_LBLS.get(etype, ""), cx, cy)
 
-    LEG_Y = 6.18
     for li, (bg, stroke, lbl, st) in enumerate([
         (_DG_TEAL, _DG_TEAL_DK, "Source Cluster",      _ST_ROUND),
         (_DG_REPL, "#004A8A",   "Replication Target",   _ST_ROUND),
@@ -5557,6 +5600,34 @@ def write_pptx(all_data, args, out_path):
         r = p.add_run(); r.text = lbl
         r.font.size = _Pt(7); r.font.bold = True
         r.font.color.rgb = _rgb("#FFFFFF")
+
+    # Wrap all topology shapes into a single group for easy user rearrangement
+    _topo_els = list(slide.shapes._spTree)[_topo_pre:]
+    if _topo_els:
+        _EMU_W = int(W * 914400); _EMU_H = int(H * 914400)
+        _all_ids = [int(el.get("id", 0)) for el in slide.shapes._spTree.iter() if el.get("id")]
+        _grp_id  = (max(_all_ids) + 1) if _all_ids else 100
+        grp = _letree.Element(_qn("p:grpSp"))
+        nvGrpSpPr = _letree.SubElement(grp, _qn("p:nvGrpSpPr"))
+        cNvPr = _letree.SubElement(nvGrpSpPr, _qn("p:cNvPr"))
+        cNvPr.set("id", str(_grp_id)); cNvPr.set("name", "Topology Group")
+        _letree.SubElement(nvGrpSpPr, _qn("p:cNvGrpSpPr"))
+        _letree.SubElement(nvGrpSpPr, _qn("p:nvPr"))
+        grpSpPr = _letree.SubElement(grp, _qn("p:grpSpPr"))
+        xfrm = _letree.SubElement(grpSpPr, _qn("a:xfrm"))
+        off = _letree.SubElement(xfrm, _qn("a:off"))
+        off.set("x", "0"); off.set("y", "0")
+        ext = _letree.SubElement(xfrm, _qn("a:ext"))
+        ext.set("cx", str(_EMU_W)); ext.set("cy", str(_EMU_H))
+        chOff = _letree.SubElement(xfrm, _qn("a:chOff"))
+        chOff.set("x", "0"); chOff.set("y", "0")
+        chExt = _letree.SubElement(xfrm, _qn("a:chExt"))
+        chExt.set("cx", str(_EMU_W)); chExt.set("cy", str(_EMU_H))
+        for el in _topo_els:
+            slide.shapes._spTree.remove(el)
+            grp.append(el)
+        slide.shapes._spTree.append(grp)
+
     _notes(slide,
            "Environment topology map. Green rounded rectangles = source clusters "
            "(showing software version, protection group count, source count). "
@@ -5619,11 +5690,14 @@ def write_pptx(all_data, args, out_path):
             [None, enc_f, sd_f, rpl_f, fk_f, dl_f, mfa_f, _rag(sec_sc)])
     _cw_sec = [2.3, 1.1, 0.9, 1.2, 1.6, 2.0, 1.3, 1.2]
     rows_sec  = rows_sec[:10];  fills_sec  = fills_sec[:10]
+    # meth: rule + label + 12-row table (rh=0.20) + caption
+    _sec_meth_h = 0.015 + 0.05 + 0.22 + 0.27 + 12 * 0.20 + 0.08 + 0.22  # ≈ 3.27"
+    _sec_y, _sec_my = _layout_mixed(len(rows_sec), _sec_meth_h)
     _table(slide, hdr_sec, rows_sec, _cw_sec,
-           _cx(_cw_sec), 0.82, fills=fills_sec)
+           _cx(_cw_sec), _sec_y, fills=fills_sec)
     # ── Inline scoring methodology ──────────────────────────────────────────
-    _rect(slide, 0.15, 3.73, W - 0.30, 0.015, "#CCCCCC")
-    _txt(slide, "SCORING METHODOLOGY", 0.15, 3.78, W - 0.30, 0.22,
+    _rect(slide, 0.15, _sec_my,        W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, _sec_my + 0.05, W - 0.30, 0.22,
          size=7.5, bold=True, color="#888888")
     _sec_cols = [3.8, 1.8]
     _table(slide,
@@ -5641,7 +5715,7 @@ def write_pptx(all_data, args, out_path):
                ["DataLock partial <50%",              " +3 pts"],
                ["Admin accounts without MFA",         "\u221210 pts  (penalty)"],
            ],
-           _sec_cols, _cx(_sec_cols), 4.02, rh=0.20, body_sz=8,
+           _sec_cols, _cx(_sec_cols), round(_sec_my + 0.32, 3), rh=0.20, body_sz=8,
            fills=[
                [None, (_C_GRN_BG, _C_GRN_TX)],
                [None, (_C_GRN_BG, _C_GRN_TX)],
@@ -5657,7 +5731,8 @@ def write_pptx(all_data, args, out_path):
            ])
     _txt(slide,
          "Score capped at 100 \u00b7 Green\u226575  Amber 50\u201374  Red <50",
-         0.15, 6.50, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+         0.15, round(_sec_my + 0.32 + 12 * 0.20 + 0.10, 3),
+         W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
     _notes(slide,
            "Security posture scorecard across key protection dimensions per cluster. "
            "Cluster Enc: cluster-wide encryption at rest (Red = off, Green = on). "
@@ -5702,7 +5777,7 @@ def write_pptx(all_data, args, out_path):
         fills_usr = [[None] * 6]
     _cw_usr = [2.0, 2.2, 1.5, 3.0, 1.5, 1.5]
     _table(slide, hdr_usr, rows_usr[:20], _cw_usr,
-           _cx(_cw_usr), 0.82, fills=fills_usr[:20])
+           _cx(_cw_usr), _tbl_y(min(len(rows_usr), 20)), fills=fills_usr[:20])
     _notes(slide,
            "User account security status across all clusters. "
            "MFA Enabled: Green = multi-factor authentication is active for this user, "
@@ -5752,7 +5827,7 @@ def write_pptx(all_data, args, out_path):
         fills_aud.append([None, al_f, None, None, None, None, None, hr_f])
     _cw_aud = [2.0, 1.3, 1.2, 1.5, 1.4, 1.4, 1.4, 1.6]
     _table(slide, hdr_aud, rows_aud, _cw_aud,
-           _cx(_cw_aud), 0.82, fills=fills_aud)
+           _cx(_cw_aud), _tbl_y(len(rows_aud)), fills=fills_aud)
     _notes(slide,
            "30-day configuration change audit trail per cluster. "
            "Audit Logging must be enabled (Green) to collect events — if Red, "
@@ -5791,7 +5866,7 @@ def write_pptx(all_data, args, out_path):
     _cw_sr = [1.2, 1.8, 2.0, 4.1, 3.8]
     _table(slide,
            ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
-           rows_sr, _cw_sr, _cx(_cw_sr), 0.82, fills=fills_sr)
+           rows_sr, _cw_sr, _cx(_cw_sr), _tbl_y(len(rows_sr)), fills=fills_sr)
     _notes(slide,
            "Security-focused findings from the automated analysis, sorted by priority. "
            "Covers: encryption (cluster and storage domain), DataLock/WORM configuration, "
@@ -5839,7 +5914,7 @@ def write_pptx(all_data, args, out_path):
         fills_sw.append([None, None, sw_f, None, None, eol_f, None])
     _cw_sw = [2.2, 1.8, 1.5, 1.4, 0.8, 1.0, 4.0]
     _table(slide, hdr_sw, rows_sw, _cw_sw,
-           _cx(_cw_sw), 0.82, fills=fills_sw)
+           _cx(_cw_sw), _tbl_y(len(rows_sw)), fills=fills_sw)
     _notes(slide,
            "Software version lifecycle and hardware end-of-life status per cluster. "
            "SW Status: In Support (Green) = current release still receiving updates. "
@@ -5886,7 +5961,7 @@ def write_pptx(all_data, args, out_path):
         fills_gap = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 4]
     _cw_gap = [2.0, 3.2, 1.8, 2.5, 1.7]
     _table(slide, hdr_gap, rows_gap[:18], _cw_gap,
-           _cx(_cw_gap), 0.82, fills=fills_gap[:18])
+           _cx(_cw_gap), _tbl_y(min(len(rows_gap), 18)), fills=fills_gap[:18])
     if len(rows_gap) > 18:
         _txt(slide,
              f"\u2026 and {len(rows_gap) - 18} more \u2014 "
@@ -5935,7 +6010,7 @@ def write_pptx(all_data, args, out_path):
         fills_ag.append([None, None, None, up_f, dg_f, _rag(ag_score)])
     _cw_ag = [2.5, 1.5, 1.3, 1.5, 1.6, 1.8]
     _table(slide, hdr_ag, rows_ag, _cw_ag,
-           _cx(_cw_ag), 0.82, fills=fills_ag)
+           _cx(_cw_ag), _tbl_y(len(rows_ag)), fills=fills_ag)
     _notes(slide,
            "Cohesity agent health summary per cluster. "
            "Agents are software components installed on protected hosts (Windows, Linux, "
@@ -5978,7 +6053,7 @@ def write_pptx(all_data, args, out_path):
         fills_src = [[None] * 7]
     _cw_src = [2.0, 2.5, 1.5, 1.3, 1.2, 1.3, 1.5]
     _table(slide, hdr_src, rows_src[:18], _cw_src,
-           _cx(_cw_src), 0.82, fills=fills_src[:18])
+           _cx(_cw_src), _tbl_y(min(len(rows_src), 18)), fills=fills_src[:18])
     if len(rows_src) > 18:
         _txt(slide,
              f"\u2026 and {len(rows_src) - 18} more \u2014 "
@@ -6023,11 +6098,14 @@ def write_pptx(all_data, args, out_path):
         fills_hr = [[(_C_GRN_BG, _C_GRN_TX)] + [None] * 3]
     _cw_hr = [2.5, 6.2, 1.5, 2.0]
     rows_hr  = rows_hr[:12];  fills_hr  = fills_hr[:12]
+    # meth: rule + label + 5-row table (rh=0.22) + legend text
+    _hr_meth_h = 0.015 + 0.05 + 0.22 + 0.27 + 5 * 0.22 + 0.08 + 0.22  # ≈ 1.98"
+    _hr_y, _hr_my = _layout_mixed(len(rows_hr), _hr_meth_h)
     _table(slide, hdr_hr, rows_hr, _cw_hr,
-           _cx(_cw_hr), 0.82, fills=fills_hr)
+           _cx(_cw_hr), _hr_y, fills=fills_hr)
     # ── Inline scoring methodology ──────────────────────────────────────────
-    _rect(slide, 0.15, 4.28, W - 0.30, 0.015, "#CCCCCC")
-    _txt(slide, "SCORING METHODOLOGY", 0.15, 4.33, W - 0.30, 0.22,
+    _rect(slide, 0.15, _hr_my,         W - 0.30, 0.015, "#CCCCCC")
+    _txt(slide, "SCORING METHODOLOGY", 0.15, _hr_my + 0.05, W - 0.30, 0.22,
          size=7.5, bold=True, color="#888888")
     _risk_cols = [2.0, 1.0, 8.5]
     _table(slide,
@@ -6042,11 +6120,12 @@ def write_pptx(all_data, args, out_path):
                ["DataLock",        "15 pts",
                 "15=Compliance or FortKnox-indelible, 10=Administrative, 0=none"],
            ],
-           _risk_cols, _cx(_risk_cols), 4.55, rh=0.22, body_sz=8)
+           _risk_cols, _cx(_risk_cols), round(_hr_my + 0.32, 3), rh=0.22, body_sz=8)
     _txt(slide,
          "Low \u226575  \u00b7  Medium 50\u201374  \u00b7  High 25\u201349  \u00b7  Critical <25"
          "  \u00b7  Only Critical and High risk groups shown",
-         0.15, 5.60, W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
+         0.15, round(_hr_my + 0.32 + 5 * 0.22 + 0.10, 3),
+         W - 0.30, 0.22, size=7.5, color=_C_DGRY, align="center")
     _notes(slide,
            "Critical and High risk protection groups only, sorted worst-first by risk score. "
            "Only groups scoring below 50 are shown here — Medium and Low risk groups "
@@ -6087,7 +6166,7 @@ def write_pptx(all_data, args, out_path):
     _cw_er = [1.2, 1.8, 2.0, 4.1, 3.8]
     _table(slide,
            ["Priority", "Category", "Cluster", "Finding", "Recommended Action"],
-           rows_er, _cw_er, _cx(_cw_er), 0.82, fills=fills_er)
+           rows_er, _cw_er, _cx(_cw_er), _tbl_y(len(rows_er)), fills=fills_er)
     _notes(slide,
            "Infrastructure and backup engineering findings, sorted by priority. "
            "Covers: software lifecycle (out-of-support versions), hardware EOL, "

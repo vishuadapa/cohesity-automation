@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): PowerPoint layout polish and topology grouping (v1.56)
+
+- **KPI tiles**: replaced two-stop gradient with solid `#D9D9D9` fill + accent-colour side bar + outer drop shadow (30 % opacity, 3 pt blur, SE direction)
+- **Vertical centering (`_tbl_y`)**: all pure-table data slides now centre their table in the available content area instead of being pinned to y=0.82 with large bottom whitespace
+- **Mixed slides (`_layout_mixed`)**: Health Scorecard, Ransomware Readiness, Security Posture, Workload Risk Heatmap — entire table + methodology block centred as a unit
+- **Environment Topology**: diagram is now vertically centred; node height and gap auto-scale when many nodes would overflow the available height; `HDR_Y` and `LEG_Y` are fully dynamic
+- **Topology grouping**: all topology shapes (nodes, connectors, labels, legend) are wrapped in a single PowerPoint group element ("Topology Group") so users can move or resize the whole diagram as one object
+
+---
+
 ## [2026-04-17] feat(health_check): Centre topology diagram on slide (v1.55)
 
 - Environment Topology diagram column X positions are now computed dynamically from the set of active (non-empty) node lists (Source Clusters, Replication Targets, Archival Vaults, FortKnox/RPaaS), then centred on the 13.33" slide width. Previously hardcoded to left-aligned positions; now equal left/right margins regardless of how many columns are present.
