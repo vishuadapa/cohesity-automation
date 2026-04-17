@@ -87,6 +87,11 @@ Requirements
 
 Version history
 ───────────────
+  1.55 (2026-04-17) — feat(pptx): Centre environment topology diagram horizontally.
+                     Column X positions are now computed dynamically based on
+                     which column types (Source Clusters, Replication, Archival,
+                     FortKnox) are actually present, so the diagram is always
+                     centred on the slide regardless of how many columns exist.
   1.54 (2026-04-17) — feat(pptx): PowerPoint visual improvements — green header bar
                      height increased to 0.77" on all slides; content row Y
                      shifted down to 0.82" to clear taller bar. Contents slide
@@ -559,7 +564,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.54"
+__version__ = "1.55"
 
 import argparse
 import datetime
@@ -5411,7 +5416,19 @@ def write_pptx(all_data, args, out_path):
             + (f"  \u2014  {customer}" if customer else ""))
 
     T_START_Y = 0.90; T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18
-    T_COL_C = 0.20; T_COL_R = 3.10; T_COL_A = 6.00; T_COL_F = 8.90
+    T_COL_GAP = 0.40
+    # Centre the diagram: compute X positions for whichever columns are present
+    _t_active = [(nlist, key) for nlist, key in [
+        (t_clusters, "C"), (repl_nodes, "R"), (arch_nodes, "A"), (fk_nodes, "F")
+    ] if nlist]
+    _t_total_w = len(_t_active) * T_NODE_W + max(0, len(_t_active) - 1) * T_COL_GAP
+    _t_x0 = (W - _t_total_w) / 2
+    _t_xs = {key: _t_x0 + i * (T_NODE_W + T_COL_GAP)
+             for i, (_, key) in enumerate(_t_active)}
+    T_COL_C = _t_xs.get("C", 0.20)
+    T_COL_R = _t_xs.get("R", T_COL_C + T_NODE_W + T_COL_GAP)
+    T_COL_A = _t_xs.get("A", T_COL_R + T_NODE_W + T_COL_GAP)
+    T_COL_F = _t_xs.get("F", T_COL_A + T_NODE_W + T_COL_GAP)
 
     def _t_ny(idx):
         return T_START_Y + idx * (T_NODE_H + T_V_GAP)

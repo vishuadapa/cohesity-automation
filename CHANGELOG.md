@@ -7,6 +7,12 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): Centre topology diagram on slide (v1.55)
+
+- Environment Topology diagram column X positions are now computed dynamically from the set of active (non-empty) node lists (Source Clusters, Replication Targets, Archival Vaults, FortKnox/RPaaS), then centred on the 13.33" slide width. Previously hardcoded to left-aligned positions; now equal left/right margins regardless of how many columns are present.
+
+---
+
 ## [2026-04-17] feat(health_check): PowerPoint visual improvements (v1.54)
 
 - **Green header bar**: height increased from 0.55" to 0.77" on all content slides; subtitle text repositioned to y=0.50"; all table/KPI content start Y shifted to 0.82" to clear the taller bar
