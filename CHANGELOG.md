@@ -7,6 +7,15 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): Topology diagram — legend removed, FK wider gap, columns centred (v1.61)
+
+- Legend removed entirely; column labels above each group already identify node types
+- FortKnox column gap widened from `T_COL_GAP=0.80"` to `T_FK_GAP=1.60"`, creating a clear visual break before the vault column
+- All non-source columns (Replication, Archival, FortKnox) now vertically centred against the source cluster column via `_col_y0()` helper
+- Diagram uses full slide height (`_DIAG_BOT = H − 0.30"` instead of `H − 0.60"`)
+
+---
+
 ## [2026-04-17] fix(health_check): True content-driven column widths across Excel, Word, PPT (v1.60)
 
 - **Excel**: `min_width` lowered from 12 → 6, `max_width` raised from 45 → 60; `wrap_text` removed so content fits without forced line breaks; columns now shrink to actual content width

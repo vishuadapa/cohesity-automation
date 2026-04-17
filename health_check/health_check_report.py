@@ -87,6 +87,12 @@ Requirements
 
 Version history
 ───────────────
+  1.61 (2026-04-17) — feat(pptx): Topology diagram — legend removed; FortKnox
+                     column given wider separation gap (T_FK_GAP=1.60" vs
+                     T_COL_GAP=0.80"); all non-source columns (R, A, F) now
+                     vertically centred relative to source cluster column height
+                     via _col_y0(); diagram uses full slide height (DIAG_BOT
+                     pushed to H-0.30" from H-0.60").
   1.60 (2026-04-17) — fix: Excel column widths now truly content-driven —
                      min_width lowered from 12→6, max_width raised 45→60,
                      wrap_text removed so all content fits without line breaks.
@@ -606,7 +612,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.60"
+__version__ = "1.61"
 
 import argparse
 import datetime
@@ -5517,20 +5523,32 @@ def write_pptx(all_data, args, out_path):
             + (f"  \u2014  {customer}" if customer else ""))
     _topo_pre = len(list(slide.shapes._spTree))
 
-    T_NODE_W = 2.30; T_NODE_H = 0.85; T_V_GAP = 0.32; T_COL_GAP = 0.80
+    T_NODE_W = 2.30; T_NODE_H = 0.85; T_V_GAP = 0.32
+    T_COL_GAP = 0.80   # gap between C / R / A
+    T_FK_GAP  = 1.60   # wider visual separation before FortKnox column
     # Horizontal centering: only for active (non-empty) columns
     _t_active = [(nlist, key) for nlist, key in [
         (t_clusters, "C"), (repl_nodes, "R"), (arch_nodes, "A"), (fk_nodes, "F")
     ] if nlist]
-    _t_total_w = len(_t_active) * T_NODE_W + max(0, len(_t_active) - 1) * T_COL_GAP
+    _has_fk = any(k == "F" for _, k in _t_active)
+    _t_active_no_fk = [(n, k) for n, k in _t_active if k != "F"]
+    _t_total_w = (len(_t_active_no_fk) * T_NODE_W
+                  + max(0, len(_t_active_no_fk) - 1) * T_COL_GAP
+                  + (_has_fk and _t_active_no_fk) * (T_FK_GAP + T_NODE_W)
+                  + (_has_fk and not _t_active_no_fk) * T_NODE_W)
     _t_x0 = (W - _t_total_w) / 2
-    _t_xs = {key: _t_x0 + i * (T_NODE_W + T_COL_GAP)
-             for i, (_, key) in enumerate(_t_active)}
+    _t_xs = {}
+    _xc = _t_x0
+    for i, (_, key) in enumerate(_t_active):
+        _t_xs[key] = _xc
+        if i < len(_t_active) - 1:
+            _next_key = _t_active[i + 1][1]
+            _xc += T_NODE_W + (T_FK_GAP if _next_key == "F" else T_COL_GAP)
     T_COL_C = _t_xs.get("C", 0.20)
     T_COL_R = _t_xs.get("R", T_COL_C + T_NODE_W + T_COL_GAP)
     T_COL_A = _t_xs.get("A", T_COL_R + T_NODE_W + T_COL_GAP)
-    T_COL_F = _t_xs.get("F", T_COL_A + T_NODE_W + T_COL_GAP)
-    # Vertical centering: fit nodes + column headers + legend in available space
+    T_COL_F = _t_xs.get("F", T_COL_A + T_NODE_W + T_FK_GAP)
+    # Vertical centering: fit nodes + column headers in available space
     _n_max = max(len(t_clusters), len(repl_nodes) if repl_nodes else 0,
                  len(arch_nodes) if arch_nodes else 0,
                  len(fk_nodes)   if fk_nodes   else 0, 1)
@@ -5541,19 +5559,24 @@ def write_pptx(all_data, args, out_path):
         _s = _max_col_h / _raw_col_h
         T_NODE_H = round(T_NODE_H * _s, 3); T_V_GAP = round(T_V_GAP * _s, 3)
     _col_h   = _n_max * T_NODE_H + max(0, _n_max - 1) * T_V_GAP
-    # Horizontal legend — single row, one item per active column
-    _LEG_ITEM_W = 1.90; _LEG_ITEM_H = 0.28; _LEG_ITEM_GAP = 0.25
-    _leg_h   = _LEG_ITEM_H   # single-row height regardless of column count
-    _hdr_h   = 0.26; _hdr_gap = 0.14; _leg_gap = 0.30
-    _total_h = _hdr_h + _hdr_gap + _col_h + _leg_gap + _leg_h
-    _DIAG_TOP = 0.85; _DIAG_BOT = H - 0.60  # 0.60" bottom margin → legend clearly visible
+    _hdr_h   = 0.26; _hdr_gap = 0.14
+    _total_h = _hdr_h + _hdr_gap + _col_h
+    _DIAG_TOP = 0.85; _DIAG_BOT = H - 0.30
     _top_margin = max(0.0, (_DIAG_BOT - _DIAG_TOP - _total_h) / 2)
     HDR_Y     = round(_DIAG_TOP + _top_margin, 3)
     T_START_Y = round(HDR_Y + _hdr_h + _hdr_gap, 3)
-    LEG_Y     = round(T_START_Y + _col_h + _leg_gap, 3)
 
-    def _t_ny(idx):
-        return T_START_Y + idx * (T_NODE_H + T_V_GAP)
+    # Source-column height used to vertically centre other columns
+    _n_src   = max(len(t_clusters), 1)
+    _src_h   = _n_src * T_NODE_H + max(0, _n_src - 1) * T_V_GAP
+
+    def _col_y0(n_nodes):
+        """Top Y for a column centred against the source-cluster column."""
+        col_h = n_nodes * T_NODE_H + max(0, n_nodes - 1) * T_V_GAP
+        return T_START_Y + max(0.0, (_src_h - col_h) / 2)
+
+    def _t_ny(idx, y0=None):
+        return (y0 if y0 is not None else T_START_Y) + idx * (T_NODE_H + T_V_GAP)
 
     def _t_box(label, sub, x, y, fill, stroke, shape_type=None):
         sp = shapes.add_shape(
@@ -5612,17 +5635,20 @@ def write_pptx(all_data, args, out_path):
         if cl["sources"]: sub += f" | {cl['sources']} src"
         _t_box(cl["name"], sub, T_COL_C, y, _DG_TEAL, _DG_TEAL_DK)
         t_anchor[cl["id"]] = (T_COL_C + T_NODE_W, y + T_NODE_H / 2, T_COL_C)
+    _r_y0 = _col_y0(len(repl_nodes)) if repl_nodes else T_START_Y
     for idx, n in enumerate(repl_nodes):
-        y = _t_ny(idx)
+        y = _t_ny(idx, _r_y0)
         _t_box(n["name"], "Cluster", T_COL_R, y, _DG_REPL, "#004A8A")
         t_anchor[n["id"]] = (T_COL_R + T_NODE_W, y + T_NODE_H / 2, T_COL_R)
+    _a_y0 = _col_y0(len(arch_nodes)) if arch_nodes else T_START_Y
     for idx, n in enumerate(arch_nodes):
-        y = _t_ny(idx)
+        y = _t_ny(idx, _a_y0)
         _t_box(n["name"], "Archival Vault", T_COL_A, y, _DG_ARCH, "#B05A00",
                shape_type=_ST_CAN)
         t_anchor[n["id"]] = (T_COL_A + T_NODE_W, y + T_NODE_H / 2, T_COL_A)
+    _f_y0 = _col_y0(len(fk_nodes)) if fk_nodes else T_START_Y
     for idx, n in enumerate(fk_nodes):
-        y = _t_ny(idx)
+        y = _t_ny(idx, _f_y0)
         _t_box(n["name"], "FortKnox / RPaaS", T_COL_F, y, _DG_FK, "#0E3B25",
                shape_type=_ST_CLOUD)
         t_anchor[n["id"]] = (T_COL_F + T_NODE_W, y + T_NODE_H / 2, T_COL_F)
@@ -5657,32 +5683,6 @@ def write_pptx(all_data, args, out_path):
         if (sid, etype) not in _seen_lbl:
             _seen_lbl.add((sid, etype))
             _t_lbl(_E_LBLS.get(etype, ""), cx, cy)
-
-    # Legend — horizontal row, one item per active column, centred on slide
-    _LEG_ALL = {
-        "C": (_DG_TEAL, _DG_TEAL_DK, "Source Cluster",    _ST_ROUND),
-        "R": (_DG_REPL, "#004A8A",   "Replication Target", _ST_ROUND),
-        "A": (_DG_ARCH, "#B05A00",   "Archival Vault",     _ST_CAN),
-        "F": (_DG_FK,   "#0E3B25",   "FortKnox / RPaaS",  _ST_CLOUD),
-    }
-    _leg_active = [_LEG_ALL[key] for _, key in _t_active]
-    _leg_total_w = (len(_leg_active) * _LEG_ITEM_W
-                    + max(0, len(_leg_active) - 1) * _LEG_ITEM_GAP)
-    _leg_x0 = (W - _leg_total_w) / 2
-    for li, (bg, stroke, lbl, st) in enumerate(_leg_active):
-        sp = shapes.add_shape(
-            st,
-            _PptxInches(_leg_x0 + li * (_LEG_ITEM_W + _LEG_ITEM_GAP)),
-            _PptxInches(LEG_Y),
-            _PptxInches(_LEG_ITEM_W), _PptxInches(_LEG_ITEM_H))
-        sp.fill.solid(); sp.fill.fore_color.rgb = _rgb(bg)
-        sp.line.color.rgb = _rgb(stroke)
-        sp.line.width = _PptxInches(0.01)
-        tf = sp.text_frame
-        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
-        r = p.add_run(); r.text = lbl
-        r.font.size = _Pt(7); r.font.bold = True
-        r.font.color.rgb = _rgb("#FFFFFF")
 
     # Wrap all topology shapes into a single group for easy user rearrangement
     _topo_els = list(slide.shapes._spTree)[_topo_pre:]
