@@ -87,6 +87,12 @@ Requirements
 
 Version history
 ───────────────
+  1.58 (2026-04-17) — feat(pptx): Topology diagram — wider node spacing for
+                     elegant connector-line visibility. T_NODE_W 2.50→2.30",
+                     T_NODE_H 0.80→0.85", T_V_GAP 0.18→0.32" (near-double
+                     vertical breathing room), T_COL_GAP 0.40→0.80" (double
+                     connector gap). Connector line weight 0.025→0.030". Max
+                     column height budget raised to 4.50" before auto-scale.
   1.57 (2026-04-17) — fix(pptx): Table top-alignment on all data slides.
                      Tables now anchor to y=0.90" (0.13" below the 0.77"
                      green header bar) instead of being vertically centred.
@@ -585,7 +591,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.57"
+__version__ = "1.58"
 
 import argparse
 import datetime
@@ -5437,7 +5443,7 @@ def write_pptx(all_data, args, out_path):
             + (f"  \u2014  {customer}" if customer else ""))
     _topo_pre = len(list(slide.shapes._spTree))
 
-    T_NODE_W = 2.50; T_NODE_H = 0.80; T_V_GAP = 0.18; T_COL_GAP = 0.40
+    T_NODE_W = 2.30; T_NODE_H = 0.85; T_V_GAP = 0.32; T_COL_GAP = 0.80
     # Horizontal centering: only for active (non-empty) columns
     _t_active = [(nlist, key) for nlist, key in [
         (t_clusters, "C"), (repl_nodes, "R"), (arch_nodes, "A"), (fk_nodes, "F")
@@ -5455,7 +5461,7 @@ def write_pptx(all_data, args, out_path):
                  len(arch_nodes) if arch_nodes else 0,
                  len(fk_nodes)   if fk_nodes   else 0, 1)
     # Auto-scale if too many rows would overflow
-    _max_col_h = 4.20
+    _max_col_h = 4.50
     _raw_col_h = _n_max * T_NODE_H + max(0, _n_max - 1) * T_V_GAP
     if _raw_col_h > _max_col_h:
         _s = _max_col_h / _raw_col_h
@@ -5507,7 +5513,7 @@ def write_pptx(all_data, args, out_path):
                 _PptxInches(x1), _PptxInches(y1),
                 _PptxInches(x2), _PptxInches(y2))
             conn.line.color.rgb = _rgb(color)
-            conn.line.width = _PptxInches(0.025)
+            conn.line.width = _PptxInches(0.030)
         except Exception:
             pass
         return (x1 + x2) / 2, (y1 + y2) / 2
