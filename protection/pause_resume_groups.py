@@ -35,6 +35,8 @@ Usage:
   python3 pause_resume_groups.py --action resume --pattern "SQL" --cluster <name> --yes
   python3 pause_resume_groups.py --action pause --pattern "NAS" --cluster <name> \
           --resume-after 60
+  python3 pause_resume_groups.py --action pause --pattern "VMware" --cluster <name> \
+          --ca-bundle /path/to/ca.pem
   python3 pause_resume_groups.py --clear-credentials
 """
 

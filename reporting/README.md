@@ -34,5 +34,11 @@ All scripts support the following flags for environments with custom PKI or self
 
 | Flag | Description |
 |------|-------------|
-| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--ca-bundle PATH` | Path to a PEM-format CA bundle (`.pem`; extension does not matter, file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
+
+**Example:**
+```bash
+python3 protection_group_report.py --days 30 --ca-bundle /path/to/ca.pem
+python3 fortknox_vault_report.py --days 30 --ca-bundle /path/to/ca.pem
+```

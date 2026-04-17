@@ -59,6 +59,7 @@ Usage:
   python3 list_policies.py                       # all clusters
   python3 list_policies.py --cluster <name>      # one cluster
   python3 list_policies.py --output policies.xlsx
+  python3 list_policies.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 list_policies.py --clear-credentials
 """
 

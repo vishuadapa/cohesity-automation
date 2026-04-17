@@ -31,6 +31,7 @@ Version history:
 Usage:
   python3 list_snapshots.py --object "vm-prod-01" --cluster <name>
   python3 list_snapshots.py --object "NAS-Share" --cluster <name> --output snaps.xlsx
+  python3 list_snapshots.py --object "vm-prod-01" --cluster <name> --ca-bundle /path/to/ca.pem
   python3 list_snapshots.py --clear-credentials
 """
 

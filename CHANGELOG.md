@@ -7,6 +7,49 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-17] feat(health_check): Topology diagram wider node spacing (v1.58)
+
+- Node width `T_NODE_W`: 2.50" → 2.30" — slightly narrower to make room for wider gaps
+- Node height `T_NODE_H`: 0.80" → 0.85" — taller boxes with more text room
+- Vertical gap `T_V_GAP`: 0.18" → 0.32" — nearly double the breathing room between stacked nodes
+- Column gap `T_COL_GAP`: 0.40" → 0.80" — doubles the space connector lines travel through, making flow direction clearly legible
+- Connector line weight: 0.025" → 0.030" — bolder arrows
+- Max column height budget raised from 4.20" to 4.50" before auto-scale engages
+
+---
+
+## [2026-04-17] fix(health_check): Table top-alignment on all PPT data slides (v1.57)
+
+- All data tables now anchor to `y=0.90"` (0.13" gap below the 0.77" green bar) instead of being vertically centred — eliminates excessive bottom whitespace while keeping a clean gap from the header
+- Mixed slides (Health Scorecard, Ransomware, Security Posture, Workload Risk) also top-align their table; methodology section follows immediately below the table
+
+---
+
+## [2026-04-17] feat(health_check): PowerPoint layout polish and topology grouping (v1.56)
+
+- **KPI tiles**: replaced two-stop gradient with solid `#D9D9D9` fill + accent-colour side bar + outer drop shadow (30 % opacity, 3 pt blur, SE direction)
+- **Vertical centering (`_tbl_y`)**: all pure-table data slides now centre their table in the available content area instead of being pinned to y=0.82 with large bottom whitespace
+- **Mixed slides (`_layout_mixed`)**: Health Scorecard, Ransomware Readiness, Security Posture, Workload Risk Heatmap — entire table + methodology block centred as a unit
+- **Environment Topology**: diagram is now vertically centred; node height and gap auto-scale when many nodes would overflow the available height; `HDR_Y` and `LEG_Y` are fully dynamic
+- **Topology grouping**: all topology shapes (nodes, connectors, labels, legend) are wrapped in a single PowerPoint group element ("Topology Group") so users can move or resize the whole diagram as one object
+
+---
+
+## [2026-04-17] feat(health_check): Centre topology diagram on slide (v1.55)
+
+- Environment Topology diagram column X positions are now computed dynamically from the set of active (non-empty) node lists (Source Clusters, Replication Targets, Archival Vaults, FortKnox/RPaaS), then centred on the 13.33" slide width. Previously hardcoded to left-aligned positions; now equal left/right margins regardless of how many columns are present.
+
+---
+
+## [2026-04-17] feat(health_check): PowerPoint visual improvements (v1.54)
+
+- **Green header bar**: height increased from 0.55" to 0.77" on all content slides; subtitle text repositioned to y=0.50"; all table/KPI content start Y shifted to 0.82" to clear the taller bar
+- **Contents slide**: serial numbers now display without leading zero (1, 2, 3, 4 instead of 01, 02, 03, 04)
+- **KPI tiles (Environment Snapshot)**: replaced flat card with two-stop linear gradient fill (60% tint → accent color, 120°); white label and value text for contrast on colored background
+- **Thank You end slide**: added final slide matching cover/section-divider style — green block, large "Thank You" heading, white rule, cohesity.com URL, contact prompt, and footer
+
+---
+
 ## [2026-04-17] fix(security): TLS validation + Excel formula injection hardening (v1.53)
 
 ### Security fixes — `health_check/health_check_report.py` + `utils/cohesity_auth.py`

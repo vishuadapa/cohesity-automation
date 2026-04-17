@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.53**
+**Current version: 1.58**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **22-tab Excel workbook** (Guide + 21 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
@@ -102,7 +102,7 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin [--domai
 | `--excel-only` | off | Skip Word document generation |
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
-| `--ca-bundle PATH` | *(system bundle)* | Path to a CA certificate `.pem` for TLS verification — use for self-signed cluster certs or corporate HTTPS-inspection proxies (e.g. Zscaler) |
+| `--ca-bundle PATH` | *(system bundle)* | Path to a PEM-format CA bundle (typically `.pem`; extension doesn't matter — file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies (e.g. Zscaler) |
 | `--insecure` | off | Disable TLS certificate validation entirely — prints a startup warning; use only on isolated/trusted networks |
 
 ### Examples
@@ -119,6 +119,12 @@ python3 health_check_report.py --apikey abc123 --output /reports/q2_review --exc
 
 # 90-day lookback with debug logging
 python3 health_check_report.py --apikey abc123 --days 90 --debug
+
+# Corporate HTTPS-inspection proxy (e.g. Zscaler) or self-signed cluster cert
+python3 health_check_report.py --apikey abc123 --ca-bundle /path/to/ca.pem
+
+# Direct cluster with self-signed certificate
+python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bundle /path/to/ca.pem
 ```
 
 ### TLS certificate validation
@@ -259,6 +265,13 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.58 | 2026-04-17 | feat(pptx): Topology diagram wider spacing — T_NODE_W 2.50→2.30", T_NODE_H 0.80→0.85", T_V_GAP 0.18→0.32", T_COL_GAP 0.40→0.80" (double connector gap), connector line weight 0.025→0.030". |
+| 1.57 | 2026-04-17 | fix(pptx): All data tables top-aligned at y=0.90" (0.13" below header bar); mixed slides top-align table with methodology immediately below — eliminates bottom whitespace. |
+| 1.56 | 2026-04-17 | feat(pptx): KPI tiles — solid #D9D9D9 fill + accent side bar + outer shadow. All data tables vertically centred (`_tbl_y`). Mixed slides (Scorecard, Ransomware, Security, Risk) table+methodology block centred as unit (`_layout_mixed`). Topology diagram vertically centred with auto-scaling; all topology shapes grouped into a single PowerPoint group for easy user arrangement. |
+| 1.55 | 2026-04-17 | feat(pptx): Environment Topology diagram now horizontally centred on the slide — column X positions computed dynamically from the active column set so left/right margins are always equal regardless of how many node types are present. |
+| 1.54 | 2026-04-17 | feat(pptx): PowerPoint visual improvements — green header bar height increased to 0.77" on all slides, content rows shifted to y=0.82". Contents slide serial numbers without leading zero. Environment Snapshot KPI tiles use a two-stop linear gradient (light tint → accent, 120°) with white text. Added "Thank You" end slide matching cover/section-divider style. |
+| 1.53 | 2026-04-17 | fix(security): TLS certificate validation hardened — removed all `verify=False`, added `--ca-bundle PATH` and `--insecure` flags, default is now `verify=True`. Excel formula injection protection via `_safe_cell()` applied to all API-sourced worksheet writes. |
+| 1.52 | 2026-04-16 | feat: Inline scoring methodology panels on Scorecard and Security Posture PPT slides; removed 4 standalone Scoring Methodology reference slides. |
 | 1.51 | 2026-04-16 | fix: Storage Capacity & Growth PPT slide now uses correct API field paths — was empty because it read non-existent `storage_domains` key. feat: DataLock RAG coloring (red/amber/green) added to Protection Summary and Ransomware Readiness PPT slides. feat: Two Scoring Methodology Reference slides appended to deck (Health Score + Security Score; Ransomware Score + Workload Risk Score + RAG legend). PPT grows from ~29 to ~31 slides. |
 | 1.50 | 2026-04-15 | feat: Comprehensive PowerPoint deck (`write_pptx()`). ~29 slides across 4 sections: Cover, Executive Summary (Snapshot, Scorecard, Capacity, Protection, Ransomware, At-Risk Workloads, Priority Actions), Environment Topology (full diagram with legend), Security Deep-Dive (Posture, User Security, Audit, Recommendations), Backup Engineering (Lifecycle, Coverage Gaps, Agents, Source Coverage, Workload Risk, Recommendations). All slides RAG colour-coded. draw.io output removed entirely. |
 | 1.49 | 2026-04-15 | perf: Parallel API data collection (ThreadPoolExecutor wave-1 + wave-2 + per-group runs), cached `fk_status` / `policy_by_id` / `audit_enabled` in `cd`, `end_usecs` replaces repeated `_now_usecs()` calls, merged dual agent/disk loops, isinstance filtering at source, `_FONT_NORMAL`/`_FONT_BOLD` singletons. No output changes. |

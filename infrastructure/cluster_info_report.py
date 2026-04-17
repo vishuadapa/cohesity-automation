@@ -34,6 +34,7 @@ Usage:
   python3 cluster_info_report.py                     # all clusters via Helios
   python3 cluster_info_report.py --cluster <name>    # one cluster
   python3 cluster_info_report.py --output report.xlsx
+  python3 cluster_info_report.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 cluster_info_report.py --clear-credentials
 """
 

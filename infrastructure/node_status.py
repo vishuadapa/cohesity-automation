@@ -33,6 +33,7 @@ Usage:
   python3 node_status.py                      # all clusters
   python3 node_status.py --cluster <name>     # one cluster
   python3 node_status.py --unhealthy-only     # only nodes/disks with issues
+  python3 node_status.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 node_status.py --clear-credentials
 """
 

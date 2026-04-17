@@ -33,6 +33,7 @@ Usage:
   python3 alert_to_csv.py --start 2026-03-01 --end 2026-04-01
   python3 alert_to_csv.py --days 7 --severity kCritical
   python3 alert_to_csv.py --cluster <name> --days 14
+  python3 alert_to_csv.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 alert_to_csv.py --clear-credentials
 """
 

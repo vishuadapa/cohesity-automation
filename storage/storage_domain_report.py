@@ -46,7 +46,7 @@ Usage:
   python3 storage_domain_report.py --cluster <name>   # one cluster
   python3 storage_domain_report.py --output sd.xlsx
   python3 storage_domain_report.py --insecure          # skip TLS verification
-  python3 storage_domain_report.py --ca-bundle /path/to/ca.crt
+  python3 storage_domain_report.py --ca-bundle /path/to/ca.pem
   python3 storage_domain_report.py --clear-credentials
 """
 

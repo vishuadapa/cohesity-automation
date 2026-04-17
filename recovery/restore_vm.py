@@ -35,6 +35,7 @@ Usage:
   python3 restore_vm.py --vm "vm-prod-01" --cluster <name>
   python3 restore_vm.py --vm "vm-prod-01" --cluster <name> --suffix "-restored"
   python3 restore_vm.py --vm "vm-prod-01" --cluster <name> --snapshot 2 --power-on
+  python3 restore_vm.py --vm "vm-prod-01" --cluster <name> --ca-bundle /path/to/ca.pem
   python3 restore_vm.py --clear-credentials
 """
 

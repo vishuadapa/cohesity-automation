@@ -41,6 +41,7 @@ Usage:
   python3 policy_compliance_report.py --min-retention 14 --require-replication
   python3 policy_compliance_report.py --require-archival --rpo-hours 24
   python3 policy_compliance_report.py --cluster <name>
+  python3 policy_compliance_report.py --ca-bundle /path/to/ca.pem  # corporate proxy cert
   python3 policy_compliance_report.py --clear-credentials
 """
 

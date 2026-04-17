@@ -34,7 +34,7 @@ All scripts support the following flags for environments with custom PKI or self
 
 | Flag | Description |
 |------|-------------|
-| `--ca-bundle PATH` | Path to a CA bundle (PEM) to verify TLS (e.g. corporate proxy cert) |
+| `--ca-bundle PATH` | Path to a PEM-format CA bundle (`.pem`; extension does not matter, file must be PEM-encoded). Use for self-signed cluster certs or corporate HTTPS-inspection proxies |
 | `--insecure` | Disable TLS certificate verification — **not recommended for production** |
 
 ---
@@ -45,6 +45,7 @@ All scripts support the following flags for environments with custom PKI or self
 python3 capacity_report.py
 python3 capacity_report.py --cluster prod-cluster
 python3 capacity_report.py --output capacity.xlsx
+python3 capacity_report.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `capacity_report_YYYYMMDD_HHMMSS.xlsx`
@@ -59,6 +60,7 @@ python3 list_views.py
 python3 list_views.py --cluster prod-cluster
 python3 list_views.py --protocol nfs          # filter by SMB / NFS / S3
 python3 list_views.py --output views.xlsx
+python3 list_views.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `list_views_YYYYMMDD_HHMMSS.xlsx`
@@ -72,6 +74,7 @@ Fields: Cluster, View Name, Storage Domain, Protocols, Quota Limit (GB), Logical
 python3 storage_domain_report.py
 python3 storage_domain_report.py --cluster prod-cluster
 python3 storage_domain_report.py --output domains.xlsx
+python3 storage_domain_report.py --ca-bundle /path/to/ca.pem
 ```
 
 **Output:** `storage_domain_report_YYYYMMDD_HHMMSS.xlsx`

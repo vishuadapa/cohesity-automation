@@ -46,7 +46,7 @@ Usage:
   python3 capacity_report.py --cluster <name>     # one cluster
   python3 capacity_report.py --output cap.xlsx
   python3 capacity_report.py --insecure           # skip TLS verification
-  python3 capacity_report.py --ca-bundle /path/to/ca.crt
+  python3 capacity_report.py --ca-bundle /path/to/ca.pem
   python3 capacity_report.py --clear-credentials
 """
 

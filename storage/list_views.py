@@ -38,7 +38,7 @@ Usage:
   python3 list_views.py --protocol nfs         # filter by protocol
   python3 list_views.py --output views.xlsx
   python3 list_views.py --insecure             # skip TLS verification
-  python3 list_views.py --ca-bundle /path/to/ca.crt
+  python3 list_views.py --ca-bundle /path/to/ca.pem
   python3 list_views.py --clear-credentials
 """
 
