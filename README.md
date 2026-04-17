@@ -64,7 +64,7 @@ Full package list:
 | `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (22 sheets) | `pip install openpyxl` |
 | `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip install python-docx` |
 | `matplotlib` | Optional | Topology PNG fallback if native Word shapes fail | `pip install matplotlib` |
-| `python-pptx` | Optional | Comprehensive ~31-slide PowerPoint deck (.pptx) | `pip install python-pptx` |
+| `python-pptx` | Optional | Comprehensive ~27-slide PowerPoint deck (.pptx) | `pip install python-pptx` |
 | `keyring` | Optional | Securely store API key / passwords in OS keychain between runs | `pip install keyring` |
 
 At startup the script prints a status table for **all six packages** — installed vs. NOT FOUND, required vs. optional. If a required package is missing, it exits with a clear `pip install` command. Optional packages that are absent are flagged but do not block execution.
@@ -107,6 +107,12 @@ python3 health_check_report.py --apikey abc123 --output /reports/q2_review --exc
 
 # Extended lookback with debug logging
 python3 health_check_report.py --apikey abc123 --days 90 --debug
+
+# With corporate HTTPS proxy CA cert (e.g. Zscaler)
+python3 health_check_report.py --apikey abc123 --ca-bundle ~/.cohesity/zscaler-ca.pem
+
+# Direct cluster with self-signed certificate
+python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bundle ./cluster-ca.pem
 ```
 
 ### All options
@@ -131,18 +137,21 @@ python3 health_check_report.py --apikey abc123 --days 90 --debug
 | `--word-only` | off | Skip Excel generation |
 | `--debug` | off | Print HTTP status for every API call |
 | `--clear-credentials` | off | Remove stored credentials from OS keychain and exit |
+| **TLS options** | | |
+| `--ca-bundle PATH` | *(system bundle)* | CA certificate `.pem` for self-signed cluster certs or corporate HTTPS proxies (e.g. Zscaler) |
+| `--insecure` | off | Disable TLS validation — prints a startup warning; avoid in production |
 
 ### Output files
 
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.51_AcmeCorp_20260413_1430.xlsx
-cohesity_health_check_v1.51_AcmeCorp_20260413_1430.docx
-cohesity_health_check_v1.51_AcmeCorp_20260413_1430.pptx
+cohesity_health_check_v1.53_AcmeCorp_20260417_1430.xlsx
+cohesity_health_check_v1.53_AcmeCorp_20260417_1430.docx
+cohesity_health_check_v1.53_AcmeCorp_20260417_1430.pptx
 ```
 
-The `.pptx` file is a comprehensive ~31-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering · Scoring Methodology Reference — all with RAG colour-coding.
+The `.pptx` file is a comprehensive ~27-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Contents (hyperlinked TOC) · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering — all with RAG colour-coding and inline scoring methodology tables.
 
 ### Security scoring
 
