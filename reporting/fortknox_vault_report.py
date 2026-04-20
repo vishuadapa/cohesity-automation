@@ -25,13 +25,75 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
-  4.12 (2026-04-20) — All scalar fields from the dataTransferToVaults API
-                     response are now included in the report automatically.
-                     Vault-summary-level fields appear as "Vault API: <field>"
-                     columns; per-job fields appear as "Job API: <field>".
-                     This surfaces numLogicalBytesTransferred,
-                     numPhysicalBytesTransferred, and any other fields the
-                     API returns that were previously discarded.
+  4.19 (2026-04-20) — Fixed protection runs data limited to last ~10 days.
+                     Root cause: the v2 protection-groups runs endpoint caps
+                     results to a small page size (typically 10 runs per page)
+                     regardless of numRuns.  get_activities_transfer() now
+                     loops using the paginationCookie returned in each response
+                     until no further cookie is present.  get_protection_runs_
+                     transfer() (v1) now uses time-based pagination: requests
+                     pages of 1000 runs descending by time, advancing
+                     endTimeUsecs to one microsecond before the earliest run
+                     on the previous page, until fewer than a full page is
+                     returned or the start boundary is reached.  Both
+                     functions print the total run count retrieved when
+                     --debug is set.
+  4.18 (2026-04-20) — All green bar fills changed to 70AD47 (About tab
+                     sections/headers and Report tab source-banner and
+                     column-header rows).
+  4.17 (2026-04-20) — Reworked Activities data collection to match the
+                     Protection Activities report model: Backup and Vault
+                     are separate run entries in the API, not phases of the
+                     same run. Backup activity (Data Read, Data Written) is
+                     now collected independently by backup start date;
+                     Vault activity (Logical, Physical Transferred) is
+                     collected independently by vault start date. Results
+                     are merged by (group, date) — on days where both kick
+                     off at roughly the same time all four fields populate
+                     the same row. --debug now reports backup run count and
+                     vault run count separately per group.
+  4.16 (2026-04-20) — Fixed Activities: Data Read / Data Written date
+                     alignment. Previously anchored to the local backup
+                     start time; now anchored to the FortKnox archival
+                     activity start time (fk_results[0].startTimeUsecs),
+                     so Data Read and Data Written always land on the same
+                     row/date as the corresponding Logical and Physical
+                     Transferred values. Backup spanning midnight no longer
+                     causes a one-day offset.
+  4.15 (2026-04-20) — About tab: all color fills unified to Cohesity green
+                     (70AD47) — removed the secondary light-green (70AD47);
+                     section labels now use the same green bar style as the
+                     title. Report tab: added source-banner row 1 showing
+                     which API/report each column group originates from
+                     (Computed, Helios MCM, dataTransferToVaults,
+                     protectionRuns, Protection Activities); column headers
+                     moved to row 2, data to row 3; both rows frozen; header
+                     fill also updated to 70AD47.
+  4.14 (2026-04-20) — Fixed Activities: Logical/Physical Transferred always
+                     showing 0. Two root causes: (1) wrong field names —
+                     v2 API uses logicalBytesTransferred / physicalBytesTransferred,
+                     not logicalTransferredBytes / physicalTransferredBytes;
+                     (2) vault name match could silently fail — added targetType
+                     fallback matching using all known FortKnox type strings
+                     (krpaas, kfortknox, kfort_knox, krpaasarchival and plain
+                     equivalents). _xfer_bytes() now checks stats sub-dict then
+                     top-level of each archival result. --debug now prints raw
+                     archivalTargetResult keys and all (targetName, targetType)
+                     pairs seen in the response for easy diagnosis.
+  4.13 (2026-04-20) — Added four "Activities:" columns sourced from the
+                     protection activities report filtered to cloud vault
+                     (FortKnox) archival runs: Data Read, Data Written,
+                     Logical Transferred, Physical Transferred. Fetched via
+                     GET /v2/data-protect/protection-groups/{id}/runs and
+                     matched to FortKnox vault names. Summary mode aggregates
+                     all days per group; trend mode aligns per day. Two new
+                     APIs added to About sheet reference. get_fortknox_vaults()
+                     now returns (ids, names) replacing get_fortknox_vault_ids().
+  4.12 (2026-04-20) — Added "About" tab (first sheet) containing the command
+                     run, report parameters, field reference (column name,
+                     description, source field path, API endpoint), and APIs
+                     used. Fixed default_output_path() docstring — filename
+                     already included _v<version>_ since v4.3.
   4.11 (2026-04-17) — Security: TLS verification enabled by default; added
                      --ca-bundle and --insecure CLI flags. Excel formula
                      injection hardening via _safe_cell().
@@ -75,7 +137,7 @@ Version history:
   4.4 (2026-04-05) — Trend chart: 16 pt bold title, legend moved to bottom
                      (no overlap), x-axis labelled "Date" with yyyy-mm-dd
                      format, y-axis labelled "Storage Consumed (TB)". Header
-                     row color changed to Cohesity green (#00B388).
+                     row color changed to Cohesity green (#70AD47).
   4.3 (2026-04-04) — Secure credential storage via OS keychain (keyring).
                      --apikey is now optional; key is prompted once, saved to
                      the system keychain, and retrieved automatically on future
@@ -152,7 +214,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.12"
+__version__ = "4.19"
 
 import argparse
 import getpass
@@ -170,19 +232,6 @@ _KEYRING_USER   = "apikey"
 _verify = True   # overridden in main() via --insecure / --ca-bundle
 
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
-# Fields already captured explicitly at each API response level
-_VAULT_SKIP_KEYS = frozenset({"vaultName", "vaultType", "vaultId",
-                               "dataTransferPerProtectionJob"})
-_JOB_SKIP_KEYS   = frozenset({"protectionJobName", "storageConsumed"})
-
-
-def _collect_extra(d: dict, skip: frozenset, prefix: str) -> dict:
-    """Return all scalar fields in d not in skip, prefixed with prefix."""
-    return {
-        f"{prefix}{k}": v for k, v in d.items()
-        if k not in skip and not isinstance(v, (list, dict))
-    }
 
 
 def _safe_cell(val):
@@ -255,7 +304,7 @@ def clear_stored_credentials():
 
 
 def default_output_path() -> str:
-    """Auto-generate output filename: <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd."""
+    """Auto-generate output filename: <script_name>_v<version>_YYYYMMDD_HHMMSS.xlsx in cwd."""
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_name = os.path.splitext(os.path.basename(__file__))[0]
     return os.path.join(os.getcwd(), f"{script_name}_v{__version__}_{timestamp}.xlsx")
@@ -315,8 +364,8 @@ def get_cluster_timezone(api_key: str, cluster_id: int, cluster_name: str) -> st
     return "UTC"
 
 
-def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
-    """Return [vault_id, ...] for FortKnox vaults on a cluster."""
+def get_fortknox_vaults(api_key: str, cluster_id: int) -> tuple:
+    """Return (vault_ids: list, vault_names: set) for FortKnox vaults on a cluster."""
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/vaults"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
@@ -324,10 +373,182 @@ def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
                          verify=_verify, timeout=30)
         r.raise_for_status()
         vaults = r.json() or []
-        return [v["id"] for v in vaults if "id" in v]
+        ids   = [v["id"]   for v in vaults if "id" in v]
+        names = {v["name"] for v in vaults if v.get("name")}
+        return ids, names
     except Exception as e:
         print(f"    WARNING: Could not fetch vault IDs: {e}")
-        return []
+        return [], set()
+
+
+def get_protection_group_map(api_key: str, cluster_id: int, cluster_name: str) -> dict:
+    """Return {group_name: group_id} for all active protection groups on a cluster."""
+    url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups"
+    try:
+        r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                         params={"isActive": "true", "includeTenants": "true"},
+                         verify=_verify, timeout=30)
+        r.raise_for_status()
+        groups = r.json().get("protectionGroups") or []
+        return {g["name"]: g["id"] for g in groups if g.get("id") and g.get("name")}
+    except Exception as e:
+        print(f"    WARNING: Could not fetch protection groups for {cluster_name}: {e}")
+        return {}
+
+
+_FK_TARGET_TYPES = frozenset({
+    "krpaas", "kfortknox", "kfort_knox", "krpaasarchival",  # k-prefixed (v1/mixed)
+    "rpaas",  "fortknox",  "fort_knox",  "rpaasarchival",   # plain (v2)
+    "cloud",                                                  # generic cloud vault
+})
+
+
+def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
+                             vault_names: set, target_groups: set,
+                             start_msecs: int, end_msecs: int,
+                             tz, debug: bool = False) -> dict:
+    """
+    Fetch protection activity stats for FortKnox cloud-vault archival runs.
+
+    Calls GET /v2/data-protect/protection-groups to list groups, then for each
+    relevant group calls GET /v2/data-protect/protection-groups/{id}/runs
+    filtered to the time window.  Archival results are matched to FortKnox
+    vaults first by targetName (against the known vault name set), then by
+    targetType as a fallback (see _FK_TARGET_TYPES).  target_groups limits
+    which groups are queried (pass an empty set to query all groups).
+
+    Backup and Vault appear as separate run entries in the Protection
+    Activities API — a backup-only run has localBackupInfo but no
+    archivalInfo; a vault-only run has archivalInfo but no localBackupInfo.
+    This function collects each activity type independently by its own
+    start date and then merges them:
+
+      • Backup activity  → Data Read / Data Written keyed by backup start date
+      • Vault activity   → Logical / Physical Transferred keyed by vault start date
+
+    On days where both activities happen (typically most days, since the
+    daily backup and the vault archival of the previous snapshot both kick
+    off at roughly the same wall-clock time), all four fields populate the
+    same row.  On days where only one type runs, the other pair is 0.
+
+    target_groups limits which groups are queried (pass an empty set to
+    query all groups).
+
+    Returns:
+      {(group_name, date_str): {
+         "act_data_read":    int,   # Backup activity: localSnapshotStats.bytesRead
+         "act_data_written": int,   # Backup activity: localSnapshotStats.bytesWritten
+         "act_logical":      int,   # Vault activity: archivalTargetResults logicalBytesTransferred
+         "act_physical":     int,   # Vault activity: archivalTargetResults physicalBytesTransferred
+      }}
+    """
+    group_map = get_protection_group_map(api_key, cluster_id, cluster_name)
+    if not group_map:
+        return {}
+
+    relevant = {name: gid for name, gid in group_map.items()
+                if not target_groups or name in target_groups}
+    if not relevant:
+        return {}
+
+    def _is_fk(ar: dict) -> bool:
+        if ar.get("targetName", "") in vault_names:
+            return True
+        ttype = (ar.get("targetType") or ar.get("archivalTargetType") or "").lower()
+        return ttype in _FK_TARGET_TYPES
+
+    def _xfer_bytes(ar: dict, field: str) -> int:
+        stats = ar.get("stats") or {}
+        return int(stats.get(field) or ar.get(field) or 0)
+
+    def _date(usecs: int) -> str:
+        return datetime.fromtimestamp(usecs / 1_000_000, tz=tz).strftime("%Y-%m-%d")
+
+    def _ensure(d, key):
+        if key not in d:
+            d[key] = {"act_data_read": 0, "act_data_written": 0,
+                      "act_logical":   0, "act_physical":     0}
+
+    result: dict = {}
+
+    for group_name, group_id in relevant.items():
+        url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups/{group_id}/runs"
+        params = {
+            "startTimeUsecs":       start_msecs * 1000,
+            "endTimeUsecs":         end_msecs   * 1000,
+            "numRuns":              10000,
+            "includeObjectDetails": "false",
+        }
+        try:
+            all_runs = []
+            page_params = dict(params)
+            while True:
+                r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                                 params=page_params, verify=_verify, timeout=60)
+                if debug and not all_runs:
+                    print(f"\n[DEBUG] activities {cluster_name}/{group_name}:\n        {r.url}")
+                r.raise_for_status()
+                data = r.json()
+                page_runs = data.get("runs") or []
+                all_runs.extend(page_runs)
+                cookie = data.get("paginationCookie")
+                if not cookie or not page_runs:
+                    break
+                page_params = {"paginationCookie": cookie, "numRuns": params["numRuns"]}
+            runs = all_runs
+        except Exception as e:
+            print(f"    WARNING: Activities fetch failed for {cluster_name}/{group_name}: {e}")
+            continue
+
+        if debug and runs:
+            sample_ar = ((runs[0].get("archivalInfo") or {})
+                         .get("archivalTargetResults") or [{}])[0]
+            print(f"[DEBUG] {cluster_name}/{group_name} — {len(runs)} run(s) total (paginated); "
+                  f"sample archivalTargetResult keys: {list(sample_ar.keys())}")
+            if sample_ar.get("stats"):
+                print(f"[DEBUG] sample stats keys: {list(sample_ar['stats'].keys())}")
+            vault_pairs = {(a.get("targetName"), a.get("targetType"))
+                           for run in runs
+                           for a in ((run.get("archivalInfo") or {})
+                                     .get("archivalTargetResults") or [])}
+            print(f"[DEBUG] all (targetName, targetType) pairs: {vault_pairs}")
+            print(f"[DEBUG] known vault_names set: {vault_names}")
+
+        bk_runs = vk_runs = 0
+        for run in runs:
+            # --- Backup activity (Activity Type = Backup) ---
+            local_info  = run.get("localBackupInfo") or {}
+            local_stats = local_info.get("localSnapshotStats") or {}
+            bk_usecs    = local_info.get("startTimeUsecs") or 0
+            data_read    = int(local_stats.get("bytesRead",    0) or 0)
+            data_written = int(local_stats.get("bytesWritten", 0) or 0)
+            if bk_usecs and (data_read or data_written):
+                key = (group_name, _date(bk_usecs))
+                _ensure(result, key)
+                result[key]["act_data_read"]    += data_read
+                result[key]["act_data_written"] += data_written
+                bk_runs += 1
+
+            # --- Vault activity (Activity Type = Vault) ---
+            archival_results = (run.get("archivalInfo") or {}).get("archivalTargetResults") or []
+            fk_results = [a for a in archival_results if _is_fk(a)]
+            for ar in fk_results:
+                vk_usecs = ar.get("startTimeUsecs") or bk_usecs
+                if not vk_usecs:
+                    continue
+                key = (group_name, _date(vk_usecs))
+                _ensure(result, key)
+                result[key]["act_logical"]  += _xfer_bytes(ar, "logicalBytesTransferred")
+                result[key]["act_physical"] += _xfer_bytes(ar, "physicalBytesTransferred")
+                vk_runs += 1
+
+        if debug:
+            hits = sum(1 for k in result if k[0] == group_name)
+            print(f"[DEBUG] {cluster_name}/{group_name} — "
+                  f"{bk_runs} backup run(s), {vk_runs} vault run(s), "
+                  f"{hits} distinct date(s) recorded")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -374,14 +595,12 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 
     rows = []
     for vault_summary in (resp.get("dataTransferSummary") or []):
-        vault_name  = vault_summary.get("vaultName", "")
-        vault_type  = vault_summary.get("vaultType", "N/A")
-        vault_id    = vault_summary.get("vaultId")
-        vault_extra = _collect_extra(vault_summary, _VAULT_SKIP_KEYS, "vault_api_")
+        vault_name = vault_summary.get("vaultName", "")
+        vault_type = vault_summary.get("vaultType", "N/A")
+        vault_id   = vault_summary.get("vaultId")
         for job in (vault_summary.get("dataTransferPerProtectionJob") or []):
             consumed_bytes = job.get("storageConsumed", 0) or 0
-            job_extra      = _collect_extra(job, _JOB_SKIP_KEYS, "job_api_")
-            row = {
+            rows.append({
                 "cluster":                cluster_name,
                 "vault_name":             vault_name,
                 "vault_type":             vault_type,
@@ -392,10 +611,7 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
                 "storage_consumed_bytes": consumed_bytes,
                 "storage_consumed_tb":    round(consumed_bytes / 1_000_000_000_000, 4),
                 "storage_consumed_tib":   round(consumed_bytes / 1_099_511_627_776, 4),
-            }
-            row.update(vault_extra)
-            row.update(job_extra)
-            rows.append(row)
+            })
     return rows
 
 
@@ -433,26 +649,46 @@ def get_protection_runs_transfer(api_key: str, cluster_id: int, cluster_name: st
         return {}
 
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/protectionRuns"
-    params = {
-        "startTimeUsecs": start_msecs * 1000,
-        "endTimeUsecs":   end_msecs   * 1000,
-        "numRuns":        10000,
-    }
+    _PAGE = 1000
 
     try:
-        r = requests.get(url, headers=helios_headers(api_key, cluster_id),
-                         params=params, verify=_verify, timeout=120)
-        if debug:
-            print(f"\n[DEBUG] {cluster_name} — protectionRuns URL:\n        {r.url}")
-        r.raise_for_status()
-        runs = r.json() or []
+        all_runs = []
+        page_end = end_msecs * 1000
+        while True:
+            page_params = {
+                "startTimeUsecs": start_msecs * 1000,
+                "endTimeUsecs":   page_end,
+                "numRuns":        _PAGE,
+            }
+            r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                             params=page_params, verify=_verify, timeout=120)
+            if debug and not all_runs:
+                print(f"\n[DEBUG] {cluster_name} — protectionRuns URL:\n        {r.url}")
+            r.raise_for_status()
+            page_runs = r.json() or []
+            if not page_runs:
+                break
+            all_runs.extend(page_runs)
+            if len(page_runs) < _PAGE:
+                break
+            # Advance the window: find the earliest run start time on this page
+            earliest = page_end
+            for run in page_runs:
+                br = run.get("backupRun") or {}
+                t  = (br.get("stats") or {}).get("startTimeUsecs") or 0
+                if t and t < earliest:
+                    earliest = t
+            page_end = earliest - 1
+            if page_end <= start_msecs * 1000:
+                break
+        runs = all_runs
     except Exception as e:
         print(f"    WARNING: protectionRuns fetch failed for {cluster_name}: {e}")
         return {}
 
     if debug:
         import json
-        print(f"[DEBUG] {cluster_name} — {len(runs)} protection run(s) returned")
+        print(f"[DEBUG] {cluster_name} — {len(runs)} protection run(s) returned (paginated)")
         for run in runs[:1]:
             for cr in (run.get("copyRun") or [])[:1]:
                 print(f"[DEBUG] copyRun sample = {json.dumps(cr, indent=2)[:800]}")
@@ -595,18 +831,42 @@ def iter_days(start_msecs: int, end_msecs: int, tz):
 # ---------------------------------------------------------------------------
 
 COLUMNS = [
-    ("Period Start",                 "period_start"),
-    ("Period End",                   "period_end"),
-    ("Cluster",                      "cluster"),
-    ("Vault Name",                   "vault_name"),
-    ("Vault Type",                   "vault_type"),
-    ("Protection Group",             "protection_group"),
-    ("Logical Transferred (Bytes)",  "logical_bytes"),
-    ("Physical Transferred (Bytes)", "physical_bytes"),
-    ("Storage Consumed (Bytes)",     "storage_consumed_bytes"),
-    ("Storage Consumed (TB)",        "storage_consumed_tb"),
-    ("Storage Consumed (TiB)",       "storage_consumed_tib"),
+    ("Period Start",                          "period_start"),
+    ("Period End",                            "period_end"),
+    ("Cluster",                               "cluster"),
+    ("Vault Name",                            "vault_name"),
+    ("Vault Type",                            "vault_type"),
+    ("Protection Group",                      "protection_group"),
+    ("Logical Transferred (Bytes)",           "logical_bytes"),
+    ("Physical Transferred (Bytes)",          "physical_bytes"),
+    ("Storage Consumed (Bytes)",              "storage_consumed_bytes"),
+    ("Storage Consumed (TB)",                 "storage_consumed_tb"),
+    ("Storage Consumed (TiB)",                "storage_consumed_tib"),
+    # --- Protection Activities (cloud vault filter) ---
+    ("Activities: Data Read (Bytes)",         "act_data_read"),
+    ("Activities: Data Written (Bytes)",      "act_data_written"),
+    ("Activities: Logical Transferred (Bytes)",  "act_logical"),
+    ("Activities: Physical Transferred (Bytes)", "act_physical"),
 ]
+
+# Source label for each column key — used to build the source-banner row in the Report sheet
+_COLUMN_SOURCE = {
+    "period_start":           "Computed",
+    "period_end":             "Computed",
+    "cluster":                "Helios MCM",
+    "vault_name":             "dataTransferToVaults",
+    "vault_type":             "dataTransferToVaults",
+    "protection_group":       "dataTransferToVaults",
+    "logical_bytes":          "protectionRuns",
+    "physical_bytes":         "protectionRuns",
+    "storage_consumed_bytes": "dataTransferToVaults",
+    "storage_consumed_tb":    "Computed",
+    "storage_consumed_tib":   "Computed",
+    "act_data_read":          "Protection Activities",
+    "act_data_written":       "Protection Activities",
+    "act_logical":            "Protection Activities",
+    "act_physical":           "Protection Activities",
+}
 
 # Column index (1-based) of the TB column in the Report sheet — used by chart
 _TB_COL_IDX = next(i for i, (_, k) in enumerate(COLUMNS, start=1)
@@ -623,8 +883,7 @@ def _safe_sheet_name(name: str, existing: list) -> str:
 
 
 def _make_chart(title: str, report_ws, series_list: list,
-                LineChart, Reference, SeriesLabel, Legend,
-                tb_col_idx: int = None):
+                LineChart, Reference, SeriesLabel, Legend):
     """
     Build a single LineChart with consistent styling.
 
@@ -698,10 +957,9 @@ def _make_chart(title: str, report_ws, series_list: list,
     except ImportError:
         _use_strref = False
 
-    col_idx = tb_col_idx if tb_col_idx is not None else _TB_COL_IDX
     cat_formula = None
     for label, start_row, end_row in series_list:
-        data_ref = Reference(report_ws, min_col=col_idx,
+        data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
         chart.add_data(data_ref)
         chart.series[-1].title = SeriesLabel(v=label)
@@ -727,7 +985,7 @@ def _make_chart(title: str, report_ws, series_list: list,
     return chart
 
 
-def _add_trend_chart(wb, group_ranges: dict, tb_col_idx: int = None):
+def _add_trend_chart(wb, group_ranges: dict):
     """
     Add one chart sheet per cluster, each showing all protection groups
     for that cluster as separate series.
@@ -771,8 +1029,7 @@ def _add_trend_chart(wb, group_ranges: dict, tb_col_idx: int = None):
 
         title = f"FortKnox \u2014 {cluster}"
         chart = _make_chart(title, report_ws, series_list,
-                            LineChart, Reference, SeriesLabel, Legend,
-                            tb_col_idx=tb_col_idx)
+                            LineChart, Reference, SeriesLabel, Legend)
 
         sheet_name = _safe_sheet_name(cluster, sheet_names_used)
         sheet_names_used.append(sheet_name)
@@ -787,7 +1044,214 @@ def _add_trend_chart(wb, group_ranges: dict, tb_col_idx: int = None):
         print(f"    {total_charts} chart sheet(s) added (one per cluster)")
 
 
-def write_excel(rows: list, output_file: str, mode: str):
+_FIELD_REF = [
+    # (Column Name, Description, Source field path, API endpoint)
+    ("Period Start",
+     "Start of the reporting window",
+     "Computed from --start / --days / --start-msecs",
+     "—"),
+    ("Period End",
+     "End of the reporting window",
+     "Computed from --end / --days / --end-msecs",
+     "—"),
+    ("Cluster",
+     "Name of the Cohesity cluster",
+     "connectionStatus[].name",
+     "GET /mcm/clusters/connectionStatus"),
+    ("Vault Name",
+     "Name of the FortKnox vault",
+     "dataTransferSummary[].vaultName",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Vault Type",
+     "Vault type identifier (e.g. kFortKnox, kRPaaS)",
+     "dataTransferSummary[].vaultType",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Protection Group",
+     "Name of the protection job/group",
+     "dataTransferSummary[].dataTransferPerProtectionJob[].protectionJobName",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Logical Transferred (Bytes)",
+     "Time-windowed logical bytes sent to this vault within the query period. "
+     "Summed from per-run archival copy stats (kSuccess/kWarning runs only).",
+     "protectionRuns[].copyRun[].stats.logicalBytesTransferred",
+     "GET /public/protectionRuns"),
+    ("Physical Transferred (Bytes)",
+     "Time-windowed physical (post-dedup/compression) bytes sent to this vault "
+     "within the query period. Summed from per-run archival copy stats.",
+     "protectionRuns[].copyRun[].stats.physicalBytesTransferred",
+     "GET /public/protectionRuns"),
+    ("Storage Consumed (Bytes)",
+     "Total retained bytes in the vault for this protection group across all "
+     "snapshots (cumulative — not scoped to the query window). Matches Helios UI.",
+     "dataTransferSummary[].dataTransferPerProtectionJob[].storageConsumed",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Storage Consumed (TB)",
+     "Storage Consumed ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
+    ("Storage Consumed (TiB)",
+     "Storage Consumed ÷ 1,099,511,627,776  (binary tebibytes, 4 dp). "
+     "Matches the unit shown in the Helios UI.",
+     "Computed",
+     "—"),
+    # --- Activities columns ---
+    ("Activities: Data Read (Bytes)",
+     "Bytes read from the backup source during the Backup activity, keyed by "
+     "the backup start date. Collected independently of vault activity — on "
+     "days where both a backup and a vault archival run at roughly the same "
+     "time, all four Activities fields appear on the same row.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesRead",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Data Written (Bytes)",
+     "Bytes written to local storage during the Backup activity, keyed by the "
+     "backup start date. See Data Read for alignment notes.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Logical Transferred (Bytes)",
+     "Logical bytes transferred to the FortKnox cloud vault target across all "
+     "qualifying archival copy runs. Summed from per-run archival target stats. "
+     "Field checked at stats sub-object then top-level of archivalTargetResult.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred "
+     "(falls back to archivalTargetResult.logicalBytesTransferred)",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Physical Transferred (Bytes)",
+     "Physical (post-dedup/compression) bytes transferred to the FortKnox "
+     "cloud vault target. Summed from per-run archival target stats. "
+     "Field checked at stats sub-object then top-level of archivalTargetResult.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred "
+     "(falls back to archivalTargetResult.physicalBytesTransferred)",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+]
+
+_API_REF = [
+    # (Type, Endpoint, Routing, Purpose)
+    ("Helios MCM",
+     "GET /mcm/clusters/connectionStatus",
+     "Direct — helios.cohesity.com",
+     "Lists all Helios-connected clusters with their IDs and names"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/cluster",
+     "Via Helios proxy  (accessClusterId header)",
+     "Reads the cluster's configured timezone for date boundary calculation"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/vaults?includeFortKnoxVault=true",
+     "Via Helios proxy  (accessClusterId header)",
+     "Retrieves FortKnox vault IDs for the cluster"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/reports/dataTransferToVaults",
+     "Via Helios proxy  (accessClusterId header)",
+     "Storage consumed and vault membership per protection group (cumulative)"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/protectionRuns",
+     "Via Helios proxy  (accessClusterId header)",
+     "Per-run archival copy stats used for time-windowed logical/physical transfer bytes"),
+    ("Cluster v2",
+     "GET /v2/data-protect/protection-groups",
+     "Via Helios proxy  (accessClusterId header)",
+     "Lists all active protection groups to obtain group IDs for the activities fetch"),
+    ("Cluster v2",
+     "GET /v2/data-protect/protection-groups/{id}/runs",
+     "Via Helios proxy  (accessClusterId header)",
+     "Per-run backup and archival stats for the Activities columns; filtered to runs "
+     "with FortKnox cloud vault archival results (matched by vault name)"),
+]
+
+
+def _sheet_about(wb, meta: dict):
+    """Insert an 'About' sheet at position 0 with run info, field reference, and API reference."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet(title="About", index=0)
+
+    GREEN = "70AD47"
+    WHITE = "FFFFFF"
+
+    _fill = PatternFill(fill_type="solid", fgColor=GREEN)
+
+    def _title_row(text, ncols=4):
+        nonlocal _row
+        ws.cell(_row, 1, text).font = Font(bold=True, size=13, color=WHITE)
+        ws.cell(_row, 1).fill      = _fill
+        ws.cell(_row, 1).alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[_row].height = 20
+        if ncols > 1:
+            ws.merge_cells(f"A{_row}:{get_column_letter(ncols)}{_row}")
+        _row += 1
+
+    def _section(text):
+        nonlocal _row
+        _row += 1
+        ws.cell(_row, 1, text).font = Font(bold=True, size=11, color=WHITE)
+        ws.cell(_row, 1).fill      = _fill
+        ws.merge_cells(f"A{_row}:D{_row}")
+        ws.row_dimensions[_row].height = 18
+        _row += 1
+
+    def _header_row(labels):
+        nonlocal _row
+        for col, h in enumerate(labels, start=1):
+            c = ws.cell(_row, col, h)
+            c.font      = Font(bold=True, color=WHITE)
+            c.fill      = _fill
+            c.alignment = Alignment(horizontal="center")
+        _row += 1
+
+    def _kv(key, val):
+        nonlocal _row
+        ws.cell(_row, 1, key).font = Font(bold=True)
+        ws.cell(_row, 2, val)
+        _row += 1
+
+    _row = 1
+
+    _title_row(f"FortKnox Vault Report  v{__version__}  —  Run Information", ncols=4)
+
+    _section("Command")
+    ws.cell(_row, 1, meta["command"])
+    ws.merge_cells(f"A{_row}:D{_row}")
+    _row += 1
+
+    _section("Parameters")
+    _kv("Script Version",  __version__)
+    _kv("Generated",       meta["generated"])
+    _kv("Mode",            meta["mode"])
+    _kv("Period Start",    meta["period_start"])
+    _kv("Period End",      meta["period_end"])
+    _kv("Cluster Filter",  meta["cluster_filter"])
+    _kv("Vault Filter",    meta["vault_filter"])
+    _kv("Cluster Timezone", meta["tz_name"])
+
+    _section("Report Fields")
+    _header_row(["Column Name", "Description", "Source Field Path", "API Endpoint"])
+    for col_name, desc, source, api in _FIELD_REF:
+        ws.cell(_row, 1, col_name)
+        ws.cell(_row, 2, desc)
+        ws.cell(_row, 3, source)
+        ws.cell(_row, 4, api)
+        _row += 1
+
+    _section("APIs Used")
+    _header_row(["Type", "Endpoint", "Routing", "Purpose"])
+    for api_type, endpoint, routing, purpose in _API_REF:
+        ws.cell(_row, 1, api_type)
+        ws.cell(_row, 2, endpoint)
+        ws.cell(_row, 3, routing)
+        ws.cell(_row, 4, purpose)
+        _row += 1
+
+    # Wrap text and auto-fit all four columns
+    for col_idx in range(1, 5):
+        col_max = 0
+        for r in range(1, ws.max_row + 1):
+            cell = ws.cell(r, col_idx)
+            if cell.value:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                col_max = max(col_max, len(str(cell.value)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(col_max + 2, 60)
+
+
+def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -800,43 +1264,44 @@ def write_excel(rows: list, output_file: str, mode: str):
         print("No FortKnox data found for the requested scope.")
         return
 
-    # Build effective column list: base columns + any extra API fields found in rows
-    _base_keys = {key for _, key in COLUMNS} | {"vault_id"}
-    _extra_keys: list = []
-    _seen_extra: set  = set()
-    for row in rows:
-        for k in row:
-            if k not in _base_keys and k not in _seen_extra:
-                _extra_keys.append(k)
-                _seen_extra.add(k)
-
-    def _api_col_name(k: str) -> str:
-        if k.startswith("vault_api_"):
-            return "Vault API: " + k[len("vault_api_"):]
-        if k.startswith("job_api_"):
-            return "Job API: " + k[len("job_api_"):]
-        return k
-
-    effective_columns = list(COLUMNS) + [(_api_col_name(k), k) for k in _extra_keys]
-    tb_col_idx = next(i for i, (_, key) in enumerate(effective_columns, start=1)
-                      if key == "storage_consumed_tb")
-
-    if _extra_keys:
-        print(f"[+] Extra API fields added to report: {', '.join(_extra_keys)}")
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Report"
 
-    headers = [col for col, _ in effective_columns]
+    if meta:
+        _sheet_about(wb, meta)
 
-    # Header row styling — Cohesity green
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="70AD47")
-    ws.append(headers)
-    for cell in ws[1]:
+    cohesity_fill = PatternFill(fill_type="solid", fgColor="70AD47")
+    header_font   = Font(bold=True, color="FFFFFF")
+
+    # --- Row 1: source-banner row (merged cells per consecutive same-source group) ---
+    source_labels = [_COLUMN_SOURCE.get(key, "Computed") for _, key in COLUMNS]
+    # Build (start_col, end_col, label) spans for consecutive same-source runs
+    spans = []
+    start_col = 1
+    for i, label in enumerate(source_labels):
+        col = i + 1
+        if col == len(source_labels) or source_labels[i + 1] != label:
+            spans.append((start_col, col, label))
+            start_col = col + 1
+
+    for span_start, span_end, label in spans:
+        cell = ws.cell(1, span_start, label)
         cell.font      = header_font
-        cell.fill      = header_fill
+        cell.fill      = cohesity_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if span_end > span_start:
+            ws.merge_cells(
+                start_row=1, start_column=span_start,
+                end_row=1,   end_column=span_end
+            )
+    ws.row_dimensions[1].height = 18
+
+    # --- Row 2: column headers ---
+    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
+        cell = ws.cell(2, col_idx, col_name)
+        cell.font      = header_font
+        cell.fill      = cohesity_fill
         cell.alignment = Alignment(horizontal="center")
 
     # Sort by (group, cluster, vault, date) so each series occupies contiguous rows
@@ -845,9 +1310,9 @@ def write_excel(rows: list, output_file: str, mode: str):
         r["protection_group"], r["cluster"], r["vault_name"], r["period_start"]
     ))
 
-    # Track Excel row range per (cluster, group, vault): header is row 1, data from row 2
+    # Track Excel row range per (cluster, group, vault): data starts at row 3
     group_ranges: dict = {}
-    for excel_row, r in enumerate(sorted_rows, start=2):
+    for excel_row, r in enumerate(sorted_rows, start=3):
         key = (r["cluster"], r["protection_group"], r["vault_name"])
         consumed = int(r.get("storage_consumed_bytes") or 0)
         if key not in group_ranges:
@@ -859,28 +1324,28 @@ def write_excel(rows: list, output_file: str, mode: str):
                 group_ranges[key]["any_nonzero"] = True
 
     # Data rows — byte columns written as integers so Excel can sort/chart them
-    for row in sorted_rows:
+    for r in sorted_rows:
         ws.append([
-            int(row[key]) if key.endswith("_bytes") else _safe_cell(row[key]) if isinstance(row[key], str) else row.get(key)
-            for _, key in effective_columns
+            int(r[key]) if key.endswith("_bytes") else _safe_cell(r[key]) if isinstance(r[key], str) else r[key]
+            for _, key in COLUMNS
         ])
 
     # Auto-fit column widths
-    for col_idx, (col_name, _) in enumerate(effective_columns, start=1):
+    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
         col_letter = get_column_letter(col_idx)
         max_len = max(
             len(col_name),
-            max((len(str(ws.cell(r, col_idx).value or "")) for r in range(2, ws.max_row + 1)),
+            max((len(str(ws.cell(r, col_idx).value or "")) for r in range(3, ws.max_row + 1)),
                 default=0)
         )
         ws.column_dimensions[col_letter].width = min(max_len + 2, 45)
 
-    # Freeze header row
-    ws.freeze_panes = "A2"
+    # Freeze both banner and header rows
+    ws.freeze_panes = "A3"
 
     # Trend chart (trend mode only) — references Report sheet, no data duplication
     if mode == "trend":
-        _add_trend_chart(wb, group_ranges, tb_col_idx=tb_col_idx)
+        _add_trend_chart(wb, group_ranges)
 
     wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")
@@ -1008,16 +1473,16 @@ def main():
     target_clusters = [c for c in clusters
                        if not args.cluster or args.cluster.lower() in c["name"].lower()]
 
-    # Fetch vault IDs once per cluster (reused across all days in trend mode)
+    # Fetch vault IDs and names once per cluster (reused across all days in trend mode)
     cluster_vault_ids = {}
     for c in target_clusters:
         cname = c["name"]
         print(f"  [{cname}] fetching vault IDs...")
-        vault_ids = get_fortknox_vault_ids(api_key, c["clusterId"])
+        vault_ids, vault_names = get_fortknox_vaults(api_key, c["clusterId"])
         if not vault_ids:
             print(f"  [{cname}] no FortKnox vaults — skipping")
         else:
-            cluster_vault_ids[cname] = (c["clusterId"], vault_ids)
+            cluster_vault_ids[cname] = (c["clusterId"], vault_ids, vault_names)
 
     if not cluster_vault_ids:
         print("No clusters with FortKnox vaults found.")
@@ -1025,8 +1490,14 @@ def main():
 
     all_rows = []
 
+    def _zero_act(r: dict):
+        r["act_data_read"]    = 0
+        r["act_data_written"] = 0
+        r["act_logical"]      = 0
+        r["act_physical"]     = 0
+
     if args.mode == "summary":
-        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+        for cname, (cid, vault_ids, vault_names) in cluster_vault_ids.items():
             print(f"  [{cname}] fetching protection runs (time-windowed transfer)...")
             runs_xfer = get_protection_runs_transfer(
                 api_key, cid, cname, vault_ids, start_msecs, end_msecs, tz,
@@ -1038,23 +1509,48 @@ def main():
                                             debug=args.debug)
             if args.vault:
                 rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+
+            target_groups = {r["protection_group"] for r in rows}
+            print(f"  [{cname}] fetching protection activities (cloud vault filter)...")
+            activities = get_activities_transfer(
+                api_key, cid, cname, vault_names, target_groups,
+                start_msecs, end_msecs, tz, debug=args.debug)
+
+            # Aggregate activities to per-group totals across all days
+            act_by_group: dict = {}
+            for (grp, _date), vals in activities.items():
+                if grp not in act_by_group:
+                    act_by_group[grp] = {"act_data_read": 0, "act_data_written": 0,
+                                         "act_logical":   0, "act_physical":     0}
+                for k, v in vals.items():
+                    act_by_group[grp][k] += v
+
             for r in rows:
                 xfer = runs_xfer.get((r["protection_group"], r["vault_id"]), {})
                 r["logical_bytes"]  = xfer.get("logical",  0)
                 r["physical_bytes"] = xfer.get("physical", 0)
                 r["period_start"]   = s
                 r["period_end"]     = e
+                _zero_act(r)
+                act = act_by_group.get(r["protection_group"], {})
+                for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
+                    r[k] = act.get(k, 0)
             print(f"  [{cname}] {len(rows)} row(s)")
             all_rows.extend(rows)
 
     else:  # trend
         days = list(iter_days(start_msecs, end_msecs, tz))
         print(f"[*] Trend mode: {len(days)} day(s) × {len(cluster_vault_ids)} cluster(s)")
-        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+        for cname, (cid, vault_ids, vault_names) in cluster_vault_ids.items():
             print(f"  [{cname}] fetching protection runs for full range...")
             runs_xfer = get_protection_runs_transfer(
                 api_key, cid, cname, vault_ids, start_msecs, end_msecs, tz,
                 debug=args.debug)
+
+            print(f"  [{cname}] fetching protection activities (cloud vault filter)...")
+            activities = get_activities_transfer(
+                api_key, cid, cname, vault_names, set(),
+                start_msecs, end_msecs, tz, debug=args.debug)
 
             print(f"  [{cname}] fetching daily storage consumed...")
             for day_start, day_end, date_str in days:
@@ -1070,10 +1566,24 @@ def main():
                     r["physical_bytes"] = daily.get("physical", 0)
                     r["period_start"]   = date_str
                     r["period_end"]     = date_str
+                    _zero_act(r)
+                    act = activities.get((r["protection_group"], date_str), {})
+                    for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
+                        r[k] = act.get(k, 0)
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
-    write_excel(all_rows, output_path, args.mode)
+    meta = {
+        "command":        " ".join(sys.argv),
+        "mode":           args.mode,
+        "period_start":   s,
+        "period_end":     e,
+        "cluster_filter": args.cluster or "(all)",
+        "vault_filter":   args.vault   or "(all)",
+        "tz_name":        tz_name,
+        "generated":      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    write_excel(all_rows, output_path, args.mode, meta)
 
 
 if __name__ == "__main__":
