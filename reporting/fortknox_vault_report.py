@@ -25,6 +25,15 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.15 (2026-04-20) — About tab: all color fills unified to Cohesity green
+                     (00B388) — removed the secondary light-green (70AD47);
+                     section labels now use the same green bar style as the
+                     title. Report tab: added source-banner row 1 showing
+                     which API/report each column group originates from
+                     (Computed, Helios MCM, dataTransferToVaults,
+                     protectionRuns, Protection Activities); column headers
+                     moved to row 2, data to row 3; both rows frozen; header
+                     fill also updated to 00B388.
   4.14 (2026-04-20) — Fixed Activities: Logical/Physical Transferred always
                      showing 0. Two root causes: (1) wrong field names —
                      v2 API uses logicalBytesTransferred / physicalBytesTransferred,
@@ -170,7 +179,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.14"
+__version__ = "4.15"
 
 import argparse
 import getpass
@@ -749,6 +758,25 @@ COLUMNS = [
     ("Activities: Physical Transferred (Bytes)", "act_physical"),
 ]
 
+# Source label for each column key — used to build the source-banner row in the Report sheet
+_COLUMN_SOURCE = {
+    "period_start":           "Computed",
+    "period_end":             "Computed",
+    "cluster":                "Helios MCM",
+    "vault_name":             "dataTransferToVaults",
+    "vault_type":             "dataTransferToVaults",
+    "protection_group":       "dataTransferToVaults",
+    "logical_bytes":          "protectionRuns",
+    "physical_bytes":         "protectionRuns",
+    "storage_consumed_bytes": "dataTransferToVaults",
+    "storage_consumed_tb":    "Computed",
+    "storage_consumed_tib":   "Computed",
+    "act_data_read":          "Protection Activities",
+    "act_data_written":       "Protection Activities",
+    "act_logical":            "Protection Activities",
+    "act_physical":           "Protection Activities",
+}
+
 # Column index (1-based) of the TB column in the Report sheet — used by chart
 _TB_COL_IDX = next(i for i, (_, k) in enumerate(COLUMNS, start=1)
                    if k == "storage_consumed_tb")
@@ -1043,14 +1071,15 @@ def _sheet_about(wb, meta: dict):
 
     ws = wb.create_sheet(title="About", index=0)
 
-    GREEN       = "00B388"
-    LIGHT_GREEN = "70AD47"
-    WHITE       = "FFFFFF"
+    GREEN = "00B388"
+    WHITE = "FFFFFF"
+
+    _fill = PatternFill(fill_type="solid", fgColor=GREEN)
 
     def _title_row(text, ncols=4):
         nonlocal _row
         ws.cell(_row, 1, text).font = Font(bold=True, size=13, color=WHITE)
-        ws.cell(_row, 1).fill      = PatternFill(fill_type="solid", fgColor=GREEN)
+        ws.cell(_row, 1).fill      = _fill
         ws.cell(_row, 1).alignment = Alignment(horizontal="left", vertical="center")
         ws.row_dimensions[_row].height = 20
         if ncols > 1:
@@ -1060,7 +1089,10 @@ def _sheet_about(wb, meta: dict):
     def _section(text):
         nonlocal _row
         _row += 1
-        ws.cell(_row, 1, text).font = Font(bold=True, size=11)
+        ws.cell(_row, 1, text).font = Font(bold=True, size=11, color=WHITE)
+        ws.cell(_row, 1).fill      = _fill
+        ws.merge_cells(f"A{_row}:D{_row}")
+        ws.row_dimensions[_row].height = 18
         _row += 1
 
     def _header_row(labels):
@@ -1068,7 +1100,7 @@ def _sheet_about(wb, meta: dict):
         for col, h in enumerate(labels, start=1):
             c = ws.cell(_row, col, h)
             c.font      = Font(bold=True, color=WHITE)
-            c.fill      = PatternFill(fill_type="solid", fgColor=LIGHT_GREEN)
+            c.fill      = _fill
             c.alignment = Alignment(horizontal="center")
         _row += 1
 
@@ -1146,15 +1178,37 @@ def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
     if meta:
         _sheet_about(wb, meta)
 
-    headers = [col for col, _ in COLUMNS]
+    cohesity_fill = PatternFill(fill_type="solid", fgColor="00B388")
+    header_font   = Font(bold=True, color="FFFFFF")
 
-    # Header row styling — Cohesity green
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(fill_type="solid", fgColor="70AD47")
-    ws.append(headers)
-    for cell in ws[1]:
+    # --- Row 1: source-banner row (merged cells per consecutive same-source group) ---
+    source_labels = [_COLUMN_SOURCE.get(key, "Computed") for _, key in COLUMNS]
+    # Build (start_col, end_col, label) spans for consecutive same-source runs
+    spans = []
+    start_col = 1
+    for i, label in enumerate(source_labels):
+        col = i + 1
+        if col == len(source_labels) or source_labels[i + 1] != label:
+            spans.append((start_col, col, label))
+            start_col = col + 1
+
+    for span_start, span_end, label in spans:
+        cell = ws.cell(1, span_start, label)
         cell.font      = header_font
-        cell.fill      = header_fill
+        cell.fill      = cohesity_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        if span_end > span_start:
+            ws.merge_cells(
+                start_row=1, start_column=span_start,
+                end_row=1,   end_column=span_end
+            )
+    ws.row_dimensions[1].height = 18
+
+    # --- Row 2: column headers ---
+    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
+        cell = ws.cell(2, col_idx, col_name)
+        cell.font      = header_font
+        cell.fill      = cohesity_fill
         cell.alignment = Alignment(horizontal="center")
 
     # Sort by (group, cluster, vault, date) so each series occupies contiguous rows
@@ -1163,9 +1217,9 @@ def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
         r["protection_group"], r["cluster"], r["vault_name"], r["period_start"]
     ))
 
-    # Track Excel row range per (cluster, group, vault): header is row 1, data from row 2
+    # Track Excel row range per (cluster, group, vault): data starts at row 3
     group_ranges: dict = {}
-    for excel_row, r in enumerate(sorted_rows, start=2):
+    for excel_row, r in enumerate(sorted_rows, start=3):
         key = (r["cluster"], r["protection_group"], r["vault_name"])
         consumed = int(r.get("storage_consumed_bytes") or 0)
         if key not in group_ranges:
@@ -1177,9 +1231,9 @@ def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
                 group_ranges[key]["any_nonzero"] = True
 
     # Data rows — byte columns written as integers so Excel can sort/chart them
-    for row in sorted_rows:
+    for r in sorted_rows:
         ws.append([
-            int(row[key]) if key.endswith("_bytes") else _safe_cell(row[key]) if isinstance(row[key], str) else row[key]
+            int(r[key]) if key.endswith("_bytes") else _safe_cell(r[key]) if isinstance(r[key], str) else r[key]
             for _, key in COLUMNS
         ])
 
@@ -1188,13 +1242,13 @@ def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
         col_letter = get_column_letter(col_idx)
         max_len = max(
             len(col_name),
-            max((len(str(ws.cell(r, col_idx).value or "")) for r in range(2, ws.max_row + 1)),
+            max((len(str(ws.cell(r, col_idx).value or "")) for r in range(3, ws.max_row + 1)),
                 default=0)
         )
         ws.column_dimensions[col_letter].width = min(max_len + 2, 45)
 
-    # Freeze header row
-    ws.freeze_panes = "A2"
+    # Freeze both banner and header rows
+    ws.freeze_panes = "A3"
 
     # Trend chart (trend mode only) — references Report sheet, no data duplication
     if mode == "trend":
