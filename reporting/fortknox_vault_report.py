@@ -25,6 +25,17 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.14 (2026-04-20) — Fixed Activities: Logical/Physical Transferred always
+                     showing 0. Two root causes: (1) wrong field names —
+                     v2 API uses logicalBytesTransferred / physicalBytesTransferred,
+                     not logicalTransferredBytes / physicalTransferredBytes;
+                     (2) vault name match could silently fail — added targetType
+                     fallback matching using all known FortKnox type strings
+                     (krpaas, kfortknox, kfort_knox, krpaasarchival and plain
+                     equivalents). _xfer_bytes() now checks stats sub-dict then
+                     top-level of each archival result. --debug now prints raw
+                     archivalTargetResult keys and all (targetName, targetType)
+                     pairs seen in the response for easy diagnosis.
   4.13 (2026-04-20) — Added four "Activities:" columns sourced from the
                      protection activities report filtered to cloud vault
                      (FortKnox) archival runs: Data Read, Data Written,
@@ -159,7 +170,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.13"
+__version__ = "4.14"
 
 import argparse
 import getpass
@@ -341,6 +352,13 @@ def get_protection_group_map(api_key: str, cluster_id: int, cluster_name: str) -
         return {}
 
 
+_FK_TARGET_TYPES = frozenset({
+    "krpaas", "kfortknox", "kfort_knox", "krpaasarchival",  # k-prefixed (v1/mixed)
+    "rpaas",  "fortknox",  "fort_knox",  "rpaasarchival",   # plain (v2)
+    "cloud",                                                  # generic cloud vault
+})
+
+
 def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
                              vault_names: set, target_groups: set,
                              start_msecs: int, end_msecs: int,
@@ -351,8 +369,9 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
     Calls GET /v2/data-protect/protection-groups to list groups, then for each
     relevant group calls GET /v2/data-protect/protection-groups/{id}/runs
     filtered to the time window.  Archival results are matched to FortKnox
-    vaults by name.  target_groups limits which groups are queried (pass an
-    empty set to query all groups).
+    vaults first by targetName (against the known vault name set), then by
+    targetType as a fallback (see _FK_TARGET_TYPES).  target_groups limits
+    which groups are queried (pass an empty set to query all groups).
 
     Data Read / Data Written are backup-level stats (not vault-specific) and
     are included whenever a run has at least one FortKnox archival result.
@@ -361,8 +380,8 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
       {(group_name, date_str): {
          "act_data_read":    int,   # localSnapshotStats.bytesRead
          "act_data_written": int,   # localSnapshotStats.bytesWritten
-         "act_logical":      int,   # sum of archivalTargetResults.stats.logicalTransferredBytes
-         "act_physical":     int,   # sum of archivalTargetResults.stats.physicalTransferredBytes
+         "act_logical":      int,   # sum of archivalTargetResults logicalBytesTransferred
+         "act_physical":     int,   # sum of archivalTargetResults physicalBytesTransferred
       }}
     """
     group_map = get_protection_group_map(api_key, cluster_id, cluster_name)
@@ -373,6 +392,18 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
                 if not target_groups or name in target_groups}
     if not relevant:
         return {}
+
+    def _is_fk(ar: dict) -> bool:
+        """Return True if this archival result targets a FortKnox vault."""
+        if ar.get("targetName", "") in vault_names:
+            return True
+        ttype = (ar.get("targetType") or ar.get("archivalTargetType") or "").lower()
+        return ttype in _FK_TARGET_TYPES
+
+    def _xfer_bytes(ar: dict, field: str) -> int:
+        """Extract a transfer-bytes field, checking both stats sub-dict and top-level."""
+        stats = ar.get("stats") or {}
+        return int(stats.get(field) or ar.get(field) or 0)
 
     result: dict = {}
 
@@ -395,11 +426,24 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
             print(f"    WARNING: Activities fetch failed for {cluster_name}/{group_name}: {e}")
             continue
 
+        if debug and runs:
+            import json as _json
+            sample_ar = ((runs[0].get("archivalInfo") or {})
+                         .get("archivalTargetResults") or [{}])[0]
+            print(f"[DEBUG] {cluster_name}/{group_name} — {len(runs)} run(s); "
+                  f"sample archivalTargetResult keys: {list(sample_ar.keys())}")
+            if sample_ar.get("stats"):
+                print(f"[DEBUG] sample stats keys: {list(sample_ar['stats'].keys())}")
+            vault_names_found = {(a.get("targetName"), a.get("targetType"))
+                                 for run in runs
+                                 for a in ((run.get("archivalInfo") or {})
+                                           .get("archivalTargetResults") or [])}
+            print(f"[DEBUG] all (targetName, targetType) pairs: {vault_names_found}")
+            print(f"[DEBUG] known vault_names set: {vault_names}")
+
         for run in runs:
             archival_results = (run.get("archivalInfo") or {}).get("archivalTargetResults") or []
-            # Filter to FortKnox cloud vault results — matched by vault name
-            fk_results = [a for a in archival_results
-                          if a.get("targetName", "") in vault_names]
+            fk_results = [a for a in archival_results if _is_fk(a)]
             if not fk_results:
                 continue
 
@@ -413,17 +457,16 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
             if key not in result:
                 result[key] = {"act_data_read": 0, "act_data_written": 0,
                                "act_logical":   0, "act_physical":     0}
-            result[key]["act_data_read"]    += local_stats.get("bytesRead",    0) or 0
-            result[key]["act_data_written"] += local_stats.get("bytesWritten", 0) or 0
+            result[key]["act_data_read"]    += int(local_stats.get("bytesRead",    0) or 0)
+            result[key]["act_data_written"] += int(local_stats.get("bytesWritten", 0) or 0)
             for ar in fk_results:
-                stats = ar.get("stats") or {}
-                result[key]["act_logical"]  += stats.get("logicalTransferredBytes",  0) or 0
-                result[key]["act_physical"] += stats.get("physicalTransferredBytes", 0) or 0
+                result[key]["act_logical"]  += _xfer_bytes(ar, "logicalBytesTransferred")
+                result[key]["act_physical"] += _xfer_bytes(ar, "physicalBytesTransferred")
 
         if debug:
             hits = sum(1 for k in result if k[0] == group_name)
-            print(f"[DEBUG] {cluster_name}/{group_name} — {len(runs)} run(s), "
-                  f"{hits} day(s) with FK archival")
+            print(f"[DEBUG] {cluster_name}/{group_name} — "
+                  f"{hits} day(s) with FK archival activity recorded")
 
     return result
 
@@ -945,13 +988,17 @@ _FIELD_REF = [
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Logical Transferred (Bytes)",
      "Logical bytes transferred to the FortKnox cloud vault target across all "
-     "qualifying archival copy runs. Summed from per-run archival target stats.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.logicalTransferredBytes",
+     "qualifying archival copy runs. Summed from per-run archival target stats. "
+     "Field checked at stats sub-object then top-level of archivalTargetResult.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred "
+     "(falls back to archivalTargetResult.logicalBytesTransferred)",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Physical Transferred (Bytes)",
      "Physical (post-dedup/compression) bytes transferred to the FortKnox "
-     "cloud vault target. Summed from per-run archival target stats.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.physicalTransferredBytes",
+     "cloud vault target. Summed from per-run archival target stats. "
+     "Field checked at stats sub-object then top-level of archivalTargetResult.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred "
+     "(falls back to archivalTargetResult.physicalBytesTransferred)",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
 ]
 
