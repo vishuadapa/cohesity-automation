@@ -25,13 +25,6 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
-  4.12 (2026-04-20) — All scalar fields from the dataTransferToVaults API
-                     response are now included in the report automatically.
-                     Vault-summary-level fields appear as "Vault API: <field>"
-                     columns; per-job fields appear as "Job API: <field>".
-                     This surfaces numLogicalBytesTransferred,
-                     numPhysicalBytesTransferred, and any other fields the
-                     API returns that were previously discarded.
   4.11 (2026-04-17) — Security: TLS verification enabled by default; added
                      --ca-bundle and --insecure CLI flags. Excel formula
                      injection hardening via _safe_cell().
@@ -152,7 +145,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.12"
+__version__ = "4.11"
 
 import argparse
 import getpass
@@ -170,19 +163,6 @@ _KEYRING_USER   = "apikey"
 _verify = True   # overridden in main() via --insecure / --ca-bundle
 
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
-# Fields already captured explicitly at each API response level
-_VAULT_SKIP_KEYS = frozenset({"vaultName", "vaultType", "vaultId",
-                               "dataTransferPerProtectionJob"})
-_JOB_SKIP_KEYS   = frozenset({"protectionJobName", "storageConsumed"})
-
-
-def _collect_extra(d: dict, skip: frozenset, prefix: str) -> dict:
-    """Return all scalar fields in d not in skip, prefixed with prefix."""
-    return {
-        f"{prefix}{k}": v for k, v in d.items()
-        if k not in skip and not isinstance(v, (list, dict))
-    }
 
 
 def _safe_cell(val):
@@ -374,14 +354,12 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
 
     rows = []
     for vault_summary in (resp.get("dataTransferSummary") or []):
-        vault_name  = vault_summary.get("vaultName", "")
-        vault_type  = vault_summary.get("vaultType", "N/A")
-        vault_id    = vault_summary.get("vaultId")
-        vault_extra = _collect_extra(vault_summary, _VAULT_SKIP_KEYS, "vault_api_")
+        vault_name = vault_summary.get("vaultName", "")
+        vault_type = vault_summary.get("vaultType", "N/A")
+        vault_id   = vault_summary.get("vaultId")
         for job in (vault_summary.get("dataTransferPerProtectionJob") or []):
             consumed_bytes = job.get("storageConsumed", 0) or 0
-            job_extra      = _collect_extra(job, _JOB_SKIP_KEYS, "job_api_")
-            row = {
+            rows.append({
                 "cluster":                cluster_name,
                 "vault_name":             vault_name,
                 "vault_type":             vault_type,
@@ -392,10 +370,7 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
                 "storage_consumed_bytes": consumed_bytes,
                 "storage_consumed_tb":    round(consumed_bytes / 1_000_000_000_000, 4),
                 "storage_consumed_tib":   round(consumed_bytes / 1_099_511_627_776, 4),
-            }
-            row.update(vault_extra)
-            row.update(job_extra)
-            rows.append(row)
+            })
     return rows
 
 
@@ -623,8 +598,7 @@ def _safe_sheet_name(name: str, existing: list) -> str:
 
 
 def _make_chart(title: str, report_ws, series_list: list,
-                LineChart, Reference, SeriesLabel, Legend,
-                tb_col_idx: int = None):
+                LineChart, Reference, SeriesLabel, Legend):
     """
     Build a single LineChart with consistent styling.
 
@@ -698,10 +672,9 @@ def _make_chart(title: str, report_ws, series_list: list,
     except ImportError:
         _use_strref = False
 
-    col_idx = tb_col_idx if tb_col_idx is not None else _TB_COL_IDX
     cat_formula = None
     for label, start_row, end_row in series_list:
-        data_ref = Reference(report_ws, min_col=col_idx,
+        data_ref = Reference(report_ws, min_col=_TB_COL_IDX,
                              min_row=start_row, max_row=end_row)
         chart.add_data(data_ref)
         chart.series[-1].title = SeriesLabel(v=label)
@@ -727,7 +700,7 @@ def _make_chart(title: str, report_ws, series_list: list,
     return chart
 
 
-def _add_trend_chart(wb, group_ranges: dict, tb_col_idx: int = None):
+def _add_trend_chart(wb, group_ranges: dict):
     """
     Add one chart sheet per cluster, each showing all protection groups
     for that cluster as separate series.
@@ -771,8 +744,7 @@ def _add_trend_chart(wb, group_ranges: dict, tb_col_idx: int = None):
 
         title = f"FortKnox \u2014 {cluster}"
         chart = _make_chart(title, report_ws, series_list,
-                            LineChart, Reference, SeriesLabel, Legend,
-                            tb_col_idx=tb_col_idx)
+                            LineChart, Reference, SeriesLabel, Legend)
 
         sheet_name = _safe_sheet_name(cluster, sheet_names_used)
         sheet_names_used.append(sheet_name)
@@ -800,35 +772,11 @@ def write_excel(rows: list, output_file: str, mode: str):
         print("No FortKnox data found for the requested scope.")
         return
 
-    # Build effective column list: base columns + any extra API fields found in rows
-    _base_keys = {key for _, key in COLUMNS} | {"vault_id"}
-    _extra_keys: list = []
-    _seen_extra: set  = set()
-    for row in rows:
-        for k in row:
-            if k not in _base_keys and k not in _seen_extra:
-                _extra_keys.append(k)
-                _seen_extra.add(k)
-
-    def _api_col_name(k: str) -> str:
-        if k.startswith("vault_api_"):
-            return "Vault API: " + k[len("vault_api_"):]
-        if k.startswith("job_api_"):
-            return "Job API: " + k[len("job_api_"):]
-        return k
-
-    effective_columns = list(COLUMNS) + [(_api_col_name(k), k) for k in _extra_keys]
-    tb_col_idx = next(i for i, (_, key) in enumerate(effective_columns, start=1)
-                      if key == "storage_consumed_tb")
-
-    if _extra_keys:
-        print(f"[+] Extra API fields added to report: {', '.join(_extra_keys)}")
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Report"
 
-    headers = [col for col, _ in effective_columns]
+    headers = [col for col, _ in COLUMNS]
 
     # Header row styling — Cohesity green
     header_font = Font(bold=True, color="FFFFFF")
@@ -861,12 +809,12 @@ def write_excel(rows: list, output_file: str, mode: str):
     # Data rows — byte columns written as integers so Excel can sort/chart them
     for row in sorted_rows:
         ws.append([
-            int(row[key]) if key.endswith("_bytes") else _safe_cell(row[key]) if isinstance(row[key], str) else row.get(key)
-            for _, key in effective_columns
+            int(row[key]) if key.endswith("_bytes") else _safe_cell(row[key]) if isinstance(row[key], str) else row[key]
+            for _, key in COLUMNS
         ])
 
     # Auto-fit column widths
-    for col_idx, (col_name, _) in enumerate(effective_columns, start=1):
+    for col_idx, (col_name, _) in enumerate(COLUMNS, start=1):
         col_letter = get_column_letter(col_idx)
         max_len = max(
             len(col_name),
@@ -880,7 +828,7 @@ def write_excel(rows: list, output_file: str, mode: str):
 
     # Trend chart (trend mode only) — references Report sheet, no data duplication
     if mode == "trend":
-        _add_trend_chart(wb, group_ranges, tb_col_idx=tb_col_idx)
+        _add_trend_chart(wb, group_ranges)
 
     wb.save(output_file)
     print(f"\n[+] Report saved to: {output_file}  ({len(rows)} rows)")
