@@ -25,6 +25,15 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.13 (2026-04-20) — Added four "Activities:" columns sourced from the
+                     protection activities report filtered to cloud vault
+                     (FortKnox) archival runs: Data Read, Data Written,
+                     Logical Transferred, Physical Transferred. Fetched via
+                     GET /v2/data-protect/protection-groups/{id}/runs and
+                     matched to FortKnox vault names. Summary mode aggregates
+                     all days per group; trend mode aligns per day. Two new
+                     APIs added to About sheet reference. get_fortknox_vaults()
+                     now returns (ids, names) replacing get_fortknox_vault_ids().
   4.12 (2026-04-20) — Added "About" tab (first sheet) containing the command
                      run, report parameters, field reference (column name,
                      description, source field path, API endpoint), and APIs
@@ -150,7 +159,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.12"
+__version__ = "4.13"
 
 import argparse
 import getpass
@@ -300,8 +309,8 @@ def get_cluster_timezone(api_key: str, cluster_id: int, cluster_name: str) -> st
     return "UTC"
 
 
-def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
-    """Return [vault_id, ...] for FortKnox vaults on a cluster."""
+def get_fortknox_vaults(api_key: str, cluster_id: int) -> tuple:
+    """Return (vault_ids: list, vault_names: set) for FortKnox vaults on a cluster."""
     url = f"https://{HELIOS_HOST}/irisservices/api/v1/public/vaults"
     try:
         r = requests.get(url, headers=helios_headers(api_key, cluster_id),
@@ -309,10 +318,114 @@ def get_fortknox_vault_ids(api_key: str, cluster_id: int) -> list:
                          verify=_verify, timeout=30)
         r.raise_for_status()
         vaults = r.json() or []
-        return [v["id"] for v in vaults if "id" in v]
+        ids   = [v["id"]   for v in vaults if "id" in v]
+        names = {v["name"] for v in vaults if v.get("name")}
+        return ids, names
     except Exception as e:
         print(f"    WARNING: Could not fetch vault IDs: {e}")
-        return []
+        return [], set()
+
+
+def get_protection_group_map(api_key: str, cluster_id: int, cluster_name: str) -> dict:
+    """Return {group_name: group_id} for all active protection groups on a cluster."""
+    url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups"
+    try:
+        r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                         params={"isActive": "true", "includeTenants": "true"},
+                         verify=_verify, timeout=30)
+        r.raise_for_status()
+        groups = r.json().get("protectionGroups") or []
+        return {g["name"]: g["id"] for g in groups if g.get("id") and g.get("name")}
+    except Exception as e:
+        print(f"    WARNING: Could not fetch protection groups for {cluster_name}: {e}")
+        return {}
+
+
+def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
+                             vault_names: set, target_groups: set,
+                             start_msecs: int, end_msecs: int,
+                             tz, debug: bool = False) -> dict:
+    """
+    Fetch protection activity stats for FortKnox cloud-vault archival runs.
+
+    Calls GET /v2/data-protect/protection-groups to list groups, then for each
+    relevant group calls GET /v2/data-protect/protection-groups/{id}/runs
+    filtered to the time window.  Archival results are matched to FortKnox
+    vaults by name.  target_groups limits which groups are queried (pass an
+    empty set to query all groups).
+
+    Data Read / Data Written are backup-level stats (not vault-specific) and
+    are included whenever a run has at least one FortKnox archival result.
+
+    Returns:
+      {(group_name, date_str): {
+         "act_data_read":    int,   # localSnapshotStats.bytesRead
+         "act_data_written": int,   # localSnapshotStats.bytesWritten
+         "act_logical":      int,   # sum of archivalTargetResults.stats.logicalTransferredBytes
+         "act_physical":     int,   # sum of archivalTargetResults.stats.physicalTransferredBytes
+      }}
+    """
+    group_map = get_protection_group_map(api_key, cluster_id, cluster_name)
+    if not group_map:
+        return {}
+
+    relevant = {name: gid for name, gid in group_map.items()
+                if not target_groups or name in target_groups}
+    if not relevant:
+        return {}
+
+    result: dict = {}
+
+    for group_name, group_id in relevant.items():
+        url = f"https://{HELIOS_HOST}/v2/data-protect/protection-groups/{group_id}/runs"
+        params = {
+            "startTimeUsecs":       start_msecs * 1000,
+            "endTimeUsecs":         end_msecs   * 1000,
+            "numRuns":              10000,
+            "includeObjectDetails": "false",
+        }
+        try:
+            r = requests.get(url, headers=helios_headers(api_key, cluster_id),
+                             params=params, verify=_verify, timeout=60)
+            if debug:
+                print(f"\n[DEBUG] activities {cluster_name}/{group_name}:\n        {r.url}")
+            r.raise_for_status()
+            runs = r.json().get("runs") or []
+        except Exception as e:
+            print(f"    WARNING: Activities fetch failed for {cluster_name}/{group_name}: {e}")
+            continue
+
+        for run in runs:
+            archival_results = (run.get("archivalInfo") or {}).get("archivalTargetResults") or []
+            # Filter to FortKnox cloud vault results — matched by vault name
+            fk_results = [a for a in archival_results
+                          if a.get("targetName", "") in vault_names]
+            if not fk_results:
+                continue
+
+            local_info  = run.get("localBackupInfo") or {}
+            local_stats = local_info.get("localSnapshotStats") or {}
+            start_usecs = local_info.get("startTimeUsecs") or 0
+            date_str = (datetime.fromtimestamp(start_usecs / 1_000_000, tz=tz)
+                        .strftime("%Y-%m-%d") if start_usecs else "unknown")
+
+            key = (group_name, date_str)
+            if key not in result:
+                result[key] = {"act_data_read": 0, "act_data_written": 0,
+                               "act_logical":   0, "act_physical":     0}
+            result[key]["act_data_read"]    += local_stats.get("bytesRead",    0) or 0
+            result[key]["act_data_written"] += local_stats.get("bytesWritten", 0) or 0
+            for ar in fk_results:
+                stats = ar.get("stats") or {}
+                result[key]["act_logical"]  += stats.get("logicalTransferredBytes",  0) or 0
+                result[key]["act_physical"] += stats.get("physicalTransferredBytes", 0) or 0
+
+        if debug:
+            hits = sum(1 for k in result if k[0] == group_name)
+            print(f"[DEBUG] {cluster_name}/{group_name} — {len(runs)} run(s), "
+                  f"{hits} day(s) with FK archival")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -575,17 +688,22 @@ def iter_days(start_msecs: int, end_msecs: int, tz):
 # ---------------------------------------------------------------------------
 
 COLUMNS = [
-    ("Period Start",                 "period_start"),
-    ("Period End",                   "period_end"),
-    ("Cluster",                      "cluster"),
-    ("Vault Name",                   "vault_name"),
-    ("Vault Type",                   "vault_type"),
-    ("Protection Group",             "protection_group"),
-    ("Logical Transferred (Bytes)",  "logical_bytes"),
-    ("Physical Transferred (Bytes)", "physical_bytes"),
-    ("Storage Consumed (Bytes)",     "storage_consumed_bytes"),
-    ("Storage Consumed (TB)",        "storage_consumed_tb"),
-    ("Storage Consumed (TiB)",       "storage_consumed_tib"),
+    ("Period Start",                          "period_start"),
+    ("Period End",                            "period_end"),
+    ("Cluster",                               "cluster"),
+    ("Vault Name",                            "vault_name"),
+    ("Vault Type",                            "vault_type"),
+    ("Protection Group",                      "protection_group"),
+    ("Logical Transferred (Bytes)",           "logical_bytes"),
+    ("Physical Transferred (Bytes)",          "physical_bytes"),
+    ("Storage Consumed (Bytes)",              "storage_consumed_bytes"),
+    ("Storage Consumed (TB)",                 "storage_consumed_tb"),
+    ("Storage Consumed (TiB)",                "storage_consumed_tib"),
+    # --- Protection Activities (cloud vault filter) ---
+    ("Activities: Data Read (Bytes)",         "act_data_read"),
+    ("Activities: Data Written (Bytes)",      "act_data_written"),
+    ("Activities: Logical Transferred (Bytes)",  "act_logical"),
+    ("Activities: Physical Transferred (Bytes)", "act_physical"),
 ]
 
 # Column index (1-based) of the TB column in the Report sheet — used by chart
@@ -814,6 +932,27 @@ _FIELD_REF = [
      "Matches the unit shown in the Helios UI.",
      "Computed",
      "—"),
+    # --- Activities columns ---
+    ("Activities: Data Read (Bytes)",
+     "Total bytes read from the backup source during runs that had FortKnox "
+     "archival activity in the period. Backup-level stat — not vault-specific.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesRead",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Data Written (Bytes)",
+     "Total bytes written to local storage during runs that had FortKnox "
+     "archival activity. Backup-level stat — not vault-specific.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Logical Transferred (Bytes)",
+     "Logical bytes transferred to the FortKnox cloud vault target across all "
+     "qualifying archival copy runs. Summed from per-run archival target stats.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.logicalTransferredBytes",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Physical Transferred (Bytes)",
+     "Physical (post-dedup/compression) bytes transferred to the FortKnox "
+     "cloud vault target. Summed from per-run archival target stats.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.physicalTransferredBytes",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
 ]
 
 _API_REF = [
@@ -838,6 +977,15 @@ _API_REF = [
      "GET /irisservices/api/v1/public/protectionRuns",
      "Via Helios proxy  (accessClusterId header)",
      "Per-run archival copy stats used for time-windowed logical/physical transfer bytes"),
+    ("Cluster v2",
+     "GET /v2/data-protect/protection-groups",
+     "Via Helios proxy  (accessClusterId header)",
+     "Lists all active protection groups to obtain group IDs for the activities fetch"),
+    ("Cluster v2",
+     "GET /v2/data-protect/protection-groups/{id}/runs",
+     "Via Helios proxy  (accessClusterId header)",
+     "Per-run backup and archival stats for the Activities columns; filtered to runs "
+     "with FortKnox cloud vault archival results (matched by vault name)"),
 ]
 
 
@@ -1131,16 +1279,16 @@ def main():
     target_clusters = [c for c in clusters
                        if not args.cluster or args.cluster.lower() in c["name"].lower()]
 
-    # Fetch vault IDs once per cluster (reused across all days in trend mode)
+    # Fetch vault IDs and names once per cluster (reused across all days in trend mode)
     cluster_vault_ids = {}
     for c in target_clusters:
         cname = c["name"]
         print(f"  [{cname}] fetching vault IDs...")
-        vault_ids = get_fortknox_vault_ids(api_key, c["clusterId"])
+        vault_ids, vault_names = get_fortknox_vaults(api_key, c["clusterId"])
         if not vault_ids:
             print(f"  [{cname}] no FortKnox vaults — skipping")
         else:
-            cluster_vault_ids[cname] = (c["clusterId"], vault_ids)
+            cluster_vault_ids[cname] = (c["clusterId"], vault_ids, vault_names)
 
     if not cluster_vault_ids:
         print("No clusters with FortKnox vaults found.")
@@ -1148,8 +1296,14 @@ def main():
 
     all_rows = []
 
+    def _zero_act(r: dict):
+        r["act_data_read"]    = 0
+        r["act_data_written"] = 0
+        r["act_logical"]      = 0
+        r["act_physical"]     = 0
+
     if args.mode == "summary":
-        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+        for cname, (cid, vault_ids, vault_names) in cluster_vault_ids.items():
             print(f"  [{cname}] fetching protection runs (time-windowed transfer)...")
             runs_xfer = get_protection_runs_transfer(
                 api_key, cid, cname, vault_ids, start_msecs, end_msecs, tz,
@@ -1161,23 +1315,48 @@ def main():
                                             debug=args.debug)
             if args.vault:
                 rows = [r for r in rows if args.vault.lower() in r["vault_name"].lower()]
+
+            target_groups = {r["protection_group"] for r in rows}
+            print(f"  [{cname}] fetching protection activities (cloud vault filter)...")
+            activities = get_activities_transfer(
+                api_key, cid, cname, vault_names, target_groups,
+                start_msecs, end_msecs, tz, debug=args.debug)
+
+            # Aggregate activities to per-group totals across all days
+            act_by_group: dict = {}
+            for (grp, _date), vals in activities.items():
+                if grp not in act_by_group:
+                    act_by_group[grp] = {"act_data_read": 0, "act_data_written": 0,
+                                         "act_logical":   0, "act_physical":     0}
+                for k, v in vals.items():
+                    act_by_group[grp][k] += v
+
             for r in rows:
                 xfer = runs_xfer.get((r["protection_group"], r["vault_id"]), {})
                 r["logical_bytes"]  = xfer.get("logical",  0)
                 r["physical_bytes"] = xfer.get("physical", 0)
                 r["period_start"]   = s
                 r["period_end"]     = e
+                _zero_act(r)
+                act = act_by_group.get(r["protection_group"], {})
+                for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
+                    r[k] = act.get(k, 0)
             print(f"  [{cname}] {len(rows)} row(s)")
             all_rows.extend(rows)
 
     else:  # trend
         days = list(iter_days(start_msecs, end_msecs, tz))
         print(f"[*] Trend mode: {len(days)} day(s) × {len(cluster_vault_ids)} cluster(s)")
-        for cname, (cid, vault_ids) in cluster_vault_ids.items():
+        for cname, (cid, vault_ids, vault_names) in cluster_vault_ids.items():
             print(f"  [{cname}] fetching protection runs for full range...")
             runs_xfer = get_protection_runs_transfer(
                 api_key, cid, cname, vault_ids, start_msecs, end_msecs, tz,
                 debug=args.debug)
+
+            print(f"  [{cname}] fetching protection activities (cloud vault filter)...")
+            activities = get_activities_transfer(
+                api_key, cid, cname, vault_names, set(),
+                start_msecs, end_msecs, tz, debug=args.debug)
 
             print(f"  [{cname}] fetching daily storage consumed...")
             for day_start, day_end, date_str in days:
@@ -1193,6 +1372,10 @@ def main():
                     r["physical_bytes"] = daily.get("physical", 0)
                     r["period_start"]   = date_str
                     r["period_end"]     = date_str
+                    _zero_act(r)
+                    act = activities.get((r["protection_group"], date_str), {})
+                    for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
+                        r[k] = act.get(k, 0)
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
