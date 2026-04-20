@@ -25,6 +25,14 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.16 (2026-04-20) — Fixed Activities: Data Read / Data Written date
+                     alignment. Previously anchored to the local backup
+                     start time; now anchored to the FortKnox archival
+                     activity start time (fk_results[0].startTimeUsecs),
+                     so Data Read and Data Written always land on the same
+                     row/date as the corresponding Logical and Physical
+                     Transferred values. Backup spanning midnight no longer
+                     causes a one-day offset.
   4.15 (2026-04-20) — About tab: all color fills unified to Cohesity green
                      (00B388) — removed the secondary light-green (70AD47);
                      section labels now use the same green bar style as the
@@ -179,7 +187,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.15"
+__version__ = "4.16"
 
 import argparse
 import getpass
@@ -458,9 +466,15 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
 
             local_info  = run.get("localBackupInfo") or {}
             local_stats = local_info.get("localSnapshotStats") or {}
-            start_usecs = local_info.get("startTimeUsecs") or 0
-            date_str = (datetime.fromtimestamp(start_usecs / 1_000_000, tz=tz)
-                        .strftime("%Y-%m-%d") if start_usecs else "unknown")
+
+            # Date is anchored to the FortKnox archival activity start, not the
+            # local backup start — backup and archival can span a day boundary.
+            # Data Read / Data Written (Backup activity) are reported on the
+            # same date as the corresponding vault transfer they belong to.
+            fk_usecs = (fk_results[0].get("startTimeUsecs")
+                        or local_info.get("startTimeUsecs") or 0)
+            date_str = (datetime.fromtimestamp(fk_usecs / 1_000_000, tz=tz)
+                        .strftime("%Y-%m-%d") if fk_usecs else "unknown")
 
             key = (group_name, date_str)
             if key not in result:
@@ -1005,13 +1019,16 @@ _FIELD_REF = [
      "—"),
     # --- Activities columns ---
     ("Activities: Data Read (Bytes)",
-     "Total bytes read from the backup source during runs that had FortKnox "
-     "archival activity in the period. Backup-level stat — not vault-specific.",
+     "Bytes read from the backup source (Backup activity) for runs that also "
+     "had FortKnox archival activity. Reported on the same date as the vault "
+     "transfer — anchored to the archival start time, not the backup start "
+     "time, so it aligns with Logical/Physical Transferred on day boundaries.",
      "runs[].localBackupInfo.localSnapshotStats.bytesRead",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Data Written (Bytes)",
-     "Total bytes written to local storage during runs that had FortKnox "
-     "archival activity. Backup-level stat — not vault-specific.",
+     "Bytes written to local storage (Backup activity) for runs that also had "
+     "FortKnox archival activity. Date-anchored to the archival start time "
+     "for the same reason as Data Read.",
      "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Logical Transferred (Bytes)",
