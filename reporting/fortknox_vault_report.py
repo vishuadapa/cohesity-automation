@@ -25,6 +25,9 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.18 (2026-04-20) — All green bar fills changed to 70AD47 (About tab
+                     sections/headers and Report tab source-banner and
+                     column-header rows).
   4.17 (2026-04-20) — Reworked Activities data collection to match the
                      Protection Activities report model: Backup and Vault
                      are separate run entries in the API, not phases of the
@@ -45,14 +48,14 @@ Version history:
                      Transferred values. Backup spanning midnight no longer
                      causes a one-day offset.
   4.15 (2026-04-20) — About tab: all color fills unified to Cohesity green
-                     (00B388) — removed the secondary light-green (70AD47);
+                     (70AD47) — removed the secondary light-green (70AD47);
                      section labels now use the same green bar style as the
                      title. Report tab: added source-banner row 1 showing
                      which API/report each column group originates from
                      (Computed, Helios MCM, dataTransferToVaults,
                      protectionRuns, Protection Activities); column headers
                      moved to row 2, data to row 3; both rows frozen; header
-                     fill also updated to 00B388.
+                     fill also updated to 70AD47.
   4.14 (2026-04-20) — Fixed Activities: Logical/Physical Transferred always
                      showing 0. Two root causes: (1) wrong field names —
                      v2 API uses logicalBytesTransferred / physicalBytesTransferred,
@@ -121,7 +124,7 @@ Version history:
   4.4 (2026-04-05) — Trend chart: 16 pt bold title, legend moved to bottom
                      (no overlap), x-axis labelled "Date" with yyyy-mm-dd
                      format, y-axis labelled "Storage Consumed (TB)". Header
-                     row color changed to Cohesity green (#00B388).
+                     row color changed to Cohesity green (#70AD47).
   4.3 (2026-04-04) — Secure credential storage via OS keychain (keyring).
                      --apikey is now optional; key is prompted once, saved to
                      the system keychain, and retrieved automatically on future
@@ -198,7 +201,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.17"
+__version__ = "4.18"
 
 import argparse
 import getpass
@@ -1118,7 +1121,7 @@ def _sheet_about(wb, meta: dict):
 
     ws = wb.create_sheet(title="About", index=0)
 
-    GREEN = "00B388"
+    GREEN = "70AD47"
     WHITE = "FFFFFF"
 
     _fill = PatternFill(fill_type="solid", fgColor=GREEN)
@@ -1225,7 +1228,7 @@ def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
     if meta:
         _sheet_about(wb, meta)
 
-    cohesity_fill = PatternFill(fill_type="solid", fgColor="00B388")
+    cohesity_fill = PatternFill(fill_type="solid", fgColor="70AD47")
     header_font   = Font(bold=True, color="FFFFFF")
 
     # --- Row 1: source-banner row (merged cells per consecutive same-source group) ---
