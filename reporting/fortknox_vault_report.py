@@ -25,6 +25,11 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.12 (2026-04-20) — Added "About" tab (first sheet) containing the command
+                     run, report parameters, field reference (column name,
+                     description, source field path, API endpoint), and APIs
+                     used. Fixed default_output_path() docstring — filename
+                     already included _v<version>_ since v4.3.
   4.11 (2026-04-17) — Security: TLS verification enabled by default; added
                      --ca-bundle and --insecure CLI flags. Excel formula
                      injection hardening via _safe_cell().
@@ -145,7 +150,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.11"
+__version__ = "4.12"
 
 import argparse
 import getpass
@@ -235,7 +240,7 @@ def clear_stored_credentials():
 
 
 def default_output_path() -> str:
-    """Auto-generate output filename: <script_name>_YYYYMMDD_HHMMSS.xlsx in cwd."""
+    """Auto-generate output filename: <script_name>_v<version>_YYYYMMDD_HHMMSS.xlsx in cwd."""
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_name = os.path.splitext(os.path.basename(__file__))[0]
     return os.path.join(os.getcwd(), f"{script_name}_v{__version__}_{timestamp}.xlsx")
@@ -759,7 +764,174 @@ def _add_trend_chart(wb, group_ranges: dict):
         print(f"    {total_charts} chart sheet(s) added (one per cluster)")
 
 
-def write_excel(rows: list, output_file: str, mode: str):
+_FIELD_REF = [
+    # (Column Name, Description, Source field path, API endpoint)
+    ("Period Start",
+     "Start of the reporting window",
+     "Computed from --start / --days / --start-msecs",
+     "—"),
+    ("Period End",
+     "End of the reporting window",
+     "Computed from --end / --days / --end-msecs",
+     "—"),
+    ("Cluster",
+     "Name of the Cohesity cluster",
+     "connectionStatus[].name",
+     "GET /mcm/clusters/connectionStatus"),
+    ("Vault Name",
+     "Name of the FortKnox vault",
+     "dataTransferSummary[].vaultName",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Vault Type",
+     "Vault type identifier (e.g. kFortKnox, kRPaaS)",
+     "dataTransferSummary[].vaultType",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Protection Group",
+     "Name of the protection job/group",
+     "dataTransferSummary[].dataTransferPerProtectionJob[].protectionJobName",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Logical Transferred (Bytes)",
+     "Time-windowed logical bytes sent to this vault within the query period. "
+     "Summed from per-run archival copy stats (kSuccess/kWarning runs only).",
+     "protectionRuns[].copyRun[].stats.logicalBytesTransferred",
+     "GET /public/protectionRuns"),
+    ("Physical Transferred (Bytes)",
+     "Time-windowed physical (post-dedup/compression) bytes sent to this vault "
+     "within the query period. Summed from per-run archival copy stats.",
+     "protectionRuns[].copyRun[].stats.physicalBytesTransferred",
+     "GET /public/protectionRuns"),
+    ("Storage Consumed (Bytes)",
+     "Total retained bytes in the vault for this protection group across all "
+     "snapshots (cumulative — not scoped to the query window). Matches Helios UI.",
+     "dataTransferSummary[].dataTransferPerProtectionJob[].storageConsumed",
+     "GET /public/reports/dataTransferToVaults"),
+    ("Storage Consumed (TB)",
+     "Storage Consumed ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
+    ("Storage Consumed (TiB)",
+     "Storage Consumed ÷ 1,099,511,627,776  (binary tebibytes, 4 dp). "
+     "Matches the unit shown in the Helios UI.",
+     "Computed",
+     "—"),
+]
+
+_API_REF = [
+    # (Type, Endpoint, Routing, Purpose)
+    ("Helios MCM",
+     "GET /mcm/clusters/connectionStatus",
+     "Direct — helios.cohesity.com",
+     "Lists all Helios-connected clusters with their IDs and names"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/cluster",
+     "Via Helios proxy  (accessClusterId header)",
+     "Reads the cluster's configured timezone for date boundary calculation"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/vaults?includeFortKnoxVault=true",
+     "Via Helios proxy  (accessClusterId header)",
+     "Retrieves FortKnox vault IDs for the cluster"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/reports/dataTransferToVaults",
+     "Via Helios proxy  (accessClusterId header)",
+     "Storage consumed and vault membership per protection group (cumulative)"),
+    ("Cluster v1 public",
+     "GET /irisservices/api/v1/public/protectionRuns",
+     "Via Helios proxy  (accessClusterId header)",
+     "Per-run archival copy stats used for time-windowed logical/physical transfer bytes"),
+]
+
+
+def _sheet_about(wb, meta: dict):
+    """Insert an 'About' sheet at position 0 with run info, field reference, and API reference."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet(title="About", index=0)
+
+    GREEN       = "00B388"
+    LIGHT_GREEN = "70AD47"
+    WHITE       = "FFFFFF"
+
+    def _title_row(text, ncols=4):
+        nonlocal _row
+        ws.cell(_row, 1, text).font = Font(bold=True, size=13, color=WHITE)
+        ws.cell(_row, 1).fill      = PatternFill(fill_type="solid", fgColor=GREEN)
+        ws.cell(_row, 1).alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[_row].height = 20
+        if ncols > 1:
+            ws.merge_cells(f"A{_row}:{get_column_letter(ncols)}{_row}")
+        _row += 1
+
+    def _section(text):
+        nonlocal _row
+        _row += 1
+        ws.cell(_row, 1, text).font = Font(bold=True, size=11)
+        _row += 1
+
+    def _header_row(labels):
+        nonlocal _row
+        for col, h in enumerate(labels, start=1):
+            c = ws.cell(_row, col, h)
+            c.font      = Font(bold=True, color=WHITE)
+            c.fill      = PatternFill(fill_type="solid", fgColor=LIGHT_GREEN)
+            c.alignment = Alignment(horizontal="center")
+        _row += 1
+
+    def _kv(key, val):
+        nonlocal _row
+        ws.cell(_row, 1, key).font = Font(bold=True)
+        ws.cell(_row, 2, val)
+        _row += 1
+
+    _row = 1
+
+    _title_row(f"FortKnox Vault Report  v{__version__}  —  Run Information", ncols=4)
+
+    _section("Command")
+    ws.cell(_row, 1, meta["command"])
+    ws.merge_cells(f"A{_row}:D{_row}")
+    _row += 1
+
+    _section("Parameters")
+    _kv("Script Version",  __version__)
+    _kv("Generated",       meta["generated"])
+    _kv("Mode",            meta["mode"])
+    _kv("Period Start",    meta["period_start"])
+    _kv("Period End",      meta["period_end"])
+    _kv("Cluster Filter",  meta["cluster_filter"])
+    _kv("Vault Filter",    meta["vault_filter"])
+    _kv("Cluster Timezone", meta["tz_name"])
+
+    _section("Report Fields")
+    _header_row(["Column Name", "Description", "Source Field Path", "API Endpoint"])
+    for col_name, desc, source, api in _FIELD_REF:
+        ws.cell(_row, 1, col_name)
+        ws.cell(_row, 2, desc)
+        ws.cell(_row, 3, source)
+        ws.cell(_row, 4, api)
+        _row += 1
+
+    _section("APIs Used")
+    _header_row(["Type", "Endpoint", "Routing", "Purpose"])
+    for api_type, endpoint, routing, purpose in _API_REF:
+        ws.cell(_row, 1, api_type)
+        ws.cell(_row, 2, endpoint)
+        ws.cell(_row, 3, routing)
+        ws.cell(_row, 4, purpose)
+        _row += 1
+
+    # Wrap text and auto-fit all four columns
+    for col_idx in range(1, 5):
+        col_max = 0
+        for r in range(1, ws.max_row + 1):
+            cell = ws.cell(r, col_idx)
+            if cell.value:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                col_max = max(col_max, len(str(cell.value)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(col_max + 2, 60)
+
+
+def write_excel(rows: list, output_file: str, mode: str, meta: dict = None):
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -775,6 +947,9 @@ def write_excel(rows: list, output_file: str, mode: str):
     wb = Workbook()
     ws = wb.active
     ws.title = "Report"
+
+    if meta:
+        _sheet_about(wb, meta)
 
     headers = [col for col, _ in COLUMNS]
 
@@ -1021,7 +1196,17 @@ def main():
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
-    write_excel(all_rows, output_path, args.mode)
+    meta = {
+        "command":        " ".join(sys.argv),
+        "mode":           args.mode,
+        "period_start":   s,
+        "period_end":     e,
+        "cluster_filter": args.cluster or "(all)",
+        "vault_filter":   args.vault   or "(all)",
+        "tz_name":        tz_name,
+        "generated":      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    write_excel(all_rows, output_path, args.mode, meta)
 
 
 if __name__ == "__main__":
