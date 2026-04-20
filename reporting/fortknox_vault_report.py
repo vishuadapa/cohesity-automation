@@ -25,6 +25,17 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.17 (2026-04-20) — Reworked Activities data collection to match the
+                     Protection Activities report model: Backup and Vault
+                     are separate run entries in the API, not phases of the
+                     same run. Backup activity (Data Read, Data Written) is
+                     now collected independently by backup start date;
+                     Vault activity (Logical, Physical Transferred) is
+                     collected independently by vault start date. Results
+                     are merged by (group, date) — on days where both kick
+                     off at roughly the same time all four fields populate
+                     the same row. --debug now reports backup run count and
+                     vault run count separately per group.
   4.16 (2026-04-20) — Fixed Activities: Data Read / Data Written date
                      alignment. Previously anchored to the local backup
                      start time; now anchored to the FortKnox archival
@@ -187,7 +198,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.16"
+__version__ = "4.17"
 
 import argparse
 import getpass
@@ -390,15 +401,29 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
     targetType as a fallback (see _FK_TARGET_TYPES).  target_groups limits
     which groups are queried (pass an empty set to query all groups).
 
-    Data Read / Data Written are backup-level stats (not vault-specific) and
-    are included whenever a run has at least one FortKnox archival result.
+    Backup and Vault appear as separate run entries in the Protection
+    Activities API — a backup-only run has localBackupInfo but no
+    archivalInfo; a vault-only run has archivalInfo but no localBackupInfo.
+    This function collects each activity type independently by its own
+    start date and then merges them:
+
+      • Backup activity  → Data Read / Data Written keyed by backup start date
+      • Vault activity   → Logical / Physical Transferred keyed by vault start date
+
+    On days where both activities happen (typically most days, since the
+    daily backup and the vault archival of the previous snapshot both kick
+    off at roughly the same wall-clock time), all four fields populate the
+    same row.  On days where only one type runs, the other pair is 0.
+
+    target_groups limits which groups are queried (pass an empty set to
+    query all groups).
 
     Returns:
       {(group_name, date_str): {
-         "act_data_read":    int,   # localSnapshotStats.bytesRead
-         "act_data_written": int,   # localSnapshotStats.bytesWritten
-         "act_logical":      int,   # sum of archivalTargetResults logicalBytesTransferred
-         "act_physical":     int,   # sum of archivalTargetResults physicalBytesTransferred
+         "act_data_read":    int,   # Backup activity: localSnapshotStats.bytesRead
+         "act_data_written": int,   # Backup activity: localSnapshotStats.bytesWritten
+         "act_logical":      int,   # Vault activity: archivalTargetResults logicalBytesTransferred
+         "act_physical":     int,   # Vault activity: archivalTargetResults physicalBytesTransferred
       }}
     """
     group_map = get_protection_group_map(api_key, cluster_id, cluster_name)
@@ -411,16 +436,22 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
         return {}
 
     def _is_fk(ar: dict) -> bool:
-        """Return True if this archival result targets a FortKnox vault."""
         if ar.get("targetName", "") in vault_names:
             return True
         ttype = (ar.get("targetType") or ar.get("archivalTargetType") or "").lower()
         return ttype in _FK_TARGET_TYPES
 
     def _xfer_bytes(ar: dict, field: str) -> int:
-        """Extract a transfer-bytes field, checking both stats sub-dict and top-level."""
         stats = ar.get("stats") or {}
         return int(stats.get(field) or ar.get(field) or 0)
+
+    def _date(usecs: int) -> str:
+        return datetime.fromtimestamp(usecs / 1_000_000, tz=tz).strftime("%Y-%m-%d")
+
+    def _ensure(d, key):
+        if key not in d:
+            d[key] = {"act_data_read": 0, "act_data_written": 0,
+                      "act_logical":   0, "act_physical":     0}
 
     result: dict = {}
 
@@ -444,52 +475,52 @@ def get_activities_transfer(api_key: str, cluster_id: int, cluster_name: str,
             continue
 
         if debug and runs:
-            import json as _json
             sample_ar = ((runs[0].get("archivalInfo") or {})
                          .get("archivalTargetResults") or [{}])[0]
             print(f"[DEBUG] {cluster_name}/{group_name} — {len(runs)} run(s); "
                   f"sample archivalTargetResult keys: {list(sample_ar.keys())}")
             if sample_ar.get("stats"):
                 print(f"[DEBUG] sample stats keys: {list(sample_ar['stats'].keys())}")
-            vault_names_found = {(a.get("targetName"), a.get("targetType"))
-                                 for run in runs
-                                 for a in ((run.get("archivalInfo") or {})
-                                           .get("archivalTargetResults") or [])}
-            print(f"[DEBUG] all (targetName, targetType) pairs: {vault_names_found}")
+            vault_pairs = {(a.get("targetName"), a.get("targetType"))
+                           for run in runs
+                           for a in ((run.get("archivalInfo") or {})
+                                     .get("archivalTargetResults") or [])}
+            print(f"[DEBUG] all (targetName, targetType) pairs: {vault_pairs}")
             print(f"[DEBUG] known vault_names set: {vault_names}")
 
+        bk_runs = vk_runs = 0
         for run in runs:
-            archival_results = (run.get("archivalInfo") or {}).get("archivalTargetResults") or []
-            fk_results = [a for a in archival_results if _is_fk(a)]
-            if not fk_results:
-                continue
-
+            # --- Backup activity (Activity Type = Backup) ---
             local_info  = run.get("localBackupInfo") or {}
             local_stats = local_info.get("localSnapshotStats") or {}
+            bk_usecs    = local_info.get("startTimeUsecs") or 0
+            data_read    = int(local_stats.get("bytesRead",    0) or 0)
+            data_written = int(local_stats.get("bytesWritten", 0) or 0)
+            if bk_usecs and (data_read or data_written):
+                key = (group_name, _date(bk_usecs))
+                _ensure(result, key)
+                result[key]["act_data_read"]    += data_read
+                result[key]["act_data_written"] += data_written
+                bk_runs += 1
 
-            # Date is anchored to the FortKnox archival activity start, not the
-            # local backup start — backup and archival can span a day boundary.
-            # Data Read / Data Written (Backup activity) are reported on the
-            # same date as the corresponding vault transfer they belong to.
-            fk_usecs = (fk_results[0].get("startTimeUsecs")
-                        or local_info.get("startTimeUsecs") or 0)
-            date_str = (datetime.fromtimestamp(fk_usecs / 1_000_000, tz=tz)
-                        .strftime("%Y-%m-%d") if fk_usecs else "unknown")
-
-            key = (group_name, date_str)
-            if key not in result:
-                result[key] = {"act_data_read": 0, "act_data_written": 0,
-                               "act_logical":   0, "act_physical":     0}
-            result[key]["act_data_read"]    += int(local_stats.get("bytesRead",    0) or 0)
-            result[key]["act_data_written"] += int(local_stats.get("bytesWritten", 0) or 0)
+            # --- Vault activity (Activity Type = Vault) ---
+            archival_results = (run.get("archivalInfo") or {}).get("archivalTargetResults") or []
+            fk_results = [a for a in archival_results if _is_fk(a)]
             for ar in fk_results:
+                vk_usecs = ar.get("startTimeUsecs") or bk_usecs
+                if not vk_usecs:
+                    continue
+                key = (group_name, _date(vk_usecs))
+                _ensure(result, key)
                 result[key]["act_logical"]  += _xfer_bytes(ar, "logicalBytesTransferred")
                 result[key]["act_physical"] += _xfer_bytes(ar, "physicalBytesTransferred")
+                vk_runs += 1
 
         if debug:
             hits = sum(1 for k in result if k[0] == group_name)
             print(f"[DEBUG] {cluster_name}/{group_name} — "
-                  f"{hits} day(s) with FK archival activity recorded")
+                  f"{bk_runs} backup run(s), {vk_runs} vault run(s), "
+                  f"{hits} distinct date(s) recorded")
 
     return result
 
@@ -1019,16 +1050,15 @@ _FIELD_REF = [
      "—"),
     # --- Activities columns ---
     ("Activities: Data Read (Bytes)",
-     "Bytes read from the backup source (Backup activity) for runs that also "
-     "had FortKnox archival activity. Reported on the same date as the vault "
-     "transfer — anchored to the archival start time, not the backup start "
-     "time, so it aligns with Logical/Physical Transferred on day boundaries.",
+     "Bytes read from the backup source during the Backup activity, keyed by "
+     "the backup start date. Collected independently of vault activity — on "
+     "days where both a backup and a vault archival run at roughly the same "
+     "time, all four Activities fields appear on the same row.",
      "runs[].localBackupInfo.localSnapshotStats.bytesRead",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Data Written (Bytes)",
-     "Bytes written to local storage (Backup activity) for runs that also had "
-     "FortKnox archival activity. Date-anchored to the archival start time "
-     "for the same reason as Data Read.",
+     "Bytes written to local storage during the Backup activity, keyed by the "
+     "backup start date. See Data Read for alignment notes.",
      "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Logical Transferred (Bytes)",
