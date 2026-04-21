@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-21] feat(health_check): v1.65 — AD/LDAP health, certificate inventory, performance trends, audit log 403 fix
+
+### Added — `health_check/health_check_report.py`
+- **AD / Identity Health sheet** (new, #26): Active Directory domain connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected sources flagged red. Fetched via `GET /v1/public/activeDirectory` and `GET /v1/public/ldapProvider`. Recommendation: HIGH if AD/LDAP disconnected.
+- **Certificate Inventory sheet** (new, #27): Full TLS certificate inventory — name, type, subject, issuer, issued/expiry dates, days remaining. CRITICAL if <30 days, HIGH if <90 days, OK otherwise. Fetched via `GET /v1/public/certificates`. Recommendations: CRITICAL/HIGH on near-expiry or expired certs.
+- **Capacity & Perf Trends sheet** (new, #28): 30-day dedup ratio trend (ransomware indicator — sudden drop signals data becoming incompressible) and daily read/write I/O throughput (GB/day) with embedded line charts per cluster. Dedup fetched via `kLogicalCapacityBytes`; I/O via `kNumBytesRead`/`kNumBytesWritten` stats API.
+- **Audit Log 403 surfacing**: `_fetch_audit_log()` now detects HTTP 401/403 and returns `"PERMISSION_DENIED"` sentinel; `_sheet_audit_log()` shows actionable message ("Grant 'Audit Log View' privilege…") instead of silently empty sheet. Previously the 403 was swallowed by `silent=True`.
+
+---
+
 ## [2026-04-21] feat(health_check): v1.64 — recovery testing, KMS, custom roles, DataLock snapshot verification
 
 ### Added — `health_check/health_check_report.py`

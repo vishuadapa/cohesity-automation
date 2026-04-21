@@ -93,6 +93,16 @@ Requirements
 
 Version history
 ───────────────
+  1.65 (2026-04-21) — feat(health_check): AD/LDAP health, full cert inventory,
+                     dedup/IO performance trends, audit-log 403 surfacing. New
+                     fetch functions: _active_directory, _ldap_providers,
+                     _all_certs, _dedup_trend, _io_stats. New sheets: AD /
+                     Identity Health, Certificate Inventory, Capacity & Perf
+                     Trends. _fetch_audit_log now returns "PERMISSION_DENIED"
+                     sentinel on HTTP 403 so Audit Log sheet shows actionable
+                     message instead of silently empty. Recommendations engine
+                     extended: cert expiry CRITICAL/HIGH, AD/LDAP disconnect
+                     HIGH. Guide tab updated for all new sheets.
   1.64 (2026-04-21) — feat(health_check): recovery testing, KMS, custom roles,
                      DataLock snapshots. Four new data collections (recoveries,
                      kmsConfig, roles, per-group snapshot DataLock check) added
@@ -656,7 +666,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.64"
+__version__ = "1.65"
 
 import argparse
 import datetime
@@ -1448,21 +1458,30 @@ def _capacity_timeseries(session, h, cluster_id, debug):
 def _fetch_audit_log(session, h, days, debug):
     """Fetch recent audit log events (last N days).
 
-    Returns a list of event dicts, or [] if the endpoint is unavailable
-    (e.g. 403 when the calling account lacks audit-log read permission).
+    Returns a list of event dicts, the sentinel string "PERMISSION_DENIED" on
+    HTTP 401/403 (so the sheet can surface a helpful message), or [] on any
+    other error or empty response.
     """
-    d = _get(session, h,
-             "/irisservices/api/v1/public/auditLog",
-             params={
-                 "numLogs":        1000,
-                 "startTimeUsecs": _days_ago_usecs(days),
-             },
-             debug=debug, silent=True)
-    if isinstance(d, list):
-        return d
-    if isinstance(d, dict):
-        return (d.get("auditLogs") or d.get("events") or d.get("logs") or [])
-    return []
+    base = getattr(session, "base_url", f"https://{HELIOS_HOST}")
+    url  = f"{base}/irisservices/api/v1/public/auditLog"
+    params = {"numLogs": 1000, "startTimeUsecs": _days_ago_usecs(days)}
+    try:
+        r = session.get(url, headers=h, params=params, timeout=60)
+        if debug:
+            print(f"    DEBUG /auditLog → {r.status_code}")
+        if r.status_code == 200:
+            d = r.json()
+            if isinstance(d, list):
+                return d
+            if isinstance(d, dict):
+                return d.get("auditLogs") or d.get("events") or d.get("logs") or []
+            return []
+        if r.status_code in (401, 403):
+            return "PERMISSION_DENIED"
+        return []
+    except Exception as exc:
+        print(f"    WARN: GET /auditLog failed: {exc}")
+        return []
 
 
 def _recoveries(session, h, start_usecs, end_usecs, debug):
@@ -1494,6 +1513,79 @@ def _roles(session, h, debug):
     if isinstance(d, list):
         return d
     return (d.get("roles") if isinstance(d, dict) else None) or []
+
+
+def _active_directory(session, h, debug):
+    d = _get(session, h, "/irisservices/api/v1/public/activeDirectory",
+             debug=debug, silent=True)
+    if isinstance(d, list):
+        return d
+    return (d.get("activeDirectoryEntry") if isinstance(d, dict) else None) or []
+
+
+def _ldap_providers(session, h, debug):
+    d = _get(session, h, "/irisservices/api/v1/public/ldapProvider",
+             debug=debug, silent=True)
+    if isinstance(d, list):
+        return d
+    return (d.get("ldapProviders") if isinstance(d, dict) else None) or []
+
+
+def _all_certs(session, h, debug):
+    d = _get(session, h, "/irisservices/api/v1/public/certificates",
+             debug=debug, silent=True)
+    if isinstance(d, list):
+        return [c for c in d if isinstance(c, dict)]
+    return (d.get("certificates") if isinstance(d, dict) else None) or []
+
+
+def _dedup_trend(session, h, cluster_id, debug):
+    """Fetch 30-day daily logical-capacity time series for dedup ratio computation."""
+    if not cluster_id:
+        return []
+    now_ms   = int(time.time() * 1000)
+    start_ms = now_ms - 30 * 86400 * 1000
+    d = _get(session, h,
+             "/irisservices/api/v1/public/statistics/timeSeriesStats",
+             params={
+                 "schemaName":         "kBridgeClusterStats",
+                 "metricName":         "kLogicalCapacityBytes",
+                 "entityId":           str(cluster_id),
+                 "rollupIntervalSecs": 86400,
+                 "rollupFunction":     "latest",
+                 "startTimeMsecs":     start_ms,
+                 "endTimeMsecs":       now_ms,
+             },
+             debug=debug, silent=True)
+    return (d.get("dataPointVec") or [] if d else [])
+
+
+def _io_stats(session, h, cluster_id, debug):
+    """Fetch 30-day daily read/write throughput time series."""
+    if not cluster_id:
+        return {"reads": [], "writes": []}
+    now_ms   = int(time.time() * 1000)
+    start_ms = now_ms - 30 * 86400 * 1000
+    base_p   = {
+        "schemaName":         "kBridgeClusterStats",
+        "entityId":           str(cluster_id),
+        "rollupIntervalSecs": 86400,
+        "rollupFunction":     "average",
+        "startTimeMsecs":     start_ms,
+        "endTimeMsecs":       now_ms,
+    }
+    dr = _get(session, h,
+              "/irisservices/api/v1/public/statistics/timeSeriesStats",
+              params={**base_p, "metricName": "kNumBytesRead"},
+              debug=debug, silent=True)
+    dw = _get(session, h,
+              "/irisservices/api/v1/public/statistics/timeSeriesStats",
+              params={**base_p, "metricName": "kNumBytesWritten"},
+              debug=debug, silent=True)
+    return {
+        "reads":  (dr.get("dataPointVec") or [] if dr else []),
+        "writes": (dw.get("dataPointVec") or [] if dw else []),
+    }
 
 
 def _snapshot_datalock(session, h, groups, debug):
@@ -1547,7 +1639,7 @@ def collect_cluster(session, api_key, cluster, args):
     print(f"  [{name}] fetching in parallel —")
     print(f"    infrastructure, nodes, alerts, groups, policies, storage, views,")
     print(f"    vaults, run-summary, certs, agents, sources, users, IDPs, cap-trend, audit-log,")
-    print(f"    recoveries, KMS config, roles...",
+    print(f"    recoveries, KMS config, roles, AD/LDAP, all-certs, dedup-trend, I/O...",
           end="", flush=True)
     with _ThreadPoolExecutor(max_workers=8) as _ex:
         _fut_info    = _ex.submit(_cluster_info,          session, h, dbg)
@@ -1570,6 +1662,11 @@ def collect_cluster(session, api_key, cluster, args):
         _fut_recov   = _ex.submit(_recoveries,            session, h, start_usecs, end_usecs, dbg)
         _fut_kms     = _ex.submit(_kms_config,            session, h, dbg)
         _fut_roles   = _ex.submit(_roles,                 session, h, dbg)
+        _fut_ad      = _ex.submit(_active_directory,      session, h, dbg)
+        _fut_ldap    = _ex.submit(_ldap_providers,        session, h, dbg)
+        _fut_allcerts= _ex.submit(_all_certs,             session, h, dbg)
+        _fut_dedup   = _ex.submit(_dedup_trend,           session, h, cid, dbg)
+        _fut_io      = _ex.submit(_io_stats,              session, h, cid, dbg)
 
         info         = _fut_info.result()
         nodes        = _fut_nodes.result()
@@ -1592,6 +1689,11 @@ def collect_cluster(session, api_key, cluster, args):
         recoveries   = _fut_recov.result()
         kms          = _fut_kms.result()
         roles        = _fut_roles.result()
+        active_directory  = _fut_ad.result()
+        ldap_providers    = _fut_ldap.result()
+        all_certs         = _fut_allcerts.result()
+        dedup_ts          = _fut_dedup.result()
+        io_ts             = _fut_io.result()
     print(" done.")
 
     # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
@@ -1677,10 +1779,15 @@ def collect_cluster(session, api_key, cluster, args):
         "quorum_enabled": cluster.get("quorum_enabled", False),
         "cap_timeseries": cap_ts,
         "audit_events":   audit_events,
-        "recoveries":     recoveries,
-        "kms":            kms,
-        "roles":          roles,
-        "snapshot_dl":    snapshot_dl,
+        "recoveries":        recoveries,
+        "kms":               kms,
+        "roles":             roles,
+        "snapshot_dl":       snapshot_dl,
+        "active_directory":  active_directory,
+        "ldap_providers":    ldap_providers,
+        "all_certs":         all_certs,
+        "dedup_ts":          dedup_ts,
+        "io_ts":             io_ts,
     }
 
     # Pre-compute shared derived values — avoids repeated recalculation in
@@ -2859,6 +2966,53 @@ def _build_recommendations(cd):
             "DataLock mode, cluster DataLock enablement, and StorageDomain WORM settings",
             "Immutability protection is not in effect — backups that appear DataLocked "
             "can still be deleted or modified, leaving no true indelible copy"))
+
+    # ── Certificate expiry ────────────────────────────────────────────────────
+    _now_ms = int(time.time() * 1000)
+    _cert_src = cd.get("all_certs") or cd.get("certs") or []
+    for _cert in _cert_src:
+        _expiry_ms = (_cert.get("expiryDateMsecs") or _cert.get("notAfterMsecs") or 0)
+        if not _expiry_ms:
+            _expiry_usecs = _cert.get("expiryDateUsecs") or _cert.get("expirationDateUsecs") or 0
+            if _expiry_usecs:
+                _expiry_ms = _expiry_usecs // 1000
+        if not _expiry_ms:
+            continue
+        _days = (_expiry_ms - _now_ms) / (1000 * 86400)
+        _cname = _cert.get("name") or _cert.get("subject") or "Certificate"
+        if _days < 0:
+            recs.append(_r("CRITICAL", "Security",
+                f"Certificate '{_cname}' has EXPIRED",
+                "Renew certificate immediately to restore secure TLS communications",
+                "Expired certificates cause connection failures and browser security warnings"))
+        elif _days < 30:
+            recs.append(_r("CRITICAL", "Security",
+                f"Certificate '{_cname}' expires in {int(_days)} day(s)",
+                "Renew certificate immediately — fewer than 30 days remaining",
+                "Near-expiry certificates risk service disruptions if not renewed before cutover"))
+        elif _days < 90:
+            recs.append(_r("HIGH", "Security",
+                f"Certificate '{_cname}' expires in {int(_days)} day(s)",
+                "Schedule certificate renewal — fewer than 90 days remaining",
+                "Proactive renewal avoids emergency changes and potential service outages"))
+
+    # ── Active Directory / LDAP health ───────────────────────────────────────
+    for _ad in (cd.get("active_directory") or []):
+        _status = (_ad.get("connectionStatus") or _ad.get("status") or "").lower()
+        _domain = _ad.get("domainName") or "Unknown Domain"
+        if any(w in _status for w in ("disconnect", "error", "fail", "unreachable")):
+            recs.append(_r("HIGH", "Identity",
+                f"Active Directory domain '{_domain}' is not connected",
+                "Check DC connectivity, DNS resolution, and Kerberos/time sync configuration",
+                "AD disconnection breaks user authentication and RBAC for all AD-backed accounts"))
+    for _lp in (cd.get("ldap_providers") or []):
+        _status = (_lp.get("connectionStatus") or _lp.get("status") or "").lower()
+        _lname  = _lp.get("name") or "LDAP Provider"
+        if any(w in _status for w in ("disconnect", "error", "fail", "unreachable")):
+            recs.append(_r("HIGH", "Identity",
+                f"LDAP provider '{_lname}' is not connected",
+                "Check LDAP server availability, port, and bind credentials",
+                "LDAP disconnection breaks authentication for all LDAP-backed user accounts"))
 
     recs.sort(key=lambda x: _PRIORITY_ORDER.get(x["priority"], 99))
     return recs
@@ -8029,9 +8183,15 @@ def _sheet_audit_log(wb, all_data):
     cat_notable = {}
     detail_rows = []
 
+    denied_clusters = [cd["name"] for cd in all_data
+                       if cd.get("audit_events") == "PERMISSION_DENIED"]
+
     for cd in all_data:
         cluster_name = cd["name"]
-        for event in (cd.get("audit_events") or []):
+        events = cd.get("audit_events")
+        if not isinstance(events, list):
+            continue
+        for event in events:
             cat = _audit_category(event)
             if cat is None:
                 continue
@@ -8087,9 +8247,20 @@ def _sheet_audit_log(wb, all_data):
     # Detail rows — newest first
     detail_rows.sort(key=lambda x: x["ts"] or "", reverse=True)
 
+    if denied_clusters:
+        rn = ws.max_row + 1
+        msg = (f"Access denied (HTTP 403) for: {', '.join(denied_clusters)}. "
+               "Grant 'Audit Log View' privilege to the API key role: "
+               "Cohesity UI → Settings → Access Management → API Keys → Edit Role.")
+        c = ws.cell(row=rn, column=1, value=msg)
+        c.font = _FONT_NORMAL
+        c.fill = PatternFill("solid", fgColor="FFC7CE")
     if not detail_rows:
         ws.cell(row=ws.max_row + 1, column=1,
-                value="No audit log data available (may require elevated permissions)").font = _FONT_NORMAL
+                value=("No audit log events found in the selected time window."
+                       if not denied_clusters else
+                       "No events returned — check API key role permissions above.")
+                ).font = _FONT_NORMAL
     else:
         for ev in detail_rows:
             rn = ws.max_row + 1
@@ -8106,6 +8277,384 @@ def _sheet_audit_log(wb, all_data):
     auto_fit_columns(ws)
     ws.column_dimensions["A"].width = 20
     ws.column_dimensions["G"].width = 40
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHEET — AD / IDENTITY HEALTH
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_ad_identity(wb, all_data):
+    from openpyxl.styles import PatternFill, Font, Alignment
+
+    ws = wb.create_sheet("AD / Identity Health")
+    ws.freeze_panes = "A3"
+    _title(ws, "Active Directory & LDAP Integration Health", "F")
+
+    ad_cols = ["Cluster", "AD Domain", "Workgroup", "Connection Status",
+               "Preferred DC", "Trusted Domains"]
+    _hdr(ws, 2, ad_cols)
+
+    has_ad = False
+    for cd in all_data:
+        cluster = cd["name"]
+        for ad in (cd.get("active_directory") or []):
+            has_ad = True
+            raw_status   = ad.get("connectionStatus") or ad.get("status") or "Unknown"
+            status_clean = raw_status.lstrip("k")
+            pref_dcs     = ad.get("preferredDomainControllers") or []
+            pref_dc_str  = ", ".join(
+                (dc.get("domainName") or dc.get("ipAddress") or "")
+                for dc in pref_dcs if isinstance(dc, dict)
+            ) or "Auto"
+            trusted = len(ad.get("trustedDomains") or [])
+            rn = ws.max_row + 1
+            vals = [cluster, ad.get("domainName") or "",
+                    ad.get("workgroup") or "", status_clean,
+                    pref_dc_str, trusted]
+            for c, v in enumerate(vals, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(v)).font = _FONT_NORMAL
+            sc = ws.cell(row=rn, column=4)
+            if "connected" in status_clean.lower() and "dis" not in status_clean.lower():
+                sc.fill = PatternFill("solid", fgColor="C6EFCE")
+                sc.font = Font(name="Calibri", size=9, color="276221")
+            elif any(w in status_clean.lower() for w in ("disconnect", "error", "fail")):
+                sc.fill = PatternFill("solid", fgColor="FFC7CE")
+                sc.font = Font(name="Calibri", size=9, color="9C0006", bold=True)
+
+    if not has_ad:
+        ws.cell(row=ws.max_row + 1, column=1,
+                value="No Active Directory domains configured or data unavailable."
+                ).font = _FONT_NORMAL
+
+    # ── LDAP section ──────────────────────────────────────────────────────────
+    ldap_start = ws.max_row + 2
+    ws.merge_cells(f"A{ldap_start}:F{ldap_start}")
+    hc = ws.cell(row=ldap_start, column=1, value="─── LDAP Providers ───")
+    hc.font      = Font(name="Calibri", size=9, bold=True, italic=True)
+    hc.fill      = PatternFill("solid", fgColor=LIGHT_GRAY)
+    hc.alignment = Alignment(horizontal="center")
+
+    _hdr(ws, ws.max_row + 1,
+         ["Cluster", "Provider Name", "Server", "Port", "Base DN", "Status"])
+
+    has_ldap = False
+    for cd in all_data:
+        cluster = cd["name"]
+        for lp in (cd.get("ldap_providers") or []):
+            has_ldap = True
+            raw_status   = lp.get("connectionStatus") or lp.get("status") or "Unknown"
+            status_clean = raw_status.lstrip("k")
+            servers = lp.get("servers") or lp.get("server") or lp.get("serverIp") or ""
+            if isinstance(servers, list):
+                servers = ", ".join(str(s) for s in servers)
+            rn = ws.max_row + 1
+            vals = [cluster,
+                    lp.get("name") or lp.get("id") or "",
+                    servers,
+                    lp.get("port") or "",
+                    lp.get("baseDistinguishedName") or lp.get("baseDn") or "",
+                    status_clean]
+            for c, v in enumerate(vals, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(v)).font = _FONT_NORMAL
+            sc = ws.cell(row=rn, column=6)
+            if "connected" in status_clean.lower() and "dis" not in status_clean.lower():
+                sc.fill = PatternFill("solid", fgColor="C6EFCE")
+                sc.font = Font(name="Calibri", size=9, color="276221")
+            elif any(w in status_clean.lower() for w in ("disconnect", "error", "fail")):
+                sc.fill = PatternFill("solid", fgColor="FFC7CE")
+                sc.font = Font(name="Calibri", size=9, color="9C0006", bold=True)
+
+    if not has_ldap:
+        ws.cell(row=ws.max_row + 1, column=1,
+                value="No LDAP providers configured or data unavailable."
+                ).font = _FONT_NORMAL
+
+    auto_fit_columns(ws)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHEET — CERTIFICATE INVENTORY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_cert_inventory(wb, all_data):
+    from openpyxl.styles import PatternFill, Font
+
+    ws = wb.create_sheet("Certificate Inventory")
+    ws.freeze_panes = "A3"
+    _title(ws, "TLS Certificate Inventory", "I")
+
+    cols = ["Cluster", "Name", "Type", "Subject / CN", "Issuer",
+            "Issued Date", "Expiry Date", "Days Left", "Status"]
+    _hdr(ws, 2, cols)
+
+    now_ms = int(time.time() * 1000)
+
+    for cd in all_data:
+        cluster   = cd["name"]
+        cert_list = cd.get("all_certs") or cd.get("certs") or []
+        if not cert_list:
+            rn = ws.max_row + 1
+            ws.cell(row=rn, column=1, value=cluster).font = _FONT_NORMAL
+            ws.cell(row=rn, column=2,
+                    value="No certificate data available").font = _FONT_NORMAL
+            continue
+
+        seen = set()
+        for cert in cert_list:
+            cname = cert.get("name") or cert.get("subject") or cert.get("commonName") or ""
+            if cname in seen:
+                continue
+            seen.add(cname)
+
+            ctype = cert.get("type") or cert.get("certificateType") or ""
+            ctype_clean = ctype.lstrip("k") if ctype else "WebServer"
+            subject = (cert.get("subject") or cert.get("commonName") or
+                       cert.get("subjectCommonName") or "")
+            issuer  = cert.get("issuer") or cert.get("issuerName") or ""
+
+            expiry_ms = (cert.get("expiryDateMsecs") or cert.get("notAfterMsecs") or 0)
+            if not expiry_ms:
+                eu = cert.get("expiryDateUsecs") or cert.get("expirationDateUsecs") or 0
+                if eu:
+                    expiry_ms = eu // 1000
+
+            issued_ms = cert.get("issuedDateMsecs") or cert.get("notBeforeMsecs") or 0
+            if not issued_ms:
+                iu = cert.get("issuedDateUsecs") or 0
+                if iu:
+                    issued_ms = iu // 1000
+
+            expiry_str, issued_str, days_left = "", "", None
+            if expiry_ms:
+                expiry_str = datetime.datetime.utcfromtimestamp(
+                    expiry_ms / 1000).strftime("%Y-%m-%d")
+                days_left  = (expiry_ms - now_ms) / (1000 * 86400)
+            if issued_ms:
+                issued_str = datetime.datetime.utcfromtimestamp(
+                    issued_ms / 1000).strftime("%Y-%m-%d")
+
+            if days_left is None:
+                status, sbg, sfg = "Unknown", "F2F2F2", "000000"
+            elif days_left < 0:
+                status, sbg, sfg = "EXPIRED",  "FF0000", "FFFFFF"
+            elif days_left < 30:
+                status, sbg, sfg = "CRITICAL", RED,     "FFFFFF"
+            elif days_left < 90:
+                status, sbg, sfg = "HIGH",     AMBER,   "000000"
+            else:
+                status, sbg, sfg = "OK",       "C6EFCE", "276221"
+
+            rn   = ws.max_row + 1
+            vals = [cluster, cname, ctype_clean, subject, issuer,
+                    issued_str, expiry_str,
+                    round(days_left) if days_left is not None else "",
+                    status]
+            for c, v in enumerate(vals, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(v)).font = _FONT_NORMAL
+            sc = ws.cell(row=rn, column=9)
+            sc.fill = PatternFill("solid", fgColor=sbg)
+            sc.font = Font(name="Calibri", size=9, color=sfg,
+                           bold=(status in ("EXPIRED", "CRITICAL")))
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["D"].width = 30
+    ws.column_dimensions["E"].width = 25
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHEET — CAPACITY & PERFORMANCE TRENDS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_perf_trends(wb, all_data):
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.chart.series import SeriesLabel
+
+    ws = wb.create_sheet("Capacity & Perf Trends")
+    ws.freeze_panes = "A3"
+    _title(ws, "Capacity & Performance Trends (30 days) — Dedup Ratio & I/O Throughput", "G")
+
+    cols = ["Cluster", "Date", "Logical (TB)", "Physical (TB)", "Dedup Ratio",
+            "Read (GB/day)", "Write (GB/day)"]
+    _hdr(ws, 2, cols)
+
+    for cd in all_data:
+        # ── Build daily physical bytes map (already fetched for cap trend) ────
+        phys_map = {}
+        for pt in (cd.get("cap_timeseries") or []):
+            ts  = pt.get("timestampMsecs")
+            val = (pt.get("data") or {}).get("int64Value") or 0
+            if ts and val:
+                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                phys_map[day] = val
+
+        # ── Logical bytes (new: kLogicalCapacityBytes) ────────────────────────
+        log_map = {}
+        for pt in (cd.get("dedup_ts") or []):
+            ts  = pt.get("timestampMsecs")
+            val = (pt.get("data") or {}).get("int64Value") or 0
+            if ts and val:
+                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                log_map[day] = val
+
+        # ── I/O maps ──────────────────────────────────────────────────────────
+        io_ts    = cd.get("io_ts") or {}
+        read_map = {}
+        for pt in (io_ts.get("reads") or []):
+            ts  = pt.get("timestampMsecs")
+            val = (pt.get("data") or {}).get("int64Value") or 0
+            if ts:
+                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                read_map[day] = round(val / 1e9, 2)
+        write_map = {}
+        for pt in (io_ts.get("writes") or []):
+            ts  = pt.get("timestampMsecs")
+            val = (pt.get("data") or {}).get("int64Value") or 0
+            if ts:
+                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                write_map[day] = round(val / 1e9, 2)
+
+        all_days = sorted(set(phys_map) | set(log_map) | set(read_map) | set(write_map))
+        if not all_days:
+            continue
+
+        trend_start = ws.max_row + 1
+        for day in all_days:
+            phys  = phys_map.get(day, 0)
+            log_b = log_map.get(day, 0)
+            ratio = round(log_b / phys, 2) if phys and log_b else ""
+            rn    = ws.max_row + 1
+            row   = [cd["name"], day,
+                     round(log_b / 1e12, 3) if log_b else "",
+                     round(phys  / 1e12, 3) if phys  else "",
+                     ratio,
+                     read_map.get(day, ""),
+                     write_map.get(day, "")]
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+        trend_end = ws.max_row
+        n_days    = trend_end - trend_start + 1
+
+        if n_days < 2:
+            continue
+
+        # ── Dedup ratio chart ─────────────────────────────────────────────────
+        dc = LineChart()
+        dc.style  = 10
+        dc.height = 14
+        dc.width  = 26
+        try:
+            from openpyxl.chart.title import Title as _CT
+            from openpyxl.drawing.text import (RichTextBodyProperties as _BP,
+                Paragraph as _Par, RegularTextRun as _Ru, RunProperties as _RP)
+            from openpyxl.chart.text import RichText as _CRT, Text as _CTx
+            _t = _CT(); _t.overlay = False
+            _r2 = _CRT(); _r2.bodyPr = _BP()
+            _p = _Par(); _ru = _Ru()
+            _ru.t = f"{cd['name']} — Dedup Ratio Trend (Ransomware Indicator)"
+            _ru.rPr = _RP(sz=1200, b=True)
+            _p.r.append(_ru); _r2.p.append(_p); _t.tx = _CTx(rich=_r2)
+            dc.title = _t
+        except Exception:
+            dc.title = f"{cd['name']} — Dedup Ratio Trend"
+
+        dc.y_axis.title         = "Dedup Ratio (x)"
+        dc.y_axis.numFmt        = "0.00"
+        dc.y_axis.majorTickMark = "out"
+        dc.y_axis.tickLblPos    = "nextTo"
+        dc.y_axis.delete        = False
+        dc.x_axis.title         = "Date"
+        dc.x_axis.majorTickMark = "out"
+        dc.x_axis.tickLblPos    = "low"
+        dc.x_axis.delete        = False
+        if n_days > 14:
+            dc.x_axis.tickLblSkip = 2
+
+        dc.add_data(Reference(ws, min_col=5, min_row=trend_start, max_row=trend_end))
+        try:
+            from openpyxl.chart.data_source import DataSource as _DS, StrRef as _SR
+            dc.series[0].cat = _DS(strRef=_SR(
+                f=f"'{ws.title}'!$B${trend_start}:$B${trend_end}"))
+        except Exception:
+            pass
+        try:
+            s = dc.series[0]
+            s.title = SeriesLabel(v="Dedup Ratio")
+            s.graphicalProperties.line.solidFill = "7030A0"   # purple
+            s.graphicalProperties.line.width     = 18000
+            s.marker.symbol  = "circle"
+            s.marker.size    = 5
+            s.marker.graphicalProperties.solidFill        = "7030A0"
+            s.marker.graphicalProperties.line.solidFill   = "7030A0"
+        except (IndexError, AttributeError):
+            pass
+        ws.add_chart(dc, f"I{trend_start}")
+
+        # ── I/O throughput chart ───────────────────────────────────────────────
+        ic = LineChart()
+        ic.style  = 10
+        ic.height = 14
+        ic.width  = 26
+        try:
+            from openpyxl.chart.title import Title as _CT2
+            from openpyxl.drawing.text import (RichTextBodyProperties as _BP2,
+                Paragraph as _Par2, RegularTextRun as _Ru2, RunProperties as _RP2)
+            from openpyxl.chart.text import RichText as _CRT2, Text as _CTx2
+            _t2 = _CT2(); _t2.overlay = False
+            _r3 = _CRT2(); _r3.bodyPr = _BP2()
+            _p2 = _Par2(); _ru2 = _Ru2()
+            _ru2.t = f"{cd['name']} — Daily I/O Throughput (GB)"
+            _ru2.rPr = _RP2(sz=1200, b=True)
+            _p2.r.append(_ru2); _r3.p.append(_p2); _t2.tx = _CTx2(rich=_r3)
+            ic.title = _t2
+        except Exception:
+            ic.title = f"{cd['name']} — Daily I/O Throughput"
+
+        ic.y_axis.title         = "GB / day"
+        ic.y_axis.numFmt        = "0.0"
+        ic.y_axis.majorTickMark = "out"
+        ic.y_axis.tickLblPos    = "nextTo"
+        ic.y_axis.delete        = False
+        ic.x_axis.title         = "Date"
+        ic.x_axis.majorTickMark = "out"
+        ic.x_axis.tickLblPos    = "low"
+        ic.x_axis.delete        = False
+        if n_days > 14:
+            ic.x_axis.tickLblSkip = 2
+
+        ic.add_data(Reference(ws, min_col=6, min_row=trend_start, max_row=trend_end))
+        ic.add_data(Reference(ws, min_col=7, min_row=trend_start, max_row=trend_end))
+        try:
+            from openpyxl.chart.data_source import DataSource as _DS3, StrRef as _SR3
+            _cat_f = f"'{ws.title}'!$B${trend_start}:$B${trend_end}"
+            for _si in range(2):
+                ic.series[_si].cat = _DS3(strRef=_SR3(f=_cat_f))
+        except Exception:
+            pass
+        try:
+            ic.series[0].title = SeriesLabel(v="Read GB/day")
+            ic.series[0].graphicalProperties.line.solidFill = "0070C0"
+            ic.series[0].graphicalProperties.line.width     = 18000
+            ic.series[0].marker.symbol = "circle"
+            ic.series[0].marker.size   = 5
+            ic.series[0].marker.graphicalProperties.solidFill      = "0070C0"
+            ic.series[0].marker.graphicalProperties.line.solidFill = "0070C0"
+            ic.series[1].title = SeriesLabel(v="Write GB/day")
+            ic.series[1].graphicalProperties.line.solidFill = "FF4500"
+            ic.series[1].graphicalProperties.line.width     = 18000
+            ic.series[1].marker.symbol = "diamond"
+            ic.series[1].marker.size   = 5
+            ic.series[1].marker.graphicalProperties.solidFill      = "FF4500"
+            ic.series[1].marker.graphicalProperties.line.solidFill = "FF4500"
+        except (IndexError, AttributeError):
+            pass
+        try:
+            from openpyxl.chart.legend import Legend as _CL2
+            ic.legend = _CL2(); ic.legend.position = "b"
+        except Exception:
+            pass
+        ws.add_chart(ic, f"I{trend_start + 28}")
+
+    auto_fit_columns(ws)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8260,6 +8809,12 @@ def _sheet_guide(wb, all_data):
                                    "categorized by type with high-risk events highlighted"),
         ("DataLock Verification",  "Snapshot-level DataLock verification: checks actual worm/immutability status on recent "
                                    "snapshots for groups with DataLock policies — flags NOT LOCKED (red) vs VERIFIED (green)"),
+        ("AD / Identity Health",   "Active Directory domain connection status (Connected/Disconnected) with preferred DC; "
+                                   "LDAP provider status, server, port, base DN — flags disconnected identity sources in red"),
+        ("Certificate Inventory",  "Full TLS certificate inventory: name, type, subject, issuer, issued/expiry dates, "
+                                   "days remaining — CRITICAL (red) if <30 days, HIGH (amber) if <90 days, OK (green) otherwise"),
+        ("Capacity & Perf Trends", "30-day dedup ratio trend (sudden drop = ransomware indicator — data becoming incompressible) "
+                                   "and daily I/O throughput (read/write GB per day) with embedded line charts per cluster"),
     ]
     for i, (name, desc) in enumerate(sheets_info, 1):
         bg = LIGHT_GRAY if i % 2 == 0 else None
@@ -8795,7 +9350,10 @@ def write_excel(all_data, args):
     _sheet_recommendations(wb, all_data)   # 22
     _sheet_risk_heatmap(wb, all_data)      # 23
     _sheet_audit_log(wb, all_data)         # 24
-    _sheet_datalock_verification(wb, all_data)  # 25 NEW (after Policy Audit area)
+    _sheet_datalock_verification(wb, all_data)  # 25
+    _sheet_ad_identity(wb, all_data)       # 26 NEW
+    _sheet_cert_inventory(wb, all_data)    # 27 NEW
+    _sheet_perf_trends(wb, all_data)       # 28 NEW
 
     out = f"{args.output}.xlsx"
     wb.save(out)

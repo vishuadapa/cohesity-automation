@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.64**
+**Current version: 1.65**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **25-tab Excel workbook** (Guide + 24 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **28-tab Excel workbook** (Guide + 27 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,7 +10,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (25 tabs)
+### Excel Workbook (28 tabs)
 
 | # | Sheet | Contents |
 |---|-------|----------|
@@ -39,7 +39,10 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 22 | Trends (30d) | Daily backup success rate + **Avg Duration (min)** column; dual line charts (success rate + duration trend) |
 | 23 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
 | 24 | **Workload Risk Heatmap** | All protection groups scored 0–100 by recovery risk (last-run status 35pts, SLA 25pts, RPO gap 25pts, DataLock 15pts); sorted worst-first with full-row RAG coloring |
-| 25 | **Audit Log** | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red |
+| 25 | **Audit Log** | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable message if API key lacks audit-log permission (HTTP 403) |
+| 26 | **AD / Identity Health** | Active Directory domain connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected identity sources highlighted red |
+| 27 | **Certificate Inventory** | Full TLS certificate inventory: name, type, subject, issuer, issued/expiry dates, days remaining — CRITICAL (<30d), HIGH (<90d), OK |
+| 28 | **Capacity & Perf Trends** | 30-day dedup ratio trend (ransomware indicator — sudden drop = data incompressible) and daily read/write I/O throughput (GB/day) with embedded line charts |
 
 ### Word Document
 
@@ -253,6 +256,11 @@ The engine evaluates all collected data and generates a prioritized finding list
 | `GET /irisservices/api/v1/public/kmsConfig` | KMS / encryption key management configuration — type, server, status (Security sheet) |
 | `GET /irisservices/api/v1/public/roles` | All role definitions (built-in and custom) — privilege sets and risk analysis (User Security sheet) |
 | `GET /v2/data-protect/snapshots` | Per-group snapshot DataLock verification — up to 5 snapshots × 20 groups per cluster (DataLock Verification sheet) |
+| `GET /irisservices/api/v1/public/activeDirectory` | Active Directory domain list with connection status and preferred DCs (AD / Identity Health sheet) |
+| `GET /irisservices/api/v1/public/ldapProvider` | LDAP provider list with status, server, port, base DN (AD / Identity Health sheet) |
+| `GET /irisservices/api/v1/public/certificates` | Full TLS certificate inventory — all cert types with expiry dates (Certificate Inventory sheet) |
+| `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (kLogicalCapacityBytes) | 30-day logical capacity time series for dedup ratio computation (Capacity & Perf Trends sheet) |
+| `GET /irisservices/api/v1/public/statistics/timeSeriesStats` (kNumBytesRead / kNumBytesWritten) | 30-day daily I/O throughput time series (Capacity & Perf Trends sheet) |
 
 ---
 
@@ -273,6 +281,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.65 | 2026-04-21 | feat: AD/LDAP identity health sheet; full certificate inventory sheet with expiry RAG; Capacity & Perf Trends sheet (dedup ratio + I/O throughput charts); audit log 403 now surfaces actionable permission message; cert-expiry and AD/LDAP-disconnect recommendations added. Sheet count 25 → 28. |
 | 1.64 | 2026-04-21 | feat: 4 new API-backed features — **Recovery Audit sheet** (`/v2/data-protect/recoveries`): per-recovery status/duration/type with days-since-last-recovery RAG; **DataLock Verification sheet** (`/v2/data-protect/snapshots`): snapshot-level VERIFIED/PARTIAL/NOT LOCKED per DataLock group; **KMS section** in Security sheet (`/v1/public/kmsConfig`): key management type and risk; **Custom Role Definitions** in User Security (`/v1/public/roles`): privilege analysis with cluster/user/security-modify flags. Sheet count 23 → 25. CRITICAL recommendation if DataLock policy set but snapshots not locked. HIGH if no recovery in lookback window. |
 | 1.63 | 2026-04-21 | feat: 9 security & recoverability analytics using existing collected data — Risk Flag column (Stale Admin / Admin No MFA / Locked Admin) in User Security; Data Exposure sheet (NAS SMB/NFS/S3 risk); Security & Anomaly Alerts sub-section in Security sheet; Node SW Version Match column with MISMATCH flag; Cluster Fault Tolerance margin column; FortKnox Last Archival date + Days Since Transfer columns; Replication Lag (hrs) column; Unprotected Objects sheet with named object list; Avg Duration (min) column + duration trend chart in Trends. Sheet count 21 → 23. |
 | 1.62 | 2026-04-17 | fix(security): Input validation and credential hygiene. `--days` bounded 1–3650; `--cluster-host` validated as hostname/IPv4; `--output` rejected if path contains `..` traversal; `--ca-bundle` existence check added. `--password` / `--mfa-code` print a process-list exposure warning when used on the CLI. Raw API response bodies (`r.text[:N]`) removed from auth error messages — HTTP status only — to prevent token/credential leakage to terminal history and CI logs. `cohesity_auth.py` v1.7 — same error-message scrub. |
