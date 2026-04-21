@@ -25,6 +25,16 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.22 (2026-04-21) — Removed Remote Storage Consumed (TiB). Reordered
+                     columns so all Bytes values are grouped together
+                     (Remote Storage Consumed, Data Read, Data Written,
+                     Logical Transferred, Physical Transferred) followed
+                     by their TB equivalents in the same order. Added a
+                     Notes section to the About tab explaining that Data
+                     Read/Written reflect local cluster backup activity
+                     while Logical/Physical Transferred reflect remote
+                     FortKnox vault activity, and that the equivalent
+                     Helios report is the Protection Activities Report.
   4.21 (2026-04-21) — Renamed Storage Consumed columns to Remote Storage
                      Consumed to clarify they reflect vault (remote) storage.
                      Added TB (÷ 1e12, 4 dp) companion columns for all four
@@ -226,7 +236,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.21"
+__version__ = "4.22"
 
 import argparse
 import getpass
@@ -617,7 +627,6 @@ def get_data_transfer_report(api_key: str, cluster_id: int, cluster_name: str,
                 "protection_group":       job.get("protectionJobName", ""),
                 "storage_consumed_bytes": consumed_bytes,
                 "storage_consumed_tb":    round(consumed_bytes / 1_000_000_000_000, 4),
-                "storage_consumed_tib":   round(consumed_bytes / 1_099_511_627_776, 4),
             })
     return rows
 
@@ -719,17 +728,17 @@ COLUMNS = [
     ("Vault Name",                            "vault_name"),
     ("Vault Type",                            "vault_type"),
     ("Protection Group",                      "protection_group"),
+    # --- Bytes group ---
     ("Remote Storage Consumed (Bytes)",              "storage_consumed_bytes"),
-    ("Remote Storage Consumed (TB)",                 "storage_consumed_tb"),
-    ("Remote Storage Consumed (TiB)",                "storage_consumed_tib"),
-    # --- Protection Activities (cloud vault filter) ---
     ("Activities: Data Read (Bytes)",                "act_data_read"),
-    ("Activities: Data Read (TB)",                   "act_data_read_tb"),
     ("Activities: Data Written (Bytes)",             "act_data_written"),
-    ("Activities: Data Written (TB)",                "act_data_written_tb"),
     ("Activities: Logical Transferred (Bytes)",      "act_logical"),
-    ("Activities: Logical Transferred (TB)",         "act_logical_tb"),
     ("Activities: Physical Transferred (Bytes)",     "act_physical"),
+    # --- TB group ---
+    ("Remote Storage Consumed (TB)",                 "storage_consumed_tb"),
+    ("Activities: Data Read (TB)",                   "act_data_read_tb"),
+    ("Activities: Data Written (TB)",                "act_data_written_tb"),
+    ("Activities: Logical Transferred (TB)",         "act_logical_tb"),
     ("Activities: Physical Transferred (TB)",        "act_physical_tb"),
 ]
 
@@ -742,15 +751,14 @@ _COLUMN_SOURCE = {
     "vault_type":             "dataTransferToVaults",
     "protection_group":       "dataTransferToVaults",
     "storage_consumed_bytes": "dataTransferToVaults",
-    "storage_consumed_tb":    "Computed",
-    "storage_consumed_tib":   "Computed",
     "act_data_read":          "Protection Activities",
-    "act_data_read_tb":       "Computed",
     "act_data_written":       "Protection Activities",
-    "act_data_written_tb":    "Computed",
     "act_logical":            "Protection Activities",
-    "act_logical_tb":         "Computed",
     "act_physical":           "Protection Activities",
+    "storage_consumed_tb":    "Computed",
+    "act_data_read_tb":       "Computed",
+    "act_data_written_tb":    "Computed",
+    "act_logical_tb":         "Computed",
     "act_physical_tb":        "Computed",
 }
 
@@ -956,54 +964,50 @@ _FIELD_REF = [
      "Name of the protection job/group",
      "dataTransferSummary[].dataTransferPerProtectionJob[].protectionJobName",
      "GET /public/reports/dataTransferToVaults"),
+    # --- Bytes group ---
     ("Remote Storage Consumed (Bytes)",
      "Total retained bytes in the remote (FortKnox) vault for this protection "
      "group across all snapshots (cumulative — not scoped to the query window). "
      "Matches Helios UI.",
      "dataTransferSummary[].dataTransferPerProtectionJob[].storageConsumed",
      "GET /public/reports/dataTransferToVaults"),
+    ("Activities: Data Read (Bytes)",
+     "Bytes read from the backup source during the Backup activity (data sent "
+     "to the local cluster), keyed by backup start date.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesRead",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Data Written (Bytes)",
+     "Bytes written to local storage during the Backup activity (data sent "
+     "to the local cluster), keyed by backup start date.",
+     "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Logical Transferred (Bytes)",
+     "Logical bytes transferred to the remote FortKnox vault target across all "
+     "qualifying archival copy runs.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Physical Transferred (Bytes)",
+     "Physical (post-dedup/compression) bytes transferred to the remote FortKnox "
+     "vault target. Summed from per-run archival target stats.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred",
+     "GET /v2/data-protect/protection-groups/{id}/runs"),
+    # --- TB group ---
     ("Remote Storage Consumed (TB)",
      "Remote Storage Consumed ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
      "—"),
-    ("Remote Storage Consumed (TiB)",
-     "Remote Storage Consumed ÷ 1,099,511,627,776  (binary tebibytes, 4 dp). "
-     "Matches the unit shown in the Helios UI.",
-     "Computed",
-     "—"),
-    # --- Activities columns ---
-    ("Activities: Data Read (Bytes)",
-     "Bytes read from the backup source during the Backup activity, keyed by "
-     "the backup start date. Collected independently of vault activity.",
-     "runs[].localBackupInfo.localSnapshotStats.bytesRead",
-     "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Data Read (TB)",
      "Activities: Data Read ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
      "—"),
-    ("Activities: Data Written (Bytes)",
-     "Bytes written to local storage during the Backup activity, keyed by the "
-     "backup start date.",
-     "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
-     "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Data Written (TB)",
      "Activities: Data Written ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
      "—"),
-    ("Activities: Logical Transferred (Bytes)",
-     "Logical bytes transferred to the FortKnox cloud vault target across all "
-     "qualifying archival copy runs. Summed from per-run archival target stats.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred",
-     "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Logical Transferred (TB)",
      "Activities: Logical Transferred ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
      "—"),
-    ("Activities: Physical Transferred (Bytes)",
-     "Physical (post-dedup/compression) bytes transferred to the FortKnox "
-     "cloud vault target. Summed from per-run archival target stats.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred",
-     "GET /v2/data-protect/protection-groups/{id}/runs"),
     ("Activities: Physical Transferred (TB)",
      "Activities: Physical Transferred ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
@@ -1113,6 +1117,22 @@ def _sheet_about(wb, meta: dict):
         ws.cell(_row, 3, source)
         ws.cell(_row, 4, api)
         _row += 1
+
+    _section("Notes")
+    note = (
+        "Activities: Data Read and Data Written show data sent to the local cluster "
+        "(Backup activity — localSnapshotStats). "
+        "Activities: Logical Transferred and Physical Transferred show data sent to the "
+        "remote FortKnox vault (Vault activity — archivalTargetResults). "
+        "The equivalent report on the Helios UI is the Protection Activities Report, "
+        "filtered to Activity Type = Backup (for Data Read/Written) and Activity Type = "
+        "Vault (for Logical/Physical Transferred), with the Cloud Vault filter applied."
+    )
+    ws.cell(_row, 1, note)
+    ws.merge_cells(f"A{_row}:D{_row}")
+    ws.cell(_row, 1).alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[_row].height = 60
+    _row += 1
 
     _section("APIs Used")
     _header_row(["Type", "Endpoint", "Routing", "Purpose"])
