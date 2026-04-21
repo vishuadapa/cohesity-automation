@@ -173,6 +173,118 @@ See [health_check/health_check_report.md](health_check/health_check_report.md) f
 
 ---
 
+## FortKnox Vault Report
+
+> Per-protection-group FortKnox (RPaaS) vault reporting script. Connects to Helios, iterates every connected cluster, and produces a **multi-tab Excel workbook** with a data report, trend charts, and a built-in About tab explaining every field and API used.
+
+### What it produces
+
+| Output | Description |
+|--------|-------------|
+| **About tab** | Command run, report parameters, full field reference (name, description, source field path, API endpoint), APIs used table, and a Notes section explaining local vs. vault activity fields |
+| **Report tab** | One row per protection group per vault. Source-banner row groups columns by originating API. Columns frozen at row 3. |
+| **Chart tabs** | One line-chart sheet per cluster (trend mode only) showing Remote Storage Consumed (TB) over time, one series per protection group |
+
+### Report columns
+
+All Bytes values are grouped together, followed by TB equivalents in the same order:
+
+| Column | Source | Notes |
+|--------|--------|-------|
+| Period Start / Period End | Computed | Date range covered by this row |
+| Cluster | Helios MCM | Cluster name |
+| Vault Name | dataTransferToVaults | FortKnox vault name |
+| Vault Type | dataTransferToVaults | e.g. kFortKnox, kRPaaS |
+| Protection Group | dataTransferToVaults | Protection job name |
+| **Remote Storage Consumed (Bytes)** | dataTransferToVaults | Total retained bytes in the vault — cumulative, not windowed |
+| **Activities: Data Read (Bytes)** | Protection Activities | Data read from source during Backup activity — sent to **local cluster** |
+| **Activities: Data Written (Bytes)** | Protection Activities | Data written to local storage during Backup activity — sent to **local cluster** |
+| **Activities: Logical Transferred (Bytes)** | Protection Activities | Logical bytes sent to the **remote FortKnox vault** (Vault activity) |
+| **Activities: Physical Transferred (Bytes)** | Protection Activities | Physical (post-dedup/compress) bytes sent to the **remote FortKnox vault** |
+| Remote Storage Consumed (TB) | Computed | ÷ 1,000,000,000,000 |
+| Activities: Data Read (TB) | Computed | ÷ 1,000,000,000,000 |
+| Activities: Data Written (TB) | Computed | ÷ 1,000,000,000,000 |
+| Activities: Logical Transferred (TB) | Computed | ÷ 1,000,000,000,000 |
+| Activities: Physical Transferred (TB) | Computed | ÷ 1,000,000,000,000 |
+
+> **Note**: Data Read / Data Written reflect the Protection Activities report **Activity Type = Backup** (local cluster). Logical / Physical Transferred reflect **Activity Type = Vault** (remote FortKnox). This is equivalent to the **Protection Activities Report** on Helios, filtered to cloud vault (FortKnox).
+
+### APIs used
+
+| API | Endpoint | Purpose |
+|-----|----------|---------|
+| Helios MCM | `GET /mcm/clusters/connectionStatus` | List all connected clusters |
+| Cluster v1 | `GET /public/cluster` | Detect cluster timezone |
+| Cluster v1 | `GET /public/vaults?includeFortKnoxVault=true` | Fetch FortKnox vault IDs and names |
+| Cluster v1 | `GET /public/reports/dataTransferToVaults` | Storage consumed per protection group (cumulative) |
+| Cluster v2 | `GET /v2/data-protect/protection-groups` | List protection groups to resolve group IDs |
+| Cluster v2 | `GET /v2/data-protect/protection-groups/{id}/runs` | Per-run backup and archival stats for Activities columns |
+
+All cluster API calls are routed via the Helios proxy using the `accessClusterId` header — a single Helios API key is all that is required.
+
+### Prerequisites
+
+```bash
+pip install requests openpyxl keyring
+```
+
+| Package | Required? | Purpose |
+|---------|-----------|---------|
+| `requests` | **Yes** | HTTP client |
+| `openpyxl` | **Yes** | Excel workbook output |
+| `keyring` | Optional | Store API key in OS keychain between runs |
+
+### Usage
+
+```bash
+# First run — prompts for API key, saves to keychain
+python3 reporting/fortknox_vault_report.py
+
+# Summary report — last 30 days, all clusters
+python3 reporting/fortknox_vault_report.py --days 30
+
+# Trend mode — one row per day per group, with charts
+python3 reporting/fortknox_vault_report.py --mode trend --days 30
+
+# Specific date range, single cluster
+python3 reporting/fortknox_vault_report.py --start 2026-03-01 --end 2026-03-31 --cluster prod-east
+
+# Corporate proxy with custom CA cert
+python3 reporting/fortknox_vault_report.py --ca-bundle /path/to/ca.pem
+
+# Remove stored API key
+python3 reporting/fortknox_vault_report.py --clear-credentials
+```
+
+### All options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--apikey KEY` | keychain / prompted | Helios API key |
+| `--clear-credentials` | off | Remove stored key from OS keychain and exit |
+| `--cluster NAME` | all | Filter to one cluster (partial name match) |
+| `--vault NAME` | all | Filter to one vault (partial name match) |
+| `--mode` | `summary` | `summary`: one row per group for the full range. `trend`: one row per group per day with charts |
+| `--days N` | 7 | Last N days |
+| `--start YYYY-MM-DD` | — | Start date (inclusive) |
+| `--end YYYY-MM-DD` | today | End date (inclusive) |
+| `--start-msecs MS` | — | Exact start timestamp in milliseconds |
+| `--end-msecs MS` | — | Exact end timestamp in milliseconds |
+| `--output PATH` | auto-generated | Output `.xlsx` path |
+| `--ca-bundle PATH` | system bundle | CA cert for corporate proxy or self-signed cluster |
+| `--insecure` | off | Disable TLS verification (prints warning) |
+| `--debug` | off | Print raw API response samples and request URLs |
+
+### Output filename
+
+Auto-generated with version and timestamp:
+
+```
+fortknox_vault_report_v4.22_20260421_143000.xlsx
+```
+
+---
+
 ## Repository Structure
 
 | Folder | Purpose |
@@ -239,7 +351,9 @@ python3 health_check/health_check_report.py --apikey <key> --quick --excel-only
 ### Reporting
 ```bash
 python3 reporting/protection_group_report.py --days 7
+python3 reporting/fortknox_vault_report.py --days 30
 python3 reporting/fortknox_vault_report.py --mode trend --days 30
+python3 reporting/fortknox_vault_report.py --start 2026-03-01 --end 2026-03-31 --cluster prod-east
 ```
 
 ### Alerts

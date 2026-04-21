@@ -7,6 +7,135 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-21] feat(reporting): fortknox_vault_report v4.22 — remove TiB, group Bytes/TB columns, About Notes
+
+### Changed — `reporting/fortknox_vault_report.py`
+- **Removed** `Remote Storage Consumed (TiB)` column.
+- **Column grouping**: all Bytes values now grouped together (Remote Storage Consumed, Data Read, Data Written, Logical Transferred, Physical Transferred), followed by the same five fields in TB — making side-by-side comparison straightforward.
+- **About tab — Notes section** added between Report Fields and APIs Used:
+  > "Activities: Data Read and Data Written show data sent to the **local cluster** (Backup activity). Activities: Logical Transferred and Physical Transferred show data sent to the **remote FortKnox vault** (Vault activity). The equivalent report on the Helios UI is the **Protection Activities Report**, filtered to Activity Type = Backup (for Data Read/Written) and Activity Type = Vault (for Logical/Physical Transferred), with the Cloud Vault filter applied."
+- About tab field reference updated to match new column order.
+
+---
+
+## [2026-04-21] feat(reporting): fortknox_vault_report v4.21 — rename Storage Consumed → Remote; add Activities TB columns
+
+### Changed — `reporting/fortknox_vault_report.py`
+- **Renamed** `Storage Consumed (Bytes/TB/TiB)` → `Remote Storage Consumed (Bytes/TB/TiB)` to clarify these values reflect remote vault (FortKnox) storage, not local cluster storage.
+- **Added TB companion columns** (÷ 1,000,000,000,000, 4 dp) for all four Activities fields, interleaved after each Bytes column: `Activities: Data Read (TB)`, `Activities: Data Written (TB)`, `Activities: Logical Transferred (TB)`, `Activities: Physical Transferred (TB)`.
+- Source banner in the Report sheet shows `Computed` for all TB columns; About tab field reference updated.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.20 — remove Logical/Physical Transferred columns and protectionRuns API
+
+### Removed — `reporting/fortknox_vault_report.py`
+- **Columns G and H** (`Logical Transferred (Bytes)` and `Physical Transferred (Bytes)`) and their data source `GET /public/protectionRuns`.
+- `get_protection_runs_transfer()` function and all callers in summary and trend modes.
+- `vault_id` from row dicts (was only used for protectionRuns matching).
+- Two `_FIELD_REF` entries and the `protectionRuns` `_API_REF` entry from the About tab.
+
+---
+
+## [2026-04-20] fix(reporting): fortknox_vault_report v4.19 — paginate protection runs to fix 10-day data limit
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- **Activities data cut off after ~10 days**: The v2 `/data-protect/protection-groups/{id}/runs` endpoint caps results to a small server-side page (typically 10 runs) regardless of `numRuns`. `get_activities_transfer()` now loops using `paginationCookie` until no further cookie is returned.
+- **Protection runs data cut off after ~10 days**: `get_protection_runs_transfer()` (v1 API) now uses time-based pagination — fetches pages of 1,000 runs descending by time, advancing `endTimeUsecs` to one microsecond before the earliest run on the previous page until a partial page or the start boundary is reached.
+- `--debug` now prints total run counts for both paths to confirm all pages are fetched.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.18 — standardise all fills to #70AD47
+
+### Changed — `reporting/fortknox_vault_report.py`
+- All green bar fills in the About tab (title, section headers, table headers) and the Report tab (source-banner row, column-header row) changed to `#70AD47`.
+
+---
+
+## [2026-04-20] fix(reporting): fortknox_vault_report v4.17 — collect Backup and Vault activities independently by date
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- **Data Read / Data Written date alignment**: Backup and Vault are separate run entries in the Protection Activities API — a backup-only run has `localBackupInfo` but no `archivalInfo`; a vault-only run has `archivalInfo` but no `localBackupInfo`. The prior implementation tried to combine them from a single run object, leaving Data Read/Written empty on days where only vault activity was recorded. Rewrote `get_activities_transfer()` to collect backup stats by backup start date and vault stats by vault start date independently, then merge results by `(group, date)`. On most days all four fields populate the same row; on days where only one activity type runs the other pair is 0.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.15 — source-banner row on Report tab; About tab color unification
+
+### Added — `reporting/fortknox_vault_report.py`
+- **Source-banner row** (row 1 of the Report sheet): merged cells spanning each consecutive group of same-source columns, labelled with the originating API or `Computed`. Column headers moved to row 2; data starts at row 3; both rows frozen.
+- About tab: all fills unified to `#70AD47`; section labels use the same green bar style as the title.
+
+---
+
+## [2026-04-20] fix(reporting): fortknox_vault_report v4.14 — Activities Logical/Physical Transferred always 0
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- **Wrong field names**: v2 API uses `logicalBytesTransferred` / `physicalBytesTransferred`, not `logicalTransferredBytes` / `physicalTransferredBytes`.
+- **Vault name match failures**: added `_FK_TARGET_TYPES` frozenset (`krpaas`, `kfortknox`, `kfort_knox`, `krpaasarchival` and plain equivalents) as a `targetType` fallback when vault name matching fails. `_xfer_bytes()` checks the `stats` sub-dict then the top-level of each `archivalTargetResult`.
+- `--debug` now prints raw `archivalTargetResult` keys and all `(targetName, targetType)` pairs observed for easy diagnosis.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.13 — Activities columns from Protection Activities report
+
+### Added — `reporting/fortknox_vault_report.py`
+- Four new columns sourced from the Protection Activities report, filtered to FortKnox cloud vault archival runs:
+  - `Activities: Data Read (Bytes)` — `localSnapshotStats.bytesRead` from Backup activity
+  - `Activities: Data Written (Bytes)` — `localSnapshotStats.bytesWritten` from Backup activity
+  - `Activities: Logical Transferred (Bytes)` — `archivalTargetResults[].stats.logicalBytesTransferred`
+  - `Activities: Physical Transferred (Bytes)` — `archivalTargetResults[].stats.physicalBytesTransferred`
+- Fetched via `GET /v2/data-protect/protection-groups/{id}/runs`; matched to FortKnox vaults by name, with `targetType` fallback. Summary mode aggregates all days per group; trend mode aligns per day.
+- `get_fortknox_vaults()` now returns `(ids, names)` tuple; `get_protection_group_map()` added.
+- Two new API entries added to the About sheet API reference table.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.12 — About tab with field reference and API table
+
+### Added — `reporting/fortknox_vault_report.py`
+- **About tab** (first sheet): command run, report parameters (version, mode, date range, cluster/vault filters, timezone), full field reference table (column name, description, source field path, API endpoint), and APIs Used table.
+- Output filename now includes the script version: `fortknox_vault_report_v4.12_YYYYMMDD_HHMMSS.xlsx`.
+
+---
+
+## [2026-04-20] feat(reporting): fortknox_vault_report v4.11 — TLS hardening; formula injection protection
+
+### Added — `reporting/fortknox_vault_report.py`
+- TLS verification enabled by default. `--ca-bundle PATH` accepts a corporate proxy CA certificate. `--insecure` disables verification with a startup warning.
+- `_safe_cell()` — prefixes any cell value starting with `=`, `+`, `-`, `@`, tab, or CR with a single quote to prevent Excel formula injection.
+
+---
+
+## [2026-04-07] fix(reporting): fortknox_vault_report v4.10 — fix blank Logical/Physical Transferred
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- Vault ID in `protectionRuns` copy-run is nested at `target.archivalTarget.vaultId`, not `target.vaultId`. The ID match always failed, leaving all Logical/Physical Transferred rows at 0.
+
+---
+
+## [2026-04-07] fix(reporting): fortknox_vault_report v4.9 — time-windowed Logical/Physical Transferred via protectionRuns
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- `numLogicalBytesTransferred` / `numPhysicalBytesTransferred` in `dataTransferPerProtectionJob` are cumulative lifetime totals — not scoped to the query window. Replaced with `GET /public/protectionRuns` per-run archival copy stats (`logicalBytesTransferred` / `physicalBytesTransferred`), which are inherently time-windowed. Only `kSuccess`/`kWarning` archival runs targeting FortKnox vault IDs are counted. In trend mode, runs are bucketed by calendar day so each row reflects only that day's transfers.
+
+---
+
+## [2026-04-07] feat(reporting): fortknox_vault_report v4.8 — Storage Consumed (TiB); calendar-day date boundaries
+
+### Added — `reporting/fortknox_vault_report.py`
+- `Storage Consumed (TiB)` column (÷ 1,099,511,627,776) alongside the existing TB column — matches the unit displayed in the Helios UI.
+- `--days` / default date range now snaps to `00:00:00` of the start day (calendar-day boundary) instead of a rolling window. End of day computed as `23:59:59.999` to include the full final second.
+
+---
+
+## [2026-04-06] fix(reporting): fortknox_vault_report v4.7 — fix x-axis dates not displaying on trend charts
+
+### Fixed — `reporting/fortknox_vault_report.py`
+- `openpyxl.set_categories()` emits `<c:numRef>` in chart XML; Excel treats string date values as invalid numbers and renders nothing. Fixed by assigning `DataSource(strRef=StrRef(f=...))` directly to each series' `.cat`, forcing `<c:strRef>` so Excel renders the date strings as text labels on the x-axis.
+
+---
+
 ## [2026-04-17] fix(health_check): security hardening — input validation and credential hygiene (v1.62)
 
 ### Security — `health_check/health_check_report.py` and `utils/cohesity_auth.py`
