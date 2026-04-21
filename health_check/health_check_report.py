@@ -1476,11 +1476,14 @@ def _recoveries(session, h, start_usecs, end_usecs, debug):
 
 
 def _kms_config(session, h, debug):
-    """Fetch KMS (Key Management Service) configuration."""
     d = _get(session, h,
              "/irisservices/api/v1/public/kmsConfig",
              debug=debug, silent=True)
-    return d or {}
+    if isinstance(d, dict):
+        return d
+    if isinstance(d, list) and d and isinstance(d[0], dict):
+        return d[0]
+    return {}
 
 
 def _roles(session, h, debug):
