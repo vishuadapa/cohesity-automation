@@ -7,6 +7,34 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-21] feat(health_check): v1.64 — recovery testing, KMS, custom roles, DataLock snapshot verification
+
+### Added — `health_check/health_check_report.py`
+- **Recovery Audit sheet** (new, #14): per-recovery rows from `GET /v2/data-protect/recoveries` — status, duration, type, objects recovered; cluster summary table with days-since-last-recovery RAG coloring. Recommendation: HIGH if no successful recovery found in the lookback window.
+- **DataLock Verification sheet** (new, #25): per-group snapshot-level DataLock check via `GET /v2/data-protect/snapshots` — VERIFIED / PARTIAL / NOT LOCKED status. Recommendation: CRITICAL if policy says DataLock but snapshots are not actually locked.
+- **Encryption Key Management section** in Security sheet: KMS type (Internal/External KMIP/AWS), server hostname, connectivity status, risk level. Fetched via `GET /irisservices/api/v1/public/kmsConfig`. Recommendation: MEDIUM if keys are stored internally.
+- **Custom Role Definitions section** in User Security sheet: per-role privilege analysis — cluster modify, user modify, security modify flags; risk level per role. Fetched via `GET /irisservices/api/v1/public/roles`. Recommendation: HIGH if any custom role has cluster or user modify privileges.
+- Four new API fetch functions: `_recoveries()`, `_kms_config()`, `_roles()`, `_snapshot_datalock()`.
+- `_sheet_guide()` updated; sheet count 22 → 25.
+
+---
+
+## [2026-04-21] feat(health_check): v1.63 — security & recoverability analytics (no new API calls)
+
+### Added — `health_check/health_check_report.py`
+- **Risk Flag column** in User Security sheet: per-user admin risk detection — Stale Admin (no login >30 days), Admin No MFA, Locked Admin. Amber fill for stale admins; red fill for admin-no-MFA. Recommendation: HIGH if stale privileged accounts found.
+- **Data Exposure sheet** (new, #17): NAS view exposure analysis — SMB discovery enabled, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW). Recommendation: HIGH if any open-discovery or uncontrolled-S3 views found.
+- **Security & Anomaly Alerts section** in Security sheet: counts of open `kSecurity`/`kDataSecurity` and `kAnomalousActivity`/`kAnomalyAlert` alerts, oldest unacknowledged age, newest event date.
+- **SW Version Match column** in Node Hardware sheet: compares each node's `nodeSoftwareVersion` against `clusterSoftwareVersion`; MISMATCH rows highlighted red. Recommendation: HIGH if any node version skew detected.
+- **Fault Tolerance column** in Infrastructure sheet: calculates RF2/RF3 tolerance margin; displays "OK (can lose N more)", "AT LIMIT", or "EXCEEDED". Recommendation: CRITICAL if margin ≤ 0.
+- **Last FK Archival / Days Since FK Transfer columns** in FortKnox Data Transfer sheet: days since last successful FortKnox archival per group; red >14 days, amber >7 days, green ≤7 days.
+- **Replication Lag (hrs) column** in Replication & Archive sheet: hours since last successful replication per target; green <24 h, amber 24–72 h, red >72 h.
+- **Unprotected Objects sheet** (new, #13): lists each source with unprotected object count and names where available; red if count >10, amber if count >0.
+- **Avg Duration (min) column** and second trend chart in Trends sheet: daily average backup job duration with a separate LineChart.
+- `_sheet_guide()` updated; sheet count 21 → 23 (22 → Data Exposure, Unprotected Objects added).
+
+---
+
 ## [2026-04-21] feat(reporting): fortknox_vault_report v4.22 — remove TiB, group Bytes/TB columns, About Notes
 
 ### Changed — `reporting/fortknox_vault_report.py`
