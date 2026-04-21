@@ -25,6 +25,13 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.21 (2026-04-21) — Renamed Storage Consumed columns to Remote Storage
+                     Consumed to clarify they reflect vault (remote) storage.
+                     Added TB (÷ 1e12, 4 dp) companion columns for all four
+                     Activities fields, interleaved after each Bytes column:
+                     Activities: Data Read (TB), Data Written (TB), Logical
+                     Transferred (TB), Physical Transferred (TB). About tab
+                     field reference updated accordingly.
   4.20 (2026-04-20) — Removed Logical Transferred (Bytes) and Physical
                      Transferred (Bytes) columns (formerly G and H). These
                      were sourced from GET /public/protectionRuns which is
@@ -219,7 +226,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.20"
+__version__ = "4.21"
 
 import argparse
 import getpass
@@ -712,14 +719,18 @@ COLUMNS = [
     ("Vault Name",                            "vault_name"),
     ("Vault Type",                            "vault_type"),
     ("Protection Group",                      "protection_group"),
-    ("Storage Consumed (Bytes)",              "storage_consumed_bytes"),
-    ("Storage Consumed (TB)",                 "storage_consumed_tb"),
-    ("Storage Consumed (TiB)",                "storage_consumed_tib"),
+    ("Remote Storage Consumed (Bytes)",              "storage_consumed_bytes"),
+    ("Remote Storage Consumed (TB)",                 "storage_consumed_tb"),
+    ("Remote Storage Consumed (TiB)",                "storage_consumed_tib"),
     # --- Protection Activities (cloud vault filter) ---
-    ("Activities: Data Read (Bytes)",         "act_data_read"),
-    ("Activities: Data Written (Bytes)",      "act_data_written"),
-    ("Activities: Logical Transferred (Bytes)",  "act_logical"),
-    ("Activities: Physical Transferred (Bytes)", "act_physical"),
+    ("Activities: Data Read (Bytes)",                "act_data_read"),
+    ("Activities: Data Read (TB)",                   "act_data_read_tb"),
+    ("Activities: Data Written (Bytes)",             "act_data_written"),
+    ("Activities: Data Written (TB)",                "act_data_written_tb"),
+    ("Activities: Logical Transferred (Bytes)",      "act_logical"),
+    ("Activities: Logical Transferred (TB)",         "act_logical_tb"),
+    ("Activities: Physical Transferred (Bytes)",     "act_physical"),
+    ("Activities: Physical Transferred (TB)",        "act_physical_tb"),
 ]
 
 # Source label for each column key — used to build the source-banner row in the Report sheet
@@ -734,9 +745,13 @@ _COLUMN_SOURCE = {
     "storage_consumed_tb":    "Computed",
     "storage_consumed_tib":   "Computed",
     "act_data_read":          "Protection Activities",
+    "act_data_read_tb":       "Computed",
     "act_data_written":       "Protection Activities",
+    "act_data_written_tb":    "Computed",
     "act_logical":            "Protection Activities",
+    "act_logical_tb":         "Computed",
     "act_physical":           "Protection Activities",
+    "act_physical_tb":        "Computed",
 }
 
 # Column index (1-based) of the TB column in the Report sheet — used by chart
@@ -791,7 +806,7 @@ def _make_chart(title: str, report_ws, series_list: list,
         chart.title = title
 
     # --- Y axis (value) ---
-    chart.y_axis.title        = "Storage Consumed (TB)"
+    chart.y_axis.title        = "Remote Storage Consumed (TB)"
     chart.y_axis.numFmt       = "0.000"
     chart.y_axis.majorTickMark = "out"
     chart.y_axis.tickLblPos   = "nextTo"
@@ -941,47 +956,58 @@ _FIELD_REF = [
      "Name of the protection job/group",
      "dataTransferSummary[].dataTransferPerProtectionJob[].protectionJobName",
      "GET /public/reports/dataTransferToVaults"),
-    ("Storage Consumed (Bytes)",
-     "Total retained bytes in the vault for this protection group across all "
-     "snapshots (cumulative — not scoped to the query window). Matches Helios UI.",
+    ("Remote Storage Consumed (Bytes)",
+     "Total retained bytes in the remote (FortKnox) vault for this protection "
+     "group across all snapshots (cumulative — not scoped to the query window). "
+     "Matches Helios UI.",
      "dataTransferSummary[].dataTransferPerProtectionJob[].storageConsumed",
      "GET /public/reports/dataTransferToVaults"),
-    ("Storage Consumed (TB)",
-     "Storage Consumed ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+    ("Remote Storage Consumed (TB)",
+     "Remote Storage Consumed ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
      "Computed",
      "—"),
-    ("Storage Consumed (TiB)",
-     "Storage Consumed ÷ 1,099,511,627,776  (binary tebibytes, 4 dp). "
+    ("Remote Storage Consumed (TiB)",
+     "Remote Storage Consumed ÷ 1,099,511,627,776  (binary tebibytes, 4 dp). "
      "Matches the unit shown in the Helios UI.",
      "Computed",
      "—"),
     # --- Activities columns ---
     ("Activities: Data Read (Bytes)",
      "Bytes read from the backup source during the Backup activity, keyed by "
-     "the backup start date. Collected independently of vault activity — on "
-     "days where both a backup and a vault archival run at roughly the same "
-     "time, all four Activities fields appear on the same row.",
+     "the backup start date. Collected independently of vault activity.",
      "runs[].localBackupInfo.localSnapshotStats.bytesRead",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Data Read (TB)",
+     "Activities: Data Read ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
     ("Activities: Data Written (Bytes)",
      "Bytes written to local storage during the Backup activity, keyed by the "
-     "backup start date. See Data Read for alignment notes.",
+     "backup start date.",
      "runs[].localBackupInfo.localSnapshotStats.bytesWritten",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Data Written (TB)",
+     "Activities: Data Written ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
     ("Activities: Logical Transferred (Bytes)",
      "Logical bytes transferred to the FortKnox cloud vault target across all "
-     "qualifying archival copy runs. Summed from per-run archival target stats. "
-     "Field checked at stats sub-object then top-level of archivalTargetResult.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred "
-     "(falls back to archivalTargetResult.logicalBytesTransferred)",
+     "qualifying archival copy runs. Summed from per-run archival target stats.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.logicalBytesTransferred",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Logical Transferred (TB)",
+     "Activities: Logical Transferred ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
     ("Activities: Physical Transferred (Bytes)",
      "Physical (post-dedup/compression) bytes transferred to the FortKnox "
-     "cloud vault target. Summed from per-run archival target stats. "
-     "Field checked at stats sub-object then top-level of archivalTargetResult.",
-     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred "
-     "(falls back to archivalTargetResult.physicalBytesTransferred)",
+     "cloud vault target. Summed from per-run archival target stats.",
+     "runs[].archivalInfo.archivalTargetResults[].stats.physicalBytesTransferred",
      "GET /v2/data-protect/protection-groups/{id}/runs"),
+    ("Activities: Physical Transferred (TB)",
+     "Activities: Physical Transferred ÷ 1,000,000,000,000  (decimal terabytes, 4 dp)",
+     "Computed",
+     "—"),
 ]
 
 _API_REF = [
@@ -1343,10 +1369,14 @@ def main():
     all_rows = []
 
     def _zero_act(r: dict):
-        r["act_data_read"]    = 0
-        r["act_data_written"] = 0
-        r["act_logical"]      = 0
-        r["act_physical"]     = 0
+        r["act_data_read"]       = 0
+        r["act_data_read_tb"]    = 0.0
+        r["act_data_written"]    = 0
+        r["act_data_written_tb"] = 0.0
+        r["act_logical"]         = 0
+        r["act_logical_tb"]      = 0.0
+        r["act_physical"]        = 0
+        r["act_physical_tb"]     = 0.0
 
     if args.mode == "summary":
         for cname, (cid, vault_ids, vault_names) in cluster_vault_ids.items():
@@ -1379,6 +1409,10 @@ def main():
                 act = act_by_group.get(r["protection_group"], {})
                 for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
                     r[k] = act.get(k, 0)
+                r["act_data_read_tb"]    = round(r["act_data_read"]    / 1e12, 4)
+                r["act_data_written_tb"] = round(r["act_data_written"] / 1e12, 4)
+                r["act_logical_tb"]      = round(r["act_logical"]      / 1e12, 4)
+                r["act_physical_tb"]     = round(r["act_physical"]     / 1e12, 4)
             print(f"  [{cname}] {len(rows)} row(s)")
             all_rows.extend(rows)
 
@@ -1405,6 +1439,10 @@ def main():
                     act = activities.get((r["protection_group"], date_str), {})
                     for k in ("act_data_read", "act_data_written", "act_logical", "act_physical"):
                         r[k] = act.get(k, 0)
+                    r["act_data_read_tb"]    = round(r["act_data_read"]    / 1e12, 4)
+                    r["act_data_written_tb"] = round(r["act_data_written"] / 1e12, 4)
+                    r["act_logical_tb"]      = round(r["act_logical"]      / 1e12, 4)
+                    r["act_physical_tb"]     = round(r["act_physical"]     / 1e12, 4)
                 print(f"    {date_str}: {len(rows)} row(s)")
                 all_rows.extend(rows)
 
