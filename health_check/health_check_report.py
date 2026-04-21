@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.51
+health_check_report.py  v1.64
 
-Multi-cluster Cohesity health check — 22-tab Excel workbook + Word document + comprehensive PowerPoint deck.
+Multi-cluster Cohesity health check — 25-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -26,18 +26,24 @@ cluster) and produces:
   8  Policy → Groups         — every group with the policy that governs it
   9  Alerts                  — open critical/warning with age
   10 Security                — expanded checklist: encryption, FIPS, audit log, MFA,
-                               NTP auth, tunnel, SSO, cert expiry, vault, FK, DataLock
+                               NTP auth, tunnel, SSO, cert expiry, vault, FK, DataLock,
+                               KMS sub-section
   11 Agent Health            — per-host agent version, status, upgradability
   12 Source Coverage         — registered sources with protected/unprotected counts
-  13 Replication/Archive     — targets, last transfer, FortKnox
-  14 FortKnox Data Transfer  — per-group transfer to external targets (30d full / 1d quick)
-  15 Data Services           — NAS views, quota utilization
-  16 Coverage Gaps           — groups with no recent successful backup
-  17 User Security           — user accounts, MFA, locked status, roles, last login
-  18 Trends (30d)            — daily success rate + storage growth charts
-  19 Recommendations         — prioritized action list
-  20 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
-  21 Audit Log               — 30-day configuration change summary and detail log
+  13 Unprotected Objects     — named unprotected objects per source
+  14 Recovery Audit          — recovery testing history, success rate, days since
+  15 Replication/Archive     — targets, last transfer, FortKnox
+  16 FortKnox Data Transfer  — per-group transfer to external targets (30d full / 1d quick)
+  17 Data Services           — NAS views, quota utilization
+  18 Data Exposure           — NAS share risk (SMB discovery, NFS open mount, S3)
+  19 Coverage Gaps           — groups with no recent successful backup
+  20 User Security           — user accounts, MFA, locked status, roles, last login,
+                               custom role definitions sub-section
+  21 Trends (30d)            — daily success rate + storage growth charts
+  22 Recommendations         — prioritized action list
+  23 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
+  24 Audit Log               — 30-day configuration change summary and detail log
+  25 DataLock Verification   — snapshot-level WORM confirmation for DataLock groups
   + Guide tab (first)        — sheet descriptions, scoring methodology, color legend
 
   Word document
@@ -87,6 +93,32 @@ Requirements
 
 Version history
 ───────────────
+  1.64 (2026-04-21) — feat(health_check): recovery testing, KMS, custom roles,
+                     DataLock snapshots. Four new data collections (recoveries,
+                     kmsConfig, roles, per-group snapshot DataLock check) added
+                     to collect_cluster(). New sheets: Recovery Audit (recovery
+                     task history, success rate, days-since-last-recovery) and
+                     DataLock Verification (snapshot-level WORM confirmation).
+                     Enhanced Security sheet with KMS sub-section (KMS type,
+                     server, risk). Enhanced User Security sheet with Custom Role
+                     Definitions sub-section (privilege counts, modify flags,
+                     risk level). Recommendations engine extended: no-recovery-
+                     test HIGH, internal-KMS MEDIUM, high-risk-custom-role HIGH,
+                     DataLock-not-applied CRITICAL. Guide tab updated for all
+                     new/modified sheets.
+  1.63 (2026-04-21) — feat(health_check): security & recoverability analytics
+                     (no new API calls). Nine new analytical features: stale
+                     privileged account risk flags in User Security sheet;
+                     NAS share exposure sheet (SMB discovery, NFS open mounts,
+                     S3, quota); security & anomaly alert sub-section in
+                     Security sheet; node software version skew column in Node
+                     Hardware sheet; cluster fault tolerance margin column in
+                     Infrastructure sheet; FortKnox transfer recency columns in
+                     FortKnox Data Transfer sheet; replication lag RPO column in
+                     Replication & Archive sheet; named unprotected objects
+                     sheet; average backup duration trend column + chart in
+                     Trends sheet. Recommendations engine extended with stale
+                     admin, NAS exposure, node skew, and fault tolerance checks.
   1.62 (2026-04-17) — fix(security): input validation and credential hygiene.
                      --days bounded 1–3650 (previously unchecked). --cluster-host
                      validated as hostname or IPv4 before first network call.
@@ -624,7 +656,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.62"
+__version__ = "1.64"
 
 import argparse
 import datetime
@@ -1433,6 +1465,61 @@ def _fetch_audit_log(session, h, days, debug):
     return []
 
 
+def _recoveries(session, h, start_usecs, end_usecs, debug):
+    """Fetch recovery tasks in the lookback window."""
+    d = _get(session, h, "/v2/data-protect/recoveries",
+             params={"startTimeUsecs": start_usecs,
+                     "endTimeUsecs":   end_usecs,
+                     "numRecoveries":  1000},
+             debug=debug, silent=True)
+    return (d.get("recoveries") if isinstance(d, dict) else None) or []
+
+
+def _kms_config(session, h, debug):
+    """Fetch KMS (Key Management Service) configuration."""
+    d = _get(session, h,
+             "/irisservices/api/v1/public/kmsConfig",
+             debug=debug, silent=True)
+    return d or {}
+
+
+def _roles(session, h, debug):
+    """Fetch all role definitions (built-in and custom)."""
+    d = _get(session, h,
+             "/irisservices/api/v1/public/roles",
+             debug=debug, silent=True)
+    if isinstance(d, list):
+        return d
+    return (d.get("roles") if isinstance(d, dict) else None) or []
+
+
+def _snapshot_datalock(session, h, groups, debug):
+    """Check actual DataLock status on recent snapshots for groups with DataLock policies.
+
+    Only queries groups that have a DataLock policy. Limited to 20 groups max
+    to avoid excessive API calls and timeouts.
+    """
+    results = []
+    queried = 0
+    for g in (groups or []):
+        if queried >= 20:
+            break
+        gid = g.get("id")
+        if not gid:
+            continue
+        d = _get(session, h,
+                 "/v2/data-protect/snapshots",
+                 params={"protectionGroupIds": gid,
+                         "maxCount": 5},
+                 debug=debug, silent=True)
+        snaps = (d.get("snapshots") if isinstance(d, dict) else None) or []
+        results.append({"group_id": gid,
+                        "group_name": g.get("name", ""),
+                        "snapshots": snaps})
+        queried += 1
+    return results
+
+
 def collect_cluster(session, api_key, cluster, args):
     """Collect all health-check data for one cluster. Returns a dict.
 
@@ -1456,7 +1543,8 @@ def collect_cluster(session, api_key, cluster, args):
     # ── Wave 1: all independent API calls in parallel ─────────────────────────
     print(f"  [{name}] fetching in parallel —")
     print(f"    infrastructure, nodes, alerts, groups, policies, storage, views,")
-    print(f"    vaults, run-summary, certs, agents, sources, users, IDPs, cap-trend, audit-log...",
+    print(f"    vaults, run-summary, certs, agents, sources, users, IDPs, cap-trend, audit-log,")
+    print(f"    recoveries, KMS config, roles...",
           end="", flush=True)
     with _ThreadPoolExecutor(max_workers=8) as _ex:
         _fut_info    = _ex.submit(_cluster_info,          session, h, dbg)
@@ -1476,6 +1564,9 @@ def collect_cluster(session, api_key, cluster, args):
         _fut_tenants = _ex.submit(_tenants,               session, h, dbg)
         _fut_capts   = _ex.submit(_capacity_timeseries,   session, h, cid, dbg)
         _fut_audit   = _ex.submit(_fetch_audit_log,       session, h, args.days, dbg)
+        _fut_recov   = _ex.submit(_recoveries,            session, h, start_usecs, end_usecs, dbg)
+        _fut_kms     = _ex.submit(_kms_config,            session, h, dbg)
+        _fut_roles   = _ex.submit(_roles,                 session, h, dbg)
 
         info         = _fut_info.result()
         nodes        = _fut_nodes.result()
@@ -1495,6 +1586,9 @@ def collect_cluster(session, api_key, cluster, args):
         tenants      = _fut_tenants.result()
         cap_ts       = _fut_capts.result()
         audit_events = _fut_audit.result()
+        recoveries   = _fut_recov.result()
+        kms          = _fut_kms.result()
+        roles        = _fut_roles.result()
     print(" done.")
 
     # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
@@ -1531,6 +1625,23 @@ def collect_cluster(session, api_key, cluster, args):
     policy_map   = {p.get("id"): p.get("name", "") for p in policies if p.get("id")}
     policy_by_id = {p.get("id"): p              for p in policies if p.get("id")}
 
+    # ── Wave 3: DataLock snapshot verification — per-group, serial ───────────
+    # Only query groups where the governing policy has DataLock configured.
+    _DL_GROUPS = [
+        g for g in groups
+        if g.get("id") and _policy_datalock_str(
+            policy_by_id.get(
+                g.get("policyId") or (g.get("policy") or {}).get("id") or "", {}
+            )
+        ) != "None"
+    ]
+    snapshot_dl = []
+    if _DL_GROUPS:
+        print(f"    DataLock snapshot verification for up to 20 of "
+              f"{len(_DL_GROUPS)} DataLock group(s)...", end="", flush=True)
+        snapshot_dl = _snapshot_datalock(session, h, _DL_GROUPS, dbg)
+        print(" done.")
+
     cd = {
         "name":        name,
         "id":          cid,
@@ -1563,6 +1674,10 @@ def collect_cluster(session, api_key, cluster, args):
         "quorum_enabled": cluster.get("quorum_enabled", False),
         "cap_timeseries": cap_ts,
         "audit_events":   audit_events,
+        "recoveries":     recoveries,
+        "kms":            kms,
+        "roles":          roles,
+        "snapshot_dl":    snapshot_dl,
     }
 
     # Pre-compute shared derived values — avoids repeated recalculation in
@@ -2520,6 +2635,9 @@ def _build_recommendations(cd):
             "Unprotected objects are unrecoverable in the event of loss or corruption"))
 
     # ── User security ─────────────────────────────────────────────────────────
+    import datetime as _dt_rec
+    _now_rec = _dt_rec.datetime.now(tz=_dt_rec.timezone.utc)
+    _STALE_DAYS_REC = 30
     admin_roles = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin"}
     users_no_mfa = [
         u.get("username", "?") for u in (cd.get("users") or [])
@@ -2536,6 +2654,90 @@ def _build_recommendations(cd):
             "Admin accounts without MFA are the most common ransomware entry point; "
             "a stolen credential gives full cluster access without MFA as a second factor"))
 
+    # ── Stale privileged accounts ─────────────────────────────────────────────
+    stale_admins = []
+    for u in (cd.get("users") or []):
+        if not isinstance(u, dict):
+            continue
+        user_roles_lower = {r.lower() for r in (u.get("roles") or [])}
+        is_admin_rec = bool(
+            user_roles_lower & {"cohesity_admin", "admin", "kadmin", "ksuperadmin",
+                                "super_admin", "cluster_admin"}
+            or any("admin" in r for r in user_roles_lower)
+        )
+        if not is_admin_rec:
+            continue
+        last_ms = u.get("lastLoginTimeMsecs") or u.get("lastLoginTime") or 0
+        if last_ms:
+            if last_ms > 1_000_000_000_000_000:
+                last_ms = last_ms // 1000
+            last_dt = _dt_rec.datetime.fromtimestamp(last_ms / 1000, tz=_dt_rec.timezone.utc)
+            stale = (_now_rec - last_dt).days > _STALE_DAYS_REC
+        else:
+            stale = True
+        if stale:
+            stale_admins.append(u.get("username", "?"))
+    if stale_admins:
+        examples = ", ".join(stale_admins[:3])
+        recs.append(_r("HIGH", "Security",
+            f"{len(stale_admins)} stale privileged account(s) — no login in >{_STALE_DAYS_REC} days: "
+            f"{examples}" + (" and more" if len(stale_admins) > 3 else ""),
+            "Disable or remove admin accounts that have not logged in recently; "
+            "review necessity and rotate credentials for retained accounts",
+            "Stale admin accounts are high-value targets — unused credentials with "
+            "admin privileges provide attackers full cluster access if compromised"))
+
+    # ── Node software version skew ────────────────────────────────────────────
+    cluster_sw = (cd["info"].get("clusterSoftwareVersion") or "").strip()
+    mismatched_nodes = [
+        n for n in cd["nodes"]
+        if (n.get("nodeSoftwareVersion") or "").strip() != cluster_sw
+        and (n.get("nodeSoftwareVersion") or "").strip()
+    ]
+    if mismatched_nodes:
+        recs.append(_r("HIGH", "Infrastructure",
+            f"{len(mismatched_nodes)} node(s) running a different software version than "
+            f"the cluster ({cluster_sw}) — version skew detected",
+            "Complete or re-run the cluster upgrade to bring all nodes to the same version; "
+            "check upgrade logs for stuck or failed nodes",
+            "Version skew indicates a partial or failed upgrade — cluster stability and "
+            "feature parity cannot be guaranteed until all nodes match"))
+
+    # ── Fault tolerance margin ────────────────────────────────────────────────
+    _total_nodes = len(cd["nodes"])
+    _healthy_nodes = sum(
+        1 for n in cd["nodes"]
+        if ((n.get("nodeStatus") or {}).get("overallStatus") == "kNormal"
+            or n.get("removalState") in (None, "kDontRemove"))
+    )
+    if _total_nodes > 0:
+        _tolerance = 2 if _total_nodes >= 6 else 1
+        _failed_n  = _total_nodes - _healthy_nodes
+        _margin    = _tolerance - _failed_n
+        if _margin <= 0:
+            recs.append(_r("CRITICAL", "Infrastructure",
+                f"Cluster fault tolerance {'exceeded' if _margin < 0 else 'at limit'} — "
+                f"{_failed_n} node(s) failed/unhealthy out of {_total_nodes} "
+                f"(tolerance: {_tolerance})",
+                "Restore failed nodes immediately; do not add workloads until "
+                "fault tolerance margin is restored",
+                "A further node failure will cause data unavailability or cluster outage"))
+
+    # ── NAS share exposure ────────────────────────────────────────────────────
+    high_risk_views = [
+        v for v in (cd.get("views") or [])
+        if v.get("enableSmbViewDiscovery") or
+           (v.get("nfsMountPaths") and v.get("enableNfsViewDiscovery"))
+    ]
+    if high_risk_views:
+        recs.append(_r("HIGH", "Security",
+            f"{len(high_risk_views)} NAS view(s) with open discovery or uncontrolled "
+            "S3 access — data exposure risk",
+            "Disable SMB view discovery and NFS open mount exposure on views that "
+            "do not require broad network visibility; enable quotas on all views",
+            "Views with open discovery are visible to all network users — unintended "
+            "data access and exfiltration risk increases significantly"))
+
     # ── Audit log ─────────────────────────────────────────────────────────────
     if not cd.get("audit_enabled"):
         recs.append(_r("MEDIUM", "Security",
@@ -2549,6 +2751,111 @@ def _build_recommendations(cd):
             "No SSO / IDP is configured",
             "Configure SAML or LDAP-based SSO for centralized identity management",
             "Without SSO, local accounts with individual passwords increase credential risk"))
+
+    # ── Recovery testing ─────────────────────────────────────────────────────
+    _recov_list = cd.get("recoveries") or []
+    _succ_recov = [
+        r for r in _recov_list
+        if any(s in (r.get("status") or "") for s in ("Succeeded", "kSuccess"))
+    ]
+    if not _recov_list:
+        recs.append(_r("HIGH", "Recoverability",
+            f"No recovery tasks found in the last {cd.get('days', 30)} days — "
+            "recoverability is unproven",
+            "Schedule a recovery test drill — test restore at least one critical workload "
+            "per month to verify recoverability",
+            "Without regular recovery testing, backup data integrity cannot be confirmed; "
+            "untested restores fail at the worst possible moment"))
+    elif not _succ_recov:
+        recs.append(_r("HIGH", "Recoverability",
+            f"No successful recovery found in the last {cd.get('days', 30)} days — "
+            "all recovery attempts failed or are in progress",
+            "Investigate failed recovery tasks and schedule a successful recovery test drill",
+            "Failed recoveries indicate restore procedures or backup data may be unreliable"))
+
+    # ── KMS configuration ─────────────────────────────────────────────────────
+    _kms = cd.get("kms") or {}
+    if _kms:
+        _kms_type = (_kms.get("serverType") or _kms.get("type") or "").lower()
+        if "internal" not in _kms_type and "builtin" not in _kms_type and "local" not in _kms_type:
+            pass  # External KMS configured — no recommendation needed
+        else:
+            recs.append(_r("MEDIUM", "Security",
+                "Encryption keys stored in internal KMS — no external key management configured",
+                "Consider deploying an external KMS (KMIP-compatible or AWS KMS) for "
+                "separation of duties between data custodian and key custodian",
+                "Internal KMS means the encryption keys reside on the same system as the "
+                "encrypted data — a compromised cluster admin can access both"))
+    else:
+        # Empty kms dict — internal or unknown
+        cluster_enc = (cd["info"].get("encryptionEnabled") or
+                       bool((cd["info"].get("encryptionConfig") or {}).get("encryptionEnabled")))
+        if cluster_enc:
+            recs.append(_r("MEDIUM", "Security",
+                "Encryption keys stored internally — consider external KMS (KMIP/AWS) "
+                "for separation of duties",
+                "Deploy a KMIP-compatible external key management server or AWS KMS and "
+                "configure it in Cohesity Security → Key Management",
+                "Internal key storage means a compromised cluster admin can access both "
+                "the encrypted data and the decryption keys"))
+
+    # ── Custom roles ──────────────────────────────────────────────────────────
+    _BUILTIN_ROLES = {"Admin", "Viewer", "BackupOperator", "BackupAdmin",
+                      "RestoreOperator", "ReplicationOperator",
+                      "COHESITY_ADMIN", "kAdmin", "kSuperAdmin"}
+    _custom_roles = [
+        r for r in (cd.get("roles") or [])
+        if (r.get("isCustomRole") or r.get("label") == "Custom"
+            or r.get("name") not in _BUILTIN_ROLES)
+        and r.get("name") not in _BUILTIN_ROLES
+    ]
+    _high_risk_roles = []
+    for _cr in _custom_roles:
+        _privs = [str(p) for p in (_cr.get("privileges") or _cr.get("permissions") or [])]
+        _privs_upper = " ".join(_privs).upper()
+        _has_cluster_mod = any(
+            "CLUSTER" in _p and any(x in _p for x in ("MODIFY", "CREATE", "DELETE"))
+            for _p in _privs_upper.split()
+        ) or ("CLUSTER" in _privs_upper and
+              any(x in _privs_upper for x in ("MODIFY", "CREATE", "DELETE")))
+        _has_user_mod = "USER" in _privs_upper and "MODIFY" in _privs_upper
+        if _has_cluster_mod or _has_user_mod:
+            _high_risk_roles.append(_cr.get("name", "?"))
+    if _high_risk_roles:
+        examples = ", ".join(_high_risk_roles[:3])
+        recs.append(_r("HIGH", "Security",
+            f"Custom roles with cluster or user modify privileges detected: {examples}"
+            + (" and more" if len(_high_risk_roles) > 3 else ""),
+            "Review all assignments of high-privilege custom roles; apply least-privilege "
+            "principle and remove unnecessary cluster or user modify permissions",
+            "Custom roles with modify privileges grant broad administrative capability — "
+            "if assigned to compromised accounts, full cluster control is at risk"))
+
+    # ── DataLock snapshot verification ────────────────────────────────────────
+    _dl_not_locked = []
+    for _entry in (cd.get("snapshot_dl") or []):
+        _snaps = _entry.get("snapshots") or []
+        if not _snaps:
+            continue
+        _locked_count = sum(
+            1 for _s in _snaps
+            if (_s.get("dataLockConstraints") or
+                (isinstance(_s.get("wormProperties"), dict) and
+                 _s["wormProperties"].get("isLocked")) or
+                _s.get("retentionType") in ("kCompliance", "kAdministrative"))
+        )
+        if _locked_count == 0:
+            _dl_not_locked.append(_entry.get("group_name", _entry.get("group_id", "?")))
+    if _dl_not_locked:
+        examples = ", ".join(_dl_not_locked[:3])
+        recs.append(_r("CRITICAL", "Data Protection",
+            f"DataLock policy configured but snapshots are not locked for "
+            f"{len(_dl_not_locked)} group(s): {examples}"
+            + (" and more" if len(_dl_not_locked) > 3 else ""),
+            "Investigate why DataLock is not being applied to snapshots — check policy "
+            "DataLock mode, cluster DataLock enablement, and StorageDomain WORM settings",
+            "Immutability protection is not in effect — backups that appear DataLocked "
+            "can still be deleted or modified, leaving no true indelible copy"))
 
     recs.sort(key=lambda x: _PRIORITY_ORDER.get(x["priority"], 99))
     return recs
@@ -2743,7 +3050,7 @@ def _sheet_infrastructure(wb, all_data):
     cols = ["Cluster", "Software Version", "SW Lifecycle Status", "SW EOS Date", "Days to EOS",
             "Cluster Type", "Cluster ID", "Node Count", "Healthy Nodes", "Disk Count",
             "Domain", "DNS Servers", "NTP Servers", "Timezone",
-            "Cluster Encryption", "SD Encryption", "Helios Status"]
+            "Cluster Encryption", "SD Encryption", "Helios Status", "Fault Tolerance"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -2786,6 +3093,23 @@ def _sheet_infrastructure(wb, all_data):
             domain = domain_raw
 
         sd_enc_str = ("Yes" if sd_enc is True else "No" if sd_enc is False else "N/A")
+
+        # Fault tolerance margin (col 18)
+        total_nodes = len(nodes)
+        if total_nodes > 0:
+            tolerance = 2 if total_nodes >= 6 else 1
+            failed_n  = total_nodes - healthy
+            margin    = tolerance - failed_n
+            if margin > 0:
+                ft_str = f"OK (can lose {margin} more)"
+            elif margin == 0:
+                ft_str = "AT LIMIT"
+            else:
+                ft_str = "EXCEEDED"
+        else:
+            ft_str  = "N/A"
+            margin  = 1   # default safe for coloring
+
         row = [cd["name"], sw_ver,
                sw_label, eos_date_str, days_to_eos,
                info.get("clusterType", ""), str(info.get("id", "")),
@@ -2793,7 +3117,7 @@ def _sheet_infrastructure(wb, all_data):
                domain, dns, ntp, info.get("timezone", ""),
                "Yes" if cluster_enc else "No",
                sd_enc_str,
-               "Connected"]
+               "Connected", ft_str]
         rn = ws.max_row + 1
         for c, val in enumerate(row, 1):
             ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
@@ -2832,6 +3156,15 @@ def _sheet_infrastructure(wb, all_data):
             ws.cell(row=rn, column=9).fill = _fill(ORANGE)
             ws.cell(row=rn, column=9).font = _font(bold=True)
 
+        # Fault Tolerance (col 18)
+        ft_cell = ws.cell(row=rn, column=18)
+        if ft_str == "EXCEEDED":
+            ft_cell.fill = _fill(RED);    ft_cell.font = _font(bold=True, color=WHITE)
+        elif ft_str == "AT LIMIT":
+            ft_cell.fill = _fill(YELLOW); ft_cell.font = _font(bold=True)
+        elif ft_str.startswith("OK"):
+            ft_cell.fill = _fill(LT_GREEN); ft_cell.font = _font(bold=True)
+
     auto_fit_columns(ws)
 
 
@@ -2844,12 +3177,13 @@ def _sheet_hardware(wb, all_data):
     cols = ["Cluster", "Node ID", "IP Address", "Node Type", "Model",
             "Serial Number", "Node SW Version",
             "Raw Capacity (TB)", "Disk Count", "Storage Tiers",
-            "HW EOL Date", "HW EOL Status"]
+            "HW EOL Date", "HW EOL Status", "SW Version Match"]
     _hdr(ws, 2, cols)
 
     today = _dt.date.today()
 
     for cd in all_data:
+        cluster_sw_ver = (cd["info"].get("clusterSoftwareVersion") or "").strip()
         for n in cd["nodes"]:
             model   = n.get("hardwareModel") or n.get("productModel") or ""
             serial  = n.get("cohesityNodeSerial") or ""
@@ -2881,11 +3215,20 @@ def _sheet_hardware(wb, all_data):
                 hw_status = "In Service" if model else "Unknown"
                 eol_str   = "—"
 
+            # SW version match vs cluster version (col 13)
+            nsw_stripped = nsw.strip()
+            if not nsw_stripped:
+                sw_match = "Unknown"
+            elif nsw_stripped == cluster_sw_ver:
+                sw_match = "Match"
+            else:
+                sw_match = f"MISMATCH ({nsw_stripped})"
+
             row = [cd["name"],
                    n.get("id", ""), n.get("ip", ""),
                    ntype, model, serial, nsw,
                    cap_tb, disks, tier_str,
-                   eol_str, hw_status]
+                   eol_str, hw_status, sw_match]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
@@ -2900,6 +3243,13 @@ def _sheet_hardware(wb, all_data):
                     eol_cell.fill = _fill(ORANGE); eol_cell.font = _font(bold=True)
                 elif days_left <= 365:
                     eol_cell.fill = _fill(YELLOW); eol_cell.font = _font(bold=True)
+
+            # color SW Version Match cell (col 13)
+            sw_cell = ws.cell(row=rn, column=13)
+            if sw_match == "Match":
+                sw_cell.fill = _fill(LT_GREEN); sw_cell.font = _font(bold=True)
+            elif sw_match.startswith("MISMATCH"):
+                sw_cell.fill = _fill(RED);      sw_cell.font = _font(bold=True, color=WHITE)
 
     auto_fit_columns(ws)
     ws.column_dimensions["E"].width = 30  # Model
@@ -3698,6 +4048,119 @@ def _sheet_security(wb, all_data):
             rc.fill = _ransomware_rag_fill(rw_score)
             rc.font = _font(bold=True)
 
+    # ── Encryption Key Management (KMS) sub-section ──────────────────────────
+    _kms_blank = ws.max_row + 2
+    ws.cell(row=_kms_blank, column=1, value="Encryption Key Management") \
+      .font = _font(bold=True, size=11)
+
+    kms_cols = ["Cluster", "KMS Type", "KMS Server",
+                "Server Status", "Key Rotation", "Risk"]
+    _hdr(ws, _kms_blank + 1, kms_cols)
+
+    for cd in all_data:
+        kms       = cd.get("kms") or {}
+        cluster_enc, _ = _sd_enc_status(cd)
+
+        if not kms:
+            # Empty dict — internal KMS or unknown
+            kms_type   = "Internal (Built-in)"
+            kms_server = "N/A"
+            kms_status = "Unknown"
+            risk       = "MEDIUM" if cluster_enc else "HIGH"
+        else:
+            kms_type_raw = (kms.get("serverType") or kms.get("type")
+                            or kms.get("kmsType") or "")
+            if kms_type_raw:
+                kms_type = kms_type_raw
+            else:
+                kms_type = "Internal (Built-in)"
+            kms_server   = (kms.get("serverName") or kms.get("hostname")
+                            or kms.get("server") or kms.get("kmipServer") or "N/A")
+            connectivity = (kms.get("connectionStatus") or kms.get("status")
+                            or kms.get("serverStatus") or "")
+            kms_status   = connectivity if connectivity else "Connected"
+            _kms_type_l  = kms_type.lower()
+            if "internal" in _kms_type_l or "builtin" in _kms_type_l or "local" in _kms_type_l:
+                risk = "MEDIUM"
+            else:
+                risk = "LOW"
+
+        if not cluster_enc:
+            risk = "HIGH"
+
+        key_rotation = (kms.get("keyRotationPeriodDays") or
+                        kms.get("rotationPeriod") or "Unknown")
+
+        kms_row = [cd["name"], _safe_cell(kms_type), _safe_cell(str(kms_server)),
+                   _safe_cell(kms_status), _safe_cell(str(key_rotation)), risk]
+        rn = ws.max_row + 1
+        for c, val in enumerate(kms_row, 1):
+            ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+
+        # Risk coloring (col 6)
+        risk_cell = ws.cell(row=rn, column=6)
+        if risk == "HIGH":
+            risk_cell.fill = _fill(RED);    risk_cell.font = _font(bold=True, color=WHITE)
+        elif risk == "MEDIUM":
+            risk_cell.fill = _fill(YELLOW); risk_cell.font = _font(bold=True)
+        elif risk == "LOW":
+            risk_cell.fill = _fill(LT_GREEN)
+
+    # ── Security & Anomaly Alerts sub-section ────────────────────────────────
+    import datetime as _dt_sec
+    _blank_row = ws.max_row + 2
+    ws.cell(row=_blank_row, column=1, value="Security & Anomaly Alerts") \
+      .font = _font(bold=True, size=11)
+
+    alert_cols = ["Cluster", "Security Alerts (Open)", "Anomaly Alerts (Open)",
+                  "Oldest Unack Security Alert (days)", "Newest Security Alert"]
+    _hdr(ws, _blank_row + 1, alert_cols)
+
+    _SEC_CATS    = {"ksecurity", "kdatasecurity"}
+    _ANOM_CATS   = {"kanomalousactivity", "kanomalyalert"}
+
+    for cd in all_data:
+        sec_alerts  = []
+        anom_alerts = []
+        for a in (cd.get("alerts") or []):
+            cat = (a.get("alertCategory") or "").lower()
+            if cat in _SEC_CATS:
+                sec_alerts.append(a)
+            elif cat in _ANOM_CATS:
+                anom_alerts.append(a)
+
+        # Oldest unacknowledged security alert
+        oldest_days   = ""
+        newest_str    = ""
+        oldest_usecs  = None
+        newest_usecs  = None
+        for a in sec_alerts:
+            ack = a.get("acknowledgeTimestampUsecs") or 0
+            if not ack:
+                first_u = a.get("firstTimestampUsecs") or a.get("firstOccurrenceTime") or 0
+                if first_u and (oldest_usecs is None or first_u < oldest_usecs):
+                    oldest_usecs = first_u
+            latest_u = a.get("latestTimestampUsecs") or a.get("latestOccurrenceTime") or 0
+            if latest_u and (newest_usecs is None or latest_u > newest_usecs):
+                newest_usecs = latest_u
+
+        if oldest_usecs:
+            oldest_days = round((cd["end_usecs"] - oldest_usecs) / 86_400_000_000, 1)
+        if newest_usecs:
+            newest_str = _dt_sec.datetime.fromtimestamp(
+                newest_usecs / 1_000_000, tz=_dt_sec.timezone.utc).strftime("%Y-%m-%d")
+
+        alert_row = [cd["name"], len(sec_alerts), len(anom_alerts),
+                     oldest_days, newest_str]
+        rn = ws.max_row + 1
+        for c, val in enumerate(alert_row, 1):
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+        if sec_alerts or anom_alerts:
+            for col in range(1, 6):
+                ws.cell(row=rn, column=col).fill = _fill(RED)
+                ws.cell(row=rn, column=col).font = _font(bold=True, color=WHITE)
+
     auto_fit_columns(ws)
     ws.column_dimensions["U"].width = 60
 
@@ -3713,7 +4176,8 @@ def _sheet_replication(wb, all_data):
             "Logical Data Transferred (TB)\n[numLogicalBytesTransferred — cumulative]",
             "Physical Data Transferred (TB)\n[numPhysicalBytesTransferred — cumulative]",
             "Status", "Notes",
-            "Protection Group Names"]
+            "Protection Group Names",
+            "Replication Lag (hrs)"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
@@ -3838,17 +4302,51 @@ def _sheet_replication(wb, all_data):
             return (any(x in vtype.lower() for x in fk_types)
                     or "fortknox" in vname.lower())
 
+        # ── Replication lag per target: most recent endTimeUsecs ─────────
+        # Build map: replication target name → most recent endTimeUsecs across groups
+        repl_latest_end = {}   # target name → latest endTimeUsecs
+        for g in cd["groups"]:
+            lr = g.get("lastRun") or {}
+            for ri in ((lr.get("replicationInfo") or {})
+                       .get("replicationTargetResults") or []):
+                tgt_cfg = ri.get("remoteTargetConfig") or {}
+                tgt_n   = (ri.get("targetName")
+                           or tgt_cfg.get("clusterName")
+                           or tgt_cfg.get("name") or "")
+                end_u   = ri.get("endTimeUsecs") or 0
+                if tgt_n and end_u:
+                    if tgt_n not in repl_latest_end or end_u > repl_latest_end[tgt_n]:
+                        repl_latest_end[tgt_n] = end_u
+
+        def _repl_lag(tname):
+            end_u = repl_latest_end.get(tname) or 0
+            if not end_u:
+                return None
+            return round((cd["end_usecs"] - end_u) / 3_600_000_000, 1)
+
         # ── Replication rows ──────────────────────────────────────────────
         for tname in sorted(all_rep_targets):
             groups = sorted(rep_groups.get(tname) or [])
             gcnt   = len(groups)
             status = "Configured" if gcnt else "No groups assigned"
+            lag    = _repl_lag(tname)
+            lag_str = lag if lag is not None else "No data"
             rn = ws.max_row + 1
             row = [cd["name"], "Replication", tname, "", gcnt,
                    "", "", "", status, "",
-                   ", ".join(groups)]
+                   ", ".join(groups), lag_str]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+            # Color lag cell (col 12)
+            lag_cell = ws.cell(row=rn, column=12)
+            if lag is None:
+                lag_cell.fill = _fill(RED);    lag_cell.font = _font(bold=True, color=WHITE)
+            elif lag > 72:
+                lag_cell.fill = _fill(RED);    lag_cell.font = _font(bold=True, color=WHITE)
+            elif lag > 24:
+                lag_cell.fill = _fill(YELLOW); lag_cell.font = _font(bold=True)
+            else:
+                lag_cell.fill = _fill(LT_GREEN); lag_cell.font = _font(bold=True)
 
         # ── Archival / vault rows ─────────────────────────────────────────
         shown = set()
@@ -3865,7 +4363,7 @@ def _sheet_replication(wb, all_data):
                       round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                       round(bytes_to_tb(fkd.get("physical") or 0), 3),
                       status, note,
-                      ", ".join(groups)]
+                      ", ".join(groups), ""]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
             shown.add(tname)
@@ -3883,7 +4381,7 @@ def _sheet_replication(wb, all_data):
                      round(bytes_to_tb(fkd.get("consumed") or 0), 3),
                      round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
-                     "Vault exists — not referenced by any policy", note, ""]
+                     "Vault exists — not referenced by any policy", note, "", ""]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
@@ -3902,11 +4400,14 @@ def _sheet_fortknox_detail(wb, all_data):
     _title(ws,
            "FortKnox / External Target Data Transfer — Per Protection Group", "I")
 
+    import datetime as _dt_fk
+
     cols = ["Cluster", "Vault Name", "Vault Type",
             "Protection Group",
             "Logical Transferred (TB)", "Physical Transferred (TB)",
             "Storage Consumed (TB)", "Snapshots",
-            "Period"]
+            "Period",
+            "Last FK Archival", "Days Since FK Transfer"]
     _hdr(ws, 2, cols)
 
     def _vtype_label(vt):
@@ -3921,11 +4422,34 @@ def _sheet_fortknox_detail(wb, all_data):
             return "Tape"
         return vt or "Unknown"
 
+    _FK_TARGET_TYPES = {"fortknox", "rpaas", "kfortknox", "krpaas", "kfort_knox",
+                        "krpaasarchival"}
+
+    def _is_fk_target(tt):
+        tl = (tt or "").lower()
+        return any(x in tl for x in _FK_TARGET_TYPES) or "fortknox" in tl
+
     for cd in all_data:
         quick      = cd.get("quick", False)
         days       = cd.get("days", 30)
         fk_source  = cd.get("fk_data_1d") if quick else (cd.get("fk_data") or [])
         period     = "Last 1 day" if quick else f"Last {days} days"
+
+        # Build per-group most-recent FK archival endTimeUsecs
+        fk_last_end = {}   # group name → latest FK archival endTimeUsecs
+        for g in cd["groups"]:
+            gname = g.get("name", "")
+            if not gname:
+                continue
+            lr = g.get("lastRun") or {}
+            for ar in ((lr.get("archivalInfo") or {})
+                       .get("archivalTargetResults") or []):
+                ttype = (ar.get("targetType") or
+                         (ar.get("archivalTargetConfig") or {}).get("targetType") or "")
+                if _is_fk_target(ttype):
+                    end_u = ar.get("endTimeUsecs") or 0
+                    if end_u and end_u > fk_last_end.get(gname, 0):
+                        fk_last_end[gname] = end_u
 
         has_rows = False
         for fk in (fk_source or []):
@@ -3937,11 +4461,36 @@ def _sheet_fortknox_detail(wb, all_data):
                 physical = round(bytes_to_tb(job.get("numPhysicalBytesTransferred") or 0), 4)
                 consumed = round(bytes_to_tb(job.get("storageConsumed")             or 0), 4)
                 snaps    = job.get("numSnapshots") or ""
+
+                # Last FK archival date and days since
+                last_end_u  = fk_last_end.get(jname) or 0
+                if last_end_u:
+                    last_fk_str = _dt_fk.datetime.fromtimestamp(
+                        last_end_u / 1_000_000,
+                        tz=_dt_fk.timezone.utc).strftime("%Y-%m-%d")
+                    days_since  = round((cd["end_usecs"] - last_end_u) / 86_400_000_000, 1)
+                else:
+                    last_fk_str = "Unknown"
+                    days_since  = None
+
                 rn  = ws.max_row + 1
                 row = [cd["name"], vname, vtype, jname,
-                       logical, physical, consumed, snaps, period]
+                       logical, physical, consumed, snaps, period,
+                       last_fk_str, days_since if days_since is not None else "Unknown"]
                 for c, val in enumerate(row, 1):
                     ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+                # Color "Days Since FK Transfer" cell (col 11)
+                dc = ws.cell(row=rn, column=11)
+                if days_since is None:
+                    dc.fill = _fill(YELLOW); dc.font = _font(bold=True)
+                elif days_since > 14:
+                    dc.fill = _fill(RED);    dc.font = _font(bold=True, color=WHITE)
+                elif days_since > 7:
+                    dc.fill = _fill(YELLOW); dc.font = _font(bold=True)
+                else:
+                    dc.fill = _fill(LT_GREEN); dc.font = _font(bold=True)
+
                 has_rows = True
 
         if not has_rows:
@@ -4017,6 +4566,112 @@ def _sheet_views(wb, all_data):
                 fc.fill = _fill(LT_GREEN)
 
     auto_fit_columns(ws)
+
+
+def _sheet_data_exposure(wb, all_data):
+    """NAS Share Exposure — per-view risk assessment for SMB discovery, NFS, S3, quota."""
+    ws = wb.create_sheet("Data Exposure")
+    ws.freeze_panes = "A3"
+    _title(ws, "Data Exposure — NAS View Access & Risk Assessment", "I")
+
+    cols = ["Cluster", "View Name", "Storage Domain",
+            "SMB Discovery", "NFS Open Mount", "S3 Enabled",
+            "Quota Set", "Risk Level", "Notes"]
+    _hdr(ws, 2, cols)
+
+    for cd in all_data:
+        for v in cd.get("views") or []:
+            # ── SMB Discovery ────────────────────────────────────────────
+            smb_disc = bool(v.get("enableSmbViewDiscovery"))
+            smb_str  = "ENABLED" if smb_disc else "Off"
+
+            # ── NFS Open Mount ───────────────────────────────────────────
+            nfs_paths = v.get("nfsMountPaths") or []
+            nfs_disc  = bool(v.get("enableNfsViewDiscovery"))
+            if nfs_paths and nfs_disc:
+                nfs_str = "OPEN"
+            elif nfs_paths:
+                nfs_str = "Restricted"
+            else:
+                nfs_str = "None"
+
+            # ── S3 ───────────────────────────────────────────────────────
+            s3_on   = bool(v.get("s3AccessEnabled"))
+            s3_str  = "YES" if s3_on else "No"
+
+            # ── Quota ────────────────────────────────────────────────────
+            lq = v.get("logicalQuota") or \
+                 (v.get("storagePolicy") or {}).get("storageQuotaPolicy") or {}
+            quota_b = lq.get("hardLimitBytes") or 0
+            if quota_b:
+                quota_str = f"{round(bytes_to_gb(quota_b), 1)} GB"
+            else:
+                quota_str = "No Quota"
+
+            # ── Risk Level ───────────────────────────────────────────────
+            notes = []
+            if smb_disc:
+                notes.append("SMB discovery on")
+            if nfs_str == "OPEN":
+                notes.append("NFS open mount")
+            if s3_on:
+                notes.append("S3 enabled")
+            if not quota_b:
+                notes.append("No quota")
+
+            if smb_disc or nfs_str == "OPEN":
+                risk = "HIGH"
+            elif s3_on or not quota_b:
+                risk = "MEDIUM"
+            else:
+                risk = "LOW"
+
+            row = [cd["name"], v.get("name", ""), v.get("storageDomainName", ""),
+                   smb_str, nfs_str, s3_str, quota_str, risk,
+                   "; ".join(notes) if notes else "OK"]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+            # SMB Discovery (col 4)
+            smb_cell = ws.cell(row=rn, column=4)
+            if smb_disc:
+                smb_cell.fill = _fill(RED);     smb_cell.font = _font(bold=True, color=WHITE)
+            else:
+                smb_cell.fill = _fill(LT_GREEN)
+
+            # NFS Open Mount (col 5)
+            nfs_cell = ws.cell(row=rn, column=5)
+            if nfs_str == "OPEN":
+                nfs_cell.fill = _fill(RED);     nfs_cell.font = _font(bold=True, color=WHITE)
+            elif nfs_str == "Restricted":
+                nfs_cell.fill = _fill(YELLOW);  nfs_cell.font = _font(bold=True)
+            else:
+                nfs_cell.fill = _fill(LT_GREEN)
+
+            # S3 (col 6)
+            s3_cell = ws.cell(row=rn, column=6)
+            if s3_on:
+                s3_cell.fill = _fill(YELLOW);   s3_cell.font = _font(bold=True)
+            else:
+                s3_cell.fill = _fill(LT_GREEN)
+
+            # Quota (col 7)
+            q_cell = ws.cell(row=rn, column=7)
+            if not quota_b:
+                q_cell.fill = _fill(YELLOW);    q_cell.font = _font(bold=True)
+
+            # Risk Level (col 8)
+            rc = ws.cell(row=rn, column=8)
+            if risk == "HIGH":
+                rc.fill = _fill(RED);    rc.font = _font(bold=True, color=WHITE)
+            elif risk == "MEDIUM":
+                rc.fill = _fill(YELLOW); rc.font = _font(bold=True)
+            else:
+                rc.fill = _fill(LT_GREEN); rc.font = _font(bold=True)
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["I"].width = 40   # Notes
 
 
 def _sheet_coverage(wb, all_data):
@@ -4096,11 +4751,13 @@ def _sheet_trends(wb, all_data):
         return
 
     cols = ["Cluster", "Date", "Total Runs", "Successful", "Failed",
-            "Warning", "Canceled", "Success % (incl. Warnings)", "SLA Violations", "Logical (GB)"]
+            "Warning", "Canceled", "Success % (incl. Warnings)", "SLA Violations",
+            "Logical (GB)", "Avg Duration (min)"]
     _hdr(ws, 2, cols)
 
     for cd in all_data:
         daily = {}
+        daily_dur = {}   # day → list of completed run durations in minutes
 
         # ── Primary: v1 protectionRuns — mirrors the Helios reporting page source ──
         # Single call per cluster; backupRun.slaViolated and
@@ -4126,6 +4783,10 @@ def _sheet_trends(wb, all_data):
             elif "Cancel" in st:                d["cancel"] += 1
             if br.get("slaViolated"):           d["viols"]  += 1
             d["logical"] += stats.get("totalLogicalBackupSizeBytes") or 0
+            # Duration
+            eu = stats.get("endTimeUsecs") or 0
+            if eu and su and eu > su:
+                daily_dur.setdefault(day, []).append((eu - su) / 60_000_000)
 
         # ── Fallback: v2 per-group runs (used when v1 unavailable) ──────────────
         if not daily:
@@ -4150,6 +4811,10 @@ def _sheet_trends(wb, all_data):
                     elif "Cancel" in st:                d["cancel"] += 1
                     if lb.get("isSlaViolated"):         d["viols"]  += 1
                     d["logical"] += (lb.get("localSnapshotStats") or {}).get("logicalSizeBytes") or 0
+                    # Duration
+                    eu = lb.get("endTimeUsecs") or 0
+                    if eu and su and eu > su:
+                        daily_dur.setdefault(day, []).append((eu - su) / 60_000_000)
 
         if not daily:
             continue
@@ -4158,10 +4823,12 @@ def _sheet_trends(wb, all_data):
         for day in sorted(daily):
             d   = daily[day]
             pct = round((d["succ"] + d["warn"]) / d["total"] * 100, 1) if d["total"] else 0
+            durs = daily_dur.get(day) or []
+            avg_dur = round(sum(durs) / len(durs), 1) if durs else ""
             rn  = ws.max_row + 1
             row = [cd["name"], day, d["total"], d["succ"], d["fail"],
                    d["warn"], d["cancel"], pct, d["viols"],
-                   round(bytes_to_gb(d["logical"]), 1)]
+                   round(bytes_to_gb(d["logical"]), 1), avg_dur]
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
             sc = ws.cell(row=rn, column=8)
@@ -4257,8 +4924,87 @@ def _sheet_trends(wb, all_data):
             except Exception:
                 pass
 
-            # Place chart to the right of the data columns (col L = 12)
+            # Place success-rate chart to the right of the data columns (col L = 12)
             ws.add_chart(chart, f"L{trend_start}")
+
+            # ── Duration chart: average backup duration per day ───────────────
+            dur_chart = LineChart()
+            dur_chart.style  = 10
+            dur_chart.height = 16
+            dur_chart.width  = 26
+
+            _dur_title = f"{cd['name']} — Avg Daily Backup Duration (min)"
+            try:
+                from openpyxl.chart.title import Title as _CTitle2
+                from openpyxl.drawing.text import (
+                    RichTextBodyProperties as _BodyPr2,
+                    Paragraph as _Para2,
+                    RegularTextRun as _Run2,
+                    RunProperties as _RunPr2,
+                )
+                from openpyxl.chart.text import RichText as _CRichText2, Text as _CText2
+                _ct2 = _CTitle2()
+                _ct2.overlay = False
+                _rich2 = _CRichText2()
+                _rich2.bodyPr = _BodyPr2()
+                _para2 = _Para2()
+                _run2  = _Run2()
+                _run2.t  = _dur_title
+                _run2.rPr = _RunPr2(sz=1400, b=True)
+                _para2.r.append(_run2)
+                _rich2.p.append(_para2)
+                _ct2.tx = _CText2(rich=_rich2)
+                dur_chart.title = _ct2
+            except Exception:
+                dur_chart.title = _dur_title
+
+            dur_chart.y_axis.title         = "Avg Duration (min)"
+            dur_chart.y_axis.numFmt        = "0.0"
+            dur_chart.y_axis.majorTickMark = "out"
+            dur_chart.y_axis.tickLblPos    = "nextTo"
+            dur_chart.y_axis.delete        = False
+
+            dur_chart.x_axis.title         = "Date"
+            dur_chart.x_axis.majorTickMark = "out"
+            dur_chart.x_axis.tickLblPos    = "low"
+            dur_chart.x_axis.delete        = False
+            if n_days > 60:
+                dur_chart.x_axis.tickLblSkip = 7
+            elif n_days > 14:
+                dur_chart.x_axis.tickLblSkip = 2
+
+            dur_ref = Reference(ws, min_col=11, min_row=trend_start,
+                                max_row=trend_end)
+            dur_chart.add_data(dur_ref)
+
+            try:
+                from openpyxl.chart.data_source import DataSource as _DS2, StrRef as _SR2
+                dur_chart.series[0].cat = _DS2(strRef=_SR2(
+                    f=f"'{ws.title}'!$B${trend_start}:$B${trend_end}"))
+            except (ImportError, IndexError):
+                pass
+
+            try:
+                ds2 = dur_chart.series[0]
+                ds2.title = SeriesLabel(v="Avg Duration (min)")
+                ds2.graphicalProperties.line.solidFill = "FF8C00"   # orange
+                ds2.graphicalProperties.line.width     = 18000
+                ds2.marker.symbol  = "diamond"
+                ds2.marker.size    = 5
+                ds2.marker.graphicalProperties.solidFill        = "FF8C00"
+                ds2.marker.graphicalProperties.line.solidFill   = "FF8C00"
+            except (IndexError, AttributeError):
+                pass
+
+            try:
+                from openpyxl.chart.legend import Legend as _ChartLegend2
+                dur_chart.legend = _ChartLegend2()
+                dur_chart.legend.position = "b"
+            except Exception:
+                pass
+
+            # Place duration chart below the success-rate chart (offset by 30 rows)
+            ws.add_chart(dur_chart, f"L{trend_start + 30}")
 
     auto_fit_columns(ws)
 
@@ -4515,25 +5261,108 @@ def _sheet_source_coverage(wb, all_data):
     auto_fit_columns(ws)
 
 
+def _sheet_unprotected_objects(wb, all_data):
+    """Named Unprotected Objects — lists sources with unprotected object details."""
+    ws = wb.create_sheet("Unprotected Objects")
+    ws.freeze_panes = "A3"
+    _title(ws, "Unprotected Objects — Sources with Unprotected Object Details", "E")
+
+    cols = ["Cluster", "Source Name", "Environment",
+            "Unprotected Count", "Object Names"]
+    _hdr(ws, 2, cols)
+
+    any_data = False
+    for cd in all_data:
+        sources = cd.get("sources") or []
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            _si   = src.get("sourceInfo")
+            si    = _si if isinstance(_si, dict) else src
+            name  = (si.get("name") or si.get("sourceName")
+                     or src.get("name") or "")
+            env   = (si.get("environment") or si.get("sourceEnvironment")
+                     or src.get("environment") or "")
+            _ss   = src.get("stats")
+            _ss   = _ss if isinstance(_ss, dict) else {}
+            unprot = (src.get("unprotectedObjectsCount")
+                      or src.get("numUnprotectedObjects")
+                      or _ss.get("unprotectedObjectsCount") or 0)
+            if not unprot:
+                continue
+
+            # Try to extract object names from various possible structures
+            obj_names = []
+            for key in ("unprotectedObjects", "unprotectedObjectNames",
+                        "objects", "leafObjects"):
+                items = src.get(key) or si.get(key) or []
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if isinstance(item, str):
+                        obj_names.append(item)
+                    elif isinstance(item, dict):
+                        n = (item.get("name") or item.get("objectName")
+                             or item.get("displayName") or "")
+                        if n:
+                            obj_names.append(n)
+                if obj_names:
+                    break
+
+            obj_str = (", ".join(obj_names[:20])
+                       + (" and more" if len(obj_names) > 20 else "")
+                       if obj_names else "See source details")
+
+            row = [cd["name"], name, env, unprot, obj_str]
+            rn  = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+            cnt_cell = ws.cell(row=rn, column=4)
+            if unprot > 10:
+                cnt_cell.fill = _fill(RED);    cnt_cell.font = _font(bold=True, color=WHITE)
+                for col in range(1, 6):
+                    ws.cell(row=rn, column=col).fill = _fill(RED)
+                    ws.cell(row=rn, column=col).font = _font(bold=True, color=WHITE)
+            else:
+                for col in range(1, 6):
+                    ws.cell(row=rn, column=col).fill = _fill(YELLOW)
+                    ws.cell(row=rn, column=col).font = _font(bold=True)
+
+            any_data = True
+
+    if not any_data:
+        ws.cell(row=3, column=1,
+                value="No unprotected objects found across all sources.") \
+           .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+    ws.column_dimensions["E"].width = 60   # Object Names
+
+
 def _sheet_user_security(wb, all_data):
     import datetime as _dt
     ws = wb.create_sheet("User Security")
     ws.freeze_panes = "A3"
-    _title(ws, "User Security — Accounts, MFA Status & Access Control", "J")
+    _title(ws, "User Security — Accounts, MFA Status & Access Control", "K")
 
     cols = ["Cluster", "Username", "Domain", "Type",
             "Roles", "Active", "Locked", "MFA Enabled",
-            "Last Login", "Notes"]
+            "Last Login", "Notes", "Risk Flag"]
     _hdr(ws, 2, cols)
 
     _ADMIN_ROLES = {"COHESITY_ADMIN", "Admin", "kAdmin", "kSuperAdmin",
-                    "super_admin", "admin"}
-    any_data = False
+                    "super_admin", "admin", "cluster_admin", "cohesity_admin"}
+    _STALE_DAYS  = 30
+    any_data     = False
+
     for cd in all_data:
         users = cd.get("users") or []
         if not users:
             continue
         any_data = True
+        now_dt = _dt.datetime.now(tz=_dt.timezone.utc)
+
         for user in users:
             roles  = ", ".join(user.get("roles") or [])
             locked = bool(user.get("locked") or user.get("isLocked"))
@@ -4545,14 +5374,18 @@ def _sheet_user_security(wb, all_data):
             if last_ms:
                 if last_ms > 1_000_000_000_000_000:  # usecs
                     last_ms = last_ms // 1000
-                last_login = _dt.datetime.fromtimestamp(
-                    last_ms / 1000, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+                last_login_dt = _dt.datetime.fromtimestamp(
+                    last_ms / 1000, tz=_dt.timezone.utc)
+                last_login = last_login_dt.strftime("%Y-%m-%d")
             else:
+                last_login_dt = None
                 last_login = "Never"
 
+            # Determine if admin: role name contains admin/Admin or matches known admin roles
+            user_roles_lower = {r.lower() for r in (user.get("roles") or [])}
             is_admin = bool(
-                {r.lower() for r in (user.get("roles") or [])} &
-                {r.lower() for r in _ADMIN_ROLES}
+                user_roles_lower & _ADMIN_ROLES
+                or any("admin" in r for r in user_roles_lower)
             )
             domain = user.get("domain") or ""
             utype  = (user.get("userType")
@@ -4563,13 +5396,26 @@ def _sheet_user_security(wb, all_data):
             if locked:      notes.append("LOCKED")
             if not mfa:     notes.append("No MFA")
 
+            # Risk Flag logic
+            risk_flags = []
+            if is_admin:
+                # Stale Admin: last login > 30 days ago or never
+                if last_login_dt is None or (now_dt - last_login_dt).days > _STALE_DAYS:
+                    risk_flags.append("Stale Admin")
+                if not mfa:
+                    risk_flags.append("Admin No MFA")
+                if locked:
+                    risk_flags.append("Locked Admin")
+            risk_flag_str = " | ".join(risk_flags) if risk_flags else ""
+
             row = [cd["name"], user.get("username", ""), domain, utype,
                    roles,
                    "Yes" if active else "No",
                    "Yes" if locked else "No",
                    "Yes" if mfa else "No",
                    last_login,
-                   "; ".join(notes) if notes else "OK"]
+                   "; ".join(notes) if notes else "OK",
+                   risk_flag_str]
             rn = ws.max_row + 1
             for c, val in enumerate(row, 1):
                 ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
@@ -4586,9 +5432,93 @@ def _sheet_user_security(wb, all_data):
                 ws.cell(row=rn, column=8).fill = _fill(YELLOW)
                 ws.cell(row=rn, column=8).font = _font(bold=True)
 
+            # Risk Flag column coloring (col 11)
+            if risk_flag_str:
+                rf_cell = ws.cell(row=rn, column=11)
+                if "Admin No MFA" in risk_flag_str:
+                    rf_cell.fill = _fill("FF0000")
+                    rf_cell.font = _font(bold=True, color=WHITE)
+                elif "Stale Admin" in risk_flag_str:
+                    rf_cell.fill = _fill("FFD966")
+                    rf_cell.font = _font(bold=True)
+
     if not any_data:
         ws.cell(row=3, column=1,
                 value="No user data returned from /public/users.") \
+           .font = _font(color="595959")
+
+    # ── Custom Role Definitions sub-section ──────────────────────────────────
+    _BUILTIN_ROLE_NAMES = {"Admin", "Viewer", "BackupOperator", "BackupAdmin",
+                           "RestoreOperator", "ReplicationOperator",
+                           "COHESITY_ADMIN", "kAdmin", "kSuperAdmin",
+                           "ReadOnlyUser", "ManageProtectionGroupsOperator"}
+
+    _roles_blank = ws.max_row + 2
+    ws.cell(row=_roles_blank, column=1,
+            value="Custom Role Definitions").font = _font(bold=True, size=11)
+
+    role_cols = ["Cluster", "Role Name", "Description", "Privileges (count)",
+                 "Has Cluster Modify", "Has User Modify", "Has Security Modify", "Risk Level"]
+    _hdr(ws, _roles_blank + 1, role_cols)
+
+    any_role_data = False
+    for cd in all_data:
+        for role in (cd.get("roles") or []):
+            rname = role.get("name") or ""
+            # Skip built-in roles
+            is_builtin = (role.get("isBuiltIn") or not role.get("isCustomRole", True))
+            if rname in _BUILTIN_ROLE_NAMES or is_builtin:
+                continue
+            # Also skip if role name matches a built-in (case-insensitive)
+            if rname.lower() in {b.lower() for b in _BUILTIN_ROLE_NAMES}:
+                continue
+
+            any_role_data = True
+            privs   = role.get("privileges") or role.get("permissions") or []
+            priv_count = len(privs) if isinstance(privs, list) else 0
+            privs_upper = " ".join(str(p) for p in (privs if isinstance(privs, list) else [])).upper()
+
+            # Check for specific privilege types
+            priv_words = privs_upper.split()
+            has_cluster_mod = (
+                any("CLUSTER" in pw for pw in priv_words) and
+                any(x in privs_upper for x in ("MODIFY", "CREATE", "DELETE"))
+            ) or ("CLUSTER" in privs_upper and
+                  any(x in privs_upper for x in ("MODIFY", "CREATE", "DELETE")))
+            has_user_mod    = "USER" in privs_upper and "MODIFY" in privs_upper
+            has_sec_mod     = any(x in privs_upper for x in ("SECURITY", "PRINCIPAL"))
+
+            if has_cluster_mod or has_user_mod:
+                risk = "HIGH"
+            elif has_sec_mod:
+                risk = "MEDIUM"
+            else:
+                risk = "LOW"
+
+            desc = role.get("description") or ""
+            role_row = [cd["name"], _safe_cell(rname), _safe_cell(desc),
+                        priv_count,
+                        "Yes" if has_cluster_mod else "No",
+                        "Yes" if has_user_mod    else "No",
+                        "Yes" if has_sec_mod     else "No",
+                        risk]
+            rn = ws.max_row + 1
+            for c, val in enumerate(role_row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+
+            # Risk coloring (col 8)
+            risk_cell = ws.cell(row=rn, column=8)
+            if risk == "HIGH":
+                risk_cell.fill = _fill(RED);    risk_cell.font = _font(bold=True, color=WHITE)
+            elif risk == "MEDIUM":
+                risk_cell.fill = _fill(YELLOW); risk_cell.font = _font(bold=True)
+            elif risk == "LOW":
+                risk_cell.fill = _fill(LT_GREEN)
+
+    if not any_role_data:
+        rn = ws.max_row + 1
+        ws.cell(row=rn, column=1,
+                value="No custom roles found — all roles are built-in defaults.") \
            .font = _font(color="595959")
 
     auto_fit_columns(ws)
@@ -7285,8 +8215,9 @@ def _sheet_guide(wb, all_data):
         ("Executive Summary",      "Per-cluster health score, grade, success %, capacity used %, open criticals, "
                                    "ransomware readiness score, and capacity runway forecast"),
         ("Infrastructure",         "Software version, node count, healthy nodes, cluster/storage-domain encryption, "
-                                   "DNS/NTP settings, software lifecycle status and end-of-support date"),
-        ("Node Hardware",          "Per-node hardware model, serial, storage tiers, raw capacity, and hardware EOL status"),
+                                   "DNS/NTP settings, software lifecycle status, end-of-support date, and fault tolerance margin"),
+        ("Node Hardware",          "Per-node hardware model, serial, storage tiers, raw capacity, hardware EOL status, "
+                                   "and software version match vs cluster version"),
         ("Disk Health",            "Per-disk status, SSD wear %, encryption, storage tier — CRITICAL on failed disks, "
                                    "HIGH on SSD wear ≥80%"),
         ("Protection Health",      "Per-group last-run status, SLA violations, RPO gap, object failure counts, "
@@ -7298,22 +8229,34 @@ def _sheet_guide(wb, all_data):
         ("Policy → Groups",        "Every protection group listed alongside the policy that governs it"),
         ("Alerts",                 "All open critical and warning alerts, sorted by severity, with age and description"),
         ("Security",               "21-column checklist: encryption, vault, FortKnox, replication, audit log, MFA, "
-                                   "NTP auth, quorum, TLS cert expiry, and ransomware readiness score"),
+                                   "NTP auth, quorum, TLS cert expiry, ransomware score; plus KMS sub-section "
+                                   "(KMS type, server, risk) and security & anomaly alert sub-section"),
         ("Agent Health",           "Per-host agent version, health status, upgradability, and last upgrade error"),
         ("Source Coverage",        "Registered protection sources with protected/unprotected object counts and coverage %"),
-        ("Replication & Archive",  "Replication partner targets, archival vault names/types, and FortKnox storage consumed"),
+        ("Unprotected Objects",    "Sources with unprotected objects — lists object names where available; "
+                                   "red if count >10, amber if count >0"),
+        ("Recovery Audit",         "Recovery task history for the lookback window: status, duration, objects recovered, "
+                                   "plus per-cluster summary of total recoveries, success rate, and days since last recovery"),
+        ("Replication & Archive",  "Replication partner targets, archival vault names/types, FortKnox storage consumed, "
+                                   "and replication lag in hours"),
         ("FortKnox Data Transfer", "Per-group data transfer to external vaults: logical TB, physical TB, "
-                                   "storage consumed, snapshot count"),
+                                   "storage consumed, snapshot count, last FK archival date and days since"),
         ("Data Services",          "NAS views with protocol, quota configuration, usage %, and near-quota warnings"),
+        ("Data Exposure",          "NAS view access risk: SMB discovery, NFS open mount, S3 enabled, quota presence — "
+                                   "HIGH/MEDIUM/LOW risk per view"),
         ("Coverage Gaps",          "Protection groups with a failed last run, paused state, or RPO gap exceeding threshold"),
-        ("User Security",          "User accounts with domain, roles, MFA status, locked state, and last login — "
-                                   "highlights admins without MFA"),
-        ("Trends (30d)",           "Daily backup success rate per cluster over the lookback window with embedded charts"),
+        ("User Security",          "User accounts with domain, roles, MFA status, locked state, last login, and risk flags — "
+                                   "Stale Admin (amber), Admin No MFA (red); plus Custom Role Definitions sub-section "
+                                   "showing privilege analysis and risk level for each non-built-in role"),
+        ("Trends (30d)",           "Daily backup success rate and average backup duration per cluster over the lookback window "
+                                   "with embedded charts"),
         ("Recommendations",        "Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with finding and suggested action"),
         ("Workload Risk Heatmap",  "All protection groups scored 0–100 on composite recovery risk, "
                                    "sorted worst-first with full-row color coding"),
         ("Audit Log",              "Last 30 days of configuration changes from the cluster audit trail, "
                                    "categorized by type with high-risk events highlighted"),
+        ("DataLock Verification",  "Snapshot-level DataLock verification: checks actual worm/immutability status on recent "
+                                   "snapshots for groups with DataLock policies — flags NOT LOCKED (red) vs VERIFIED (green)"),
     ]
     for i, (name, desc) in enumerate(sheets_info, 1):
         bg = LIGHT_GRAY if i % 2 == 0 else None
@@ -7545,6 +8488,272 @@ def _sheet_guide(wb, all_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NEW SHEETS — v1.64
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sheet_recovery_history(wb, all_data):
+    """Recovery Audit — history of recovery tasks per cluster."""
+    import datetime as _dt
+    ws = wb.create_sheet("Recovery Audit")
+    ws.freeze_panes = "A3"
+    _title(ws, "Recovery Audit — Recovery Testing History & Recoverability Status", "L")
+
+    cols = ["Cluster", "Recovery ID", "Name", "Start Time", "End Time",
+            "Duration (min)", "Status", "Type", "Objects Recovered",
+            "Source Cluster", "Target", "Notes"]
+    _hdr(ws, 2, cols)
+
+    # Per-cluster summary data for the bottom section
+    cluster_summary = []
+
+    for cd in all_data:
+        recoveries = cd.get("recoveries") or []
+        days       = cd.get("days", 30)
+
+        total   = len(recoveries)
+        success = 0
+        last_succ_usecs = None
+
+        for rec in recoveries:
+            st = rec.get("status") or ""
+            is_succ = "Succeeded" in st or "kSuccess" in st
+
+            start_u = rec.get("startTimeUsecs") or rec.get("creationTimeUsecs") or 0
+            end_u   = rec.get("endTimeUsecs") or 0
+
+            if start_u:
+                start_str = _dt.datetime.fromtimestamp(
+                    start_u / 1_000_000, tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+            else:
+                start_str = ""
+
+            if end_u:
+                end_str = _dt.datetime.fromtimestamp(
+                    end_u / 1_000_000, tz=_dt.timezone.utc).strftime("%Y-%m-%d %H:%M")
+            else:
+                end_str = ""
+
+            if start_u and end_u:
+                dur = round((end_u - start_u) / 60_000_000, 1)
+            else:
+                dur = "N/A"
+
+            rec_type   = (rec.get("recoveryAction") or rec.get("type")
+                          or rec.get("snapshotEnvironment") or "")
+            obj_list   = rec.get("objects") or []
+            obj_count  = len(obj_list) if isinstance(obj_list, list) else ""
+
+            src_cluster = ""
+            target      = ""
+            params      = rec.get("vmwareParams") or rec.get("physicalParams") or {}
+            if isinstance(params, dict):
+                target = (params.get("targetHost") or params.get("recoveryTargetConfig")
+                          or {})
+                if isinstance(target, dict):
+                    target = target.get("newSourceConfig", {}).get("host", {}).get("name", "") or \
+                             target.get("originalSourceConfig", {}).get("host", {}).get("name", "")
+
+            notes = ""
+            if is_succ:
+                success += 1
+                if last_succ_usecs is None or start_u > last_succ_usecs:
+                    last_succ_usecs = start_u
+            elif "Failed" in st or "kFailed" in st:
+                notes = "Failed"
+
+            row = [cd["name"], _safe_cell(str(rec.get("id", ""))),
+                   _safe_cell(rec.get("name") or ""),
+                   start_str, end_str, dur,
+                   _safe_cell(st),
+                   _safe_cell(rec_type),
+                   obj_count,
+                   _safe_cell(str(src_cluster)),
+                   _safe_cell(str(target)),
+                   notes]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+
+            # Status coloring (col 7)
+            sc = ws.cell(row=rn, column=7)
+            if is_succ:
+                sc.fill = _fill(LT_GREEN)
+            elif "Failed" in st or "kFailed" in st:
+                sc.fill = _fill(RED); sc.font = _font(bold=True, color=WHITE)
+            else:
+                sc.fill = _fill(YELLOW)
+
+        # Compute last-success days
+        if last_succ_usecs:
+            last_succ_dt  = _dt.datetime.fromtimestamp(
+                last_succ_usecs / 1_000_000, tz=_dt.timezone.utc)
+            last_succ_str = last_succ_dt.strftime("%Y-%m-%d %H:%M")
+            days_since    = (cd["end_usecs"] - last_succ_usecs) // 86_400_000_000
+        else:
+            last_succ_str = "None"
+            days_since    = days
+
+        succ_rate = round(success / total * 100, 1) if total else "N/A"
+        cluster_summary.append({
+            "name":          cd["name"],
+            "total":         total,
+            "success":       success,
+            "succ_rate":     succ_rate,
+            "last_succ":     last_succ_str,
+            "days_since":    days_since,
+            "days":          days,
+        })
+
+    # ── Cluster Summary sub-section ───────────────────────────────────────────
+    if cluster_summary:
+        blank_rn = ws.max_row + 2
+        ws.cell(row=blank_rn, column=1,
+                value="Cluster Recovery Summary").font = _font(bold=True, size=11)
+        sum_cols = ["Cluster", "Total Recoveries", "Successful",
+                    "Success Rate %", "Last Successful Recovery", "Days Since Last Recovery"]
+        _hdr(ws, blank_rn + 1, sum_cols)
+        for s in cluster_summary:
+            rn = ws.max_row + 1
+            row = [s["name"], s["total"], s["success"],
+                   s["succ_rate"], s["last_succ"], s["days_since"]]
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+            # Color days-since col
+            dc = ws.cell(row=rn, column=6)
+            if s["days_since"] >= s["days"] or s["total"] == 0:
+                dc.fill = _fill(RED); dc.font = _font(bold=True, color=WHITE)
+            elif s["days_since"] > 7:
+                dc.fill = _fill(YELLOW); dc.font = _font(bold=True)
+            else:
+                dc.fill = _fill(LT_GREEN)
+
+    auto_fit_columns(ws)
+
+
+def _sheet_datalock_verification(wb, all_data):
+    """DataLock Verification — checks actual DataLock status on recent snapshots."""
+    ws = wb.create_sheet("DataLock Verification")
+    ws.freeze_panes = "A3"
+    _title(ws, "DataLock Verification — Snapshot Immutability Confirmed vs Policy", "J")
+
+    cols = ["Cluster", "Protection Group", "Policy",
+            "DataLock (Policy)", "Snapshots Checked",
+            "DataLocked Snapshots", "Oldest DL Snapshot",
+            "Newest DL Snapshot", "Verification Status", "Risk"]
+    _hdr(ws, 2, cols)
+
+    import datetime as _dt
+
+    any_data = False
+    for cd in all_data:
+        entries = cd.get("snapshot_dl") or []
+        if not entries:
+            continue
+        any_data = True
+
+        policy_by_id = cd.get("policy_by_id") or {}
+        groups_by_id = {g.get("id"): g for g in (cd.get("groups") or []) if g.get("id")}
+
+        for entry in entries:
+            gid       = entry.get("group_id", "")
+            grp_name  = entry.get("group_name", gid)
+            grp       = groups_by_id.get(gid) or {}
+            pol_id    = grp.get("policyId") or (grp.get("policy") or {}).get("id") or ""
+            policy    = policy_by_id.get(pol_id) or {}
+            pol_name  = policy.get("name", pol_id or "—")
+            dl_policy = _policy_datalock_str(policy) if policy else "—"
+
+            snaps        = entry.get("snapshots") or []
+            total_checked = len(snaps)
+            locked_snaps  = []
+            oldest_dl_u   = None
+            newest_dl_u   = None
+
+            for s in snaps:
+                is_locked = bool(
+                    s.get("dataLockConstraints") or
+                    (isinstance(s.get("wormProperties"), dict) and
+                     s["wormProperties"].get("isLocked")) or
+                    s.get("retentionType") in ("kCompliance", "kAdministrative")
+                )
+                if is_locked:
+                    locked_snaps.append(s)
+                    exp_u = (s.get("expiryTimeUsecs") or
+                             s.get("snapshotTimestampUsecs") or 0)
+                    start_u = (s.get("snapshotTimestampUsecs") or
+                               s.get("protectionRunStartTimeUsecs") or 0)
+                    if start_u:
+                        if oldest_dl_u is None or start_u < oldest_dl_u:
+                            oldest_dl_u = start_u
+                        if newest_dl_u is None or start_u > newest_dl_u:
+                            newest_dl_u = start_u
+
+            locked_count = len(locked_snaps)
+
+            oldest_str = ""
+            newest_str = ""
+            if oldest_dl_u:
+                oldest_str = _dt.datetime.fromtimestamp(
+                    oldest_dl_u / 1_000_000, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+            if newest_dl_u:
+                newest_str = _dt.datetime.fromtimestamp(
+                    newest_dl_u / 1_000_000, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
+
+            # Determine verification status
+            has_dl_policy = dl_policy != "None" and dl_policy != "—"
+            if not total_checked:
+                status = "N/A"
+                risk   = "N/A"
+            elif not has_dl_policy:
+                status = "N/A"
+                risk   = "LOW"
+            elif locked_count == 0:
+                status = "NOT LOCKED"
+                risk   = "HIGH"
+            elif locked_count < total_checked:
+                status = "PARTIAL"
+                risk   = "MEDIUM"
+            else:
+                status = "VERIFIED"
+                risk   = "LOW"
+
+            row = [cd["name"], _safe_cell(grp_name), _safe_cell(pol_name),
+                   _safe_cell(dl_policy),
+                   total_checked, locked_count,
+                   oldest_str, newest_str,
+                   status, risk]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=val).font = _FONT_NORMAL
+
+            # Status coloring (col 9)
+            sc = ws.cell(row=rn, column=9)
+            if status == "VERIFIED":
+                sc.fill = _fill(LT_GREEN)
+            elif status == "PARTIAL":
+                sc.fill = _fill(YELLOW); sc.font = _font(bold=True)
+            elif status == "NOT LOCKED":
+                sc.fill = _fill(RED); sc.font = _font(bold=True, color=WHITE)
+
+            # Risk coloring (col 10)
+            rc = ws.cell(row=rn, column=10)
+            if risk == "HIGH":
+                rc.fill = _fill(RED); rc.font = _font(bold=True, color=WHITE)
+            elif risk == "MEDIUM":
+                rc.fill = _fill(YELLOW); rc.font = _font(bold=True)
+            elif risk == "LOW":
+                rc.fill = _fill(LT_GREEN)
+
+    if not any_data:
+        ws.cell(row=3, column=1,
+                value="No DataLock groups found or snapshot verification skipped — "
+                      "no DataLock policies detected on this cluster.") \
+           .font = _font(color="595959")
+
+    auto_fit_columns(ws)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXCEL ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -7568,18 +8777,22 @@ def write_excel(all_data, args):
     _sheet_policies(wb, all_data)          # 7
     _sheet_policy_groups(wb, all_data)     # 8
     _sheet_alerts(wb, all_data)            # 9
-    _sheet_security(wb, all_data)          # 10
+    _sheet_security(wb, all_data)          # 10 (+ KMS sub-section)
     _sheet_agent_health(wb, all_data)      # 11
     _sheet_source_coverage(wb, all_data)   # 12
-    _sheet_replication(wb, all_data)       # 13
-    _sheet_fortknox_detail(wb, all_data)   # 14 NEW
-    _sheet_views(wb, all_data)             # 15
-    _sheet_coverage(wb, all_data)          # 16
-    _sheet_user_security(wb, all_data)     # 17
-    _sheet_trends(wb, all_data)            # 18
-    _sheet_recommendations(wb, all_data)   # 19
-    _sheet_risk_heatmap(wb, all_data)      # 20
-    _sheet_audit_log(wb, all_data)         # 21
+    _sheet_unprotected_objects(wb, all_data) # 13
+    _sheet_recovery_history(wb, all_data)  # 14 NEW
+    _sheet_replication(wb, all_data)       # 15
+    _sheet_fortknox_detail(wb, all_data)   # 16
+    _sheet_views(wb, all_data)             # 17
+    _sheet_data_exposure(wb, all_data)     # 18
+    _sheet_coverage(wb, all_data)          # 19
+    _sheet_user_security(wb, all_data)     # 20 (+ Custom Roles sub-section)
+    _sheet_trends(wb, all_data)            # 21
+    _sheet_recommendations(wb, all_data)   # 22
+    _sheet_risk_heatmap(wb, all_data)      # 23
+    _sheet_audit_log(wb, all_data)         # 24
+    _sheet_datalock_verification(wb, all_data)  # 25 NEW (after Policy Audit area)
 
     out = f"{args.output}.xlsx"
     wb.save(out)
