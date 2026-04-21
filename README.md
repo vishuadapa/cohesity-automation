@@ -209,6 +209,23 @@ All Bytes values are grouped together, followed by TB equivalents in the same or
 
 > **Note**: Data Read / Data Written reflect the Protection Activities report **Activity Type = Backup** (local cluster). Logical / Physical Transferred reflect **Activity Type = Vault** (remote FortKnox). This is equivalent to the **Protection Activities Report** on Helios, filtered to cloud vault (FortKnox).
 
+### Field value types — cumulative vs. point-in-time
+
+| Column | Value type | Explanation |
+|--------|-----------|-------------|
+| **Remote Storage Consumed** | **Cumulative** | Total retained bytes across all snapshots ever stored in the vault for this protection group. The `dataTransferToVaults` API ignores your `--start`/`--end`/`--days` window for this field — the value is always the current vault footprint. In trend mode every day row shows the same value. |
+| **Activities: Data Read** | **Point-in-time** | Per-run stat from the runs API, filtered to runs that started within your queried window. In summary mode it sums all qualifying runs across the full range; in trend mode it shows only runs that started on that specific day. |
+| **Activities: Data Written** | **Point-in-time** | Same filtering as Data Read. |
+| **Activities: Logical Transferred** | **Point-in-time** | Same filtering — only vault archival runs that started within your window. |
+| **Activities: Physical Transferred** | **Point-in-time** | Same filtering as Logical Transferred. |
+
+**Practical implications**
+
+- Do not use **Remote Storage Consumed** to measure ingest activity or growth within a period — it is always the current total and will be the same value regardless of the date range you query.
+- Use **Logical / Physical Transferred** to understand how much data was sent to the vault during a specific window.
+- Use **Data Read / Data Written** to understand local backup workload (how much data was read from source and written to the local cluster) during a specific window.
+- In **trend mode**, plotting Logical/Physical Transferred per day gives a true daily vault ingest view. Plotting Remote Storage Consumed per day shows the running vault footprint (all values will be identical within a single report run).
+
 ### APIs used
 
 | API | Endpoint | Purpose |

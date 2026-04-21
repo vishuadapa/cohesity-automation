@@ -25,6 +25,15 @@ API endpoints used:
 Requires Helios API key — FortKnox is a Helios-managed feature.
 
 Version history:
+  4.23 (2026-04-21) — About tab Notes section expanded with a second
+                     note explaining cumulative vs. point-in-time field
+                     behaviour: Remote Storage Consumed is a cumulative
+                     lifetime vault total unaffected by the query window;
+                     all four Activities fields are point-in-time values
+                     filtered to runs that started within the queried
+                     window. Practical implications noted for trend mode
+                     and for measuring ingest vs. vault footprint.
+                     README updated with matching "Field value types" table.
   4.22 (2026-04-21) — Removed Remote Storage Consumed (TiB). Reordered
                      columns so all Bytes values are grouped together
                      (Remote Storage Consumed, Data Read, Data Written,
@@ -236,7 +245,7 @@ Usage:
   python3 fortknox_vault_report.py --clear-credentials     # remove stored key
 """
 
-__version__ = "4.22"
+__version__ = "4.23"
 
 import argparse
 import getpass
@@ -1119,7 +1128,9 @@ def _sheet_about(wb, meta: dict):
         _row += 1
 
     _section("Notes")
-    note = (
+
+    note1 = (
+        "LOCAL vs. VAULT ACTIVITY  —  "
         "Activities: Data Read and Data Written show data sent to the local cluster "
         "(Backup activity — localSnapshotStats). "
         "Activities: Logical Transferred and Physical Transferred show data sent to the "
@@ -1128,10 +1139,30 @@ def _sheet_about(wb, meta: dict):
         "filtered to Activity Type = Backup (for Data Read/Written) and Activity Type = "
         "Vault (for Logical/Physical Transferred), with the Cloud Vault filter applied."
     )
-    ws.cell(_row, 1, note)
+    ws.cell(_row, 1, note1)
     ws.merge_cells(f"A{_row}:D{_row}")
     ws.cell(_row, 1).alignment = Alignment(wrap_text=True, vertical="top")
     ws.row_dimensions[_row].height = 60
+    _row += 1
+
+    note2 = (
+        "CUMULATIVE vs. POINT-IN-TIME  —  "
+        "Remote Storage Consumed is a CUMULATIVE lifetime total: it reflects all "
+        "snapshots ever retained in the vault for this protection group and is NOT "
+        "scoped to the query window. The same value appears regardless of whether you "
+        "query 7 days or 365 days. In trend mode every day row shows the same value. "
+        "Do not use this field to measure ingest activity within a period.\n"
+        "All four Activities fields (Data Read, Data Written, Logical Transferred, "
+        "Physical Transferred) are POINT-IN-TIME values: they are filtered to runs that "
+        "started within the queried start/end window. In summary mode they sum all "
+        "qualifying runs across the full range; in trend mode each day row reflects only "
+        "runs that started on that calendar day. Use Logical/Physical Transferred to "
+        "measure vault ingest activity; use Data Read/Written to measure local backup workload."
+    )
+    ws.cell(_row, 1, note2)
+    ws.merge_cells(f"A{_row}:D{_row}")
+    ws.cell(_row, 1).alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[_row].height = 90
     _row += 1
 
     _section("APIs Used")
