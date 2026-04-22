@@ -8288,7 +8288,7 @@ def _sheet_audit_log(wb, all_data):
 def _sheet_ad_identity(wb, all_data):
     from openpyxl.styles import PatternFill, Font, Alignment
 
-    ws = wb.create_sheet("AD / Identity Health")
+    ws = wb.create_sheet("AD & Identity Health")
     ws.freeze_panes = "A3"
     _title(ws, "Active Directory & LDAP Integration Health", "F")
 
@@ -8811,7 +8811,7 @@ def _sheet_guide(wb, all_data):
                                    "categorized by type with high-risk events highlighted"),
         ("DataLock Verification",  "Snapshot-level DataLock verification: checks actual worm/immutability status on recent "
                                    "snapshots for groups with DataLock policies — flags NOT LOCKED (red) vs VERIFIED (green)"),
-        ("AD / Identity Health",   "Active Directory domain connection status (Connected/Disconnected) with preferred DC; "
+        ("AD & Identity Health",   "Active Directory domain connection status (Connected/Disconnected) with preferred DC; "
                                    "LDAP provider status, server, port, base DN — flags disconnected identity sources in red"),
         ("Certificate Inventory",  "Full TLS certificate inventory: name, type, subject, issuer, issued/expiry dates, "
                                    "days remaining — CRITICAL (red) if <30 days, HIGH (amber) if <90 days, OK (green) otherwise"),
