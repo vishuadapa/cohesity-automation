@@ -85,8 +85,8 @@ Options
 
 Requirements
 ────────────
-  Required:  pip install requests openpyxl python-docx
-  Optional:  pip install matplotlib keyring python-pptx
+  Required:  pip install requests openpyxl python-docx python-pptx
+  Optional:  pip install matplotlib keyring
 
   The script checks all prerequisites at startup and reports missing
   packages with exact install commands.
@@ -688,7 +688,7 @@ except ImportError:
     print("  MISSING REQUIRED PACKAGE: requests")
     print()
     print("  Install all required and optional packages at once:")
-    print("    pip install requests openpyxl python-docx matplotlib python-pptx keyring")
+    print("    pip install requests openpyxl python-docx python-pptx matplotlib keyring")
     print("=" * 70)
     sys.exit(1)
 
@@ -10322,8 +10322,8 @@ def main():
         ("requests",      True,         "required", "HTTP client for Cohesity REST API"),
         ("openpyxl",      EXCEL_OK,     "required", "Excel workbook output (skip with --word-only)"),
         ("python-docx",   DOCX_OK,      "required", "Word document generation (skip with --excel-only)"),
+        ("python-pptx",   PPTX_OK,      "required", "PowerPoint deck output (~31 slides, always generated)"),
         ("matplotlib",    _pkg_ok("matplotlib"), "optional", "Topology PNG fallback for Word diagram"),
-        ("python-pptx",  PPTX_OK,               "optional", "Comprehensive ~31-slide PowerPoint deck (.pptx)"),
         ("keyring",       _pkg_ok("keyring"),    "optional", "OS keychain credential storage"),
     ]
 
@@ -10512,7 +10512,6 @@ def main():
     if not args.excel_only:
         write_word(all_data, args)
 
-    # Generate comprehensive PowerPoint deck (optional — requires python-pptx)
     pptx_path = write_pptx(all_data, args, args.output)
 
     out_parts = [f"{args.output}.xlsx", f"{args.output}.docx"]
