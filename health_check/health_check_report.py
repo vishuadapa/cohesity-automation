@@ -4659,8 +4659,60 @@ def _sheet_security(wb, all_data):
         if not cluster_enc:
             risk = "HIGH"
 
-        key_rotation = (kms.get("keyRotationPeriodDays") or
-                        kms.get("rotationPeriod") or "Unknown")
+        # Key rotation: try timestamp first (most informative), fall back to period
+        _kr_period = (kms.get("keyRotationPeriodDays") or kms.get("rotationPeriod"))
+
+        # 1. Check KMS viewBoxKeyInfo for per-domain last-rotated timestamps
+        _last_rot_secs = 0
+        for _vki in (kms.get("viewBoxKeyInfo") or kms.get("viewBoxesKeyInfo") or []):
+            if not isinstance(_vki, dict):
+                continue
+            _ts = (_vki.get("lastRotatedTimestampSecs")
+                   or _vki.get("lastRotationTimestampSecs") or 0)
+            if _ts > _last_rot_secs:
+                _last_rot_secs = _ts
+
+        # 2. Check storage domains for last-rotation timestamps (usecs or secs)
+        for _dom in (cd.get("domains") or []):
+            if not isinstance(_dom, dict):
+                continue
+            _sp = _dom.get("storagePolicy") or {}
+            _ts_raw = (
+                _sp.get("lastEncryptionKeyRotationTimestampUsecs")
+                or _sp.get("lastKeyRotationTimestampUsecs")
+                or _dom.get("lastEncryptionKeyRotationTimestampUsecs")
+                or _dom.get("lastKeyRotationTimestampUsecs")
+                or _dom.get("lastKeyRotationTimestampSecs")
+                or 0
+            )
+            # normalise usecs → secs
+            _ts_s = _ts_raw // 1_000_000 if _ts_raw > 1_000_000_000_000 else _ts_raw
+            if _ts_s > _last_rot_secs:
+                _last_rot_secs = _ts_s
+
+        # 3. Also check KMS dict itself for a top-level timestamp
+        _kms_ts_raw = (kms.get("lastKeyRotationTimestampUsecs")
+                       or kms.get("lastRotatedTimestampSecs") or 0)
+        _kms_ts_s = (_kms_ts_raw // 1_000_000
+                     if _kms_ts_raw > 1_000_000_000_000 else _kms_ts_raw)
+        if _kms_ts_s > _last_rot_secs:
+            _last_rot_secs = _kms_ts_s
+
+        if _last_rot_secs:
+            _rot_dt   = datetime.datetime.fromtimestamp(
+                _last_rot_secs, datetime.timezone.utc)
+            _days_ago = (datetime.datetime.now(datetime.timezone.utc)
+                         - _rot_dt).days
+            _rot_lbl  = _rot_dt.strftime("%Y-%m-%d")
+            key_rotation = f"{_days_ago}d ago ({_rot_lbl})"
+            if _kr_period:
+                key_rotation += f" | Period: {_kr_period}d"
+        elif _kr_period:
+            key_rotation = f"Period: {_kr_period} days (last rotation unknown)"
+        elif cluster_enc:
+            key_rotation = "Unknown"
+        else:
+            key_rotation = "N/A (encryption off)"
 
         kms_row = [cd["name"], _safe_cell(kms_type), _safe_cell(str(kms_server)),
                    _safe_cell(kms_status), _safe_cell(str(key_rotation)), risk]
