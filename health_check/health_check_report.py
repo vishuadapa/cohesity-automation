@@ -2257,6 +2257,31 @@ def _capacity_runway(cd):
     }
 
 
+_SUCC_STATUSES = {"kSuccess", "Succeeded", "kWarning"}
+
+
+def _last_succ_start_usecs(g, cd):
+    """Return startTimeUsecs of the most recent *successful* run for a group.
+
+    Checks per-group run history first (full mode); falls back to the
+    embedded lastRun only if that run itself succeeded.  Returns 0 when no
+    successful run is found (group never ran, or only failures in history).
+    """
+    gid  = g.get("id")
+    best = 0
+    for run in ((cd.get("group_runs") or {}).get(gid) or []):
+        lb2 = run.get("localBackupInfo") or {}
+        if lb2.get("status", "") in _SUCC_STATUSES:
+            su = lb2.get("startTimeUsecs") or 0
+            if su > best:
+                best = su
+    if not best:
+        lb = (g.get("lastRun") or {}).get("localBackupInfo") or {}
+        if lb.get("status", "") in _SUCC_STATUSES:
+            best = lb.get("startTimeUsecs") or 0
+    return best
+
+
 def _group_risk_score(group, cd):
     """Return (score 0-100, level) for a single protection group.
 
@@ -2286,12 +2311,12 @@ def _group_risk_score(group, cd):
     sla_violated = bool(lb.get("isSlaViolated") or lr.get("isSlaViolated"))
     sla_pts = 0 if sla_violated else 25
 
-    # RPO gap (25 pts)
-    start_u = lb.get("startTimeUsecs") or 0
-    if not start_u:
+    # RPO gap (25 pts) — measured from last *successful* run
+    _succ_u = _last_succ_start_usecs(group, cd)
+    if not _succ_u:
         rpo_pts = 0
     else:
-        rpo_hrs = (cd.get("end_usecs", _now_usecs()) - start_u) / 3_600_000_000
+        rpo_hrs = (cd.get("end_usecs", _now_usecs()) - _succ_u) / 3_600_000_000
         if   rpo_hrs <=  4: rpo_pts = 25
         elif rpo_hrs <=  8: rpo_pts = 20
         elif rpo_hrs <= 24: rpo_pts = 15
@@ -2583,12 +2608,10 @@ def _build_recommendations(cd):
 
     rpo_gaps = []
     for g in groups:
-        lr      = g.get("lastRun") or {}
-        lb      = lr.get("localBackupInfo") or {}
-        start_u = lb.get("startTimeUsecs") or 0
-        if not start_u:
+        succ_u = _last_succ_start_usecs(g, cd)
+        if not succ_u:
             continue
-        hrs = (cd["end_usecs"] - start_u) / 3_600_000_000
+        hrs = (cd["end_usecs"] - succ_u) / 3_600_000_000
         if hrs > RPO_CRIT_HOURS:
             rpo_gaps.append((g.get("name", "?"), hrs))
     if rpo_gaps:
@@ -3454,8 +3477,10 @@ def _sheet_protection(wb, all_data):
                 s = int((end_u - start_u) / 1_000_000)
                 h, m = divmod(s // 60, 60)
                 dur = f"{h}h {m:02d}m"
-            rpo_hrs = round((cd["end_usecs"] - start_u) / 3_600_000_000, 1) \
-                      if start_u else ""
+            # RPO = time since last *successful* run (not just last attempt)
+            _succ_u = _last_succ_start_usecs(g, cd)
+            rpo_hrs = round((cd["end_usecs"] - _succ_u) / 3_600_000_000, 1) \
+                      if _succ_u else ""
 
             # Object counts are directly on localBackupInfo (not nested in stats)
             objs_ok   = lb.get("successfulObjectsCount", "")
