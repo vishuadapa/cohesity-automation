@@ -684,15 +684,12 @@ from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 try:
     import requests
 except ImportError:
-    print("=" * 65)
+    print("=" * 70)
     print("  MISSING REQUIRED PACKAGE: requests")
     print()
-    print("  Install it with:")
-    print("    pip install requests")
-    print()
-    print("  Or install all required packages at once:")
-    print("    pip install requests openpyxl python-docx")
-    print("=" * 65)
+    print("  Install all required and optional packages at once:")
+    print("    pip install requests openpyxl python-docx matplotlib python-pptx keyring")
+    print("=" * 70)
     sys.exit(1)
 
 # ── Auth + formatting helpers ─────────────────────────────────────────────────
@@ -10335,46 +10332,43 @@ def main():
     if args.word_only:   _exempt.add("openpyxl")
     if args.excel_only:  _exempt.add("python-docx")
 
-    _need_required = [(n, d) for n, ok, r, d in _PKG_TABLE
+    _need_required = [n for n, ok, r, d in _PKG_TABLE
                       if r == "required" and not ok and n not in _exempt]
-    _missing_opt   = [(n, d) for n, ok, r, d in _PKG_TABLE if r == "optional" and not ok]
-    _any_issue     = bool(_need_required or _missing_opt)
+    _missing_opt   = [n for n, ok, r, d in _PKG_TABLE if r == "optional" and not ok]
+    _all_missing   = _need_required + _missing_opt
 
-    # Print the full status table whenever anything is missing or optional is absent
-    if _any_issue:
+    # Always print the full status table
+    print()
+    print("  Prerequisites")
+    print("  " + "─" * 68)
+    for name, ok, role, desc in _PKG_TABLE:
+        if name in _exempt:
+            mark   = "–"
+            status = "skipped  "
+            note   = f"  (not needed with {'--word-only' if name == 'openpyxl' else '--excel-only'})"
+        else:
+            mark   = "✓" if ok else "✗"
+            status = "installed" if ok else "NOT FOUND"
+            note   = ""
+        role_tag = f"[{role}]"
+        print(f"  {mark}  {name:16s}  {status}  {role_tag:11s}  {desc}{note}")
+    print("  " + "─" * 68)
+
+    if _all_missing:
         print()
-        print("  Prerequisites")
-        print("  " + "─" * 68)
-        for name, ok, role, desc in _PKG_TABLE:
-            if name in _exempt:
-                mark   = "–"
-                status = "skipped  "
-                note   = f"  (not needed with {'--word-only' if name == 'openpyxl' else '--excel-only'})"
-            else:
-                mark   = "✓" if ok else "✗"
-                status = "installed" if ok else "NOT FOUND"
-                note   = ""
-            role_tag = f"[{role}]"
-            print(f"  {mark}  {name:16s}  {status}  {role_tag:11s}  {desc}{note}")
-        print("  " + "─" * 68)
+        if _need_required:
+            print("  ERROR: Missing required package(s) — script cannot continue.")
+        else:
+            print("  Optional package(s) not installed — affected features will be skipped.")
+        print()
+        print("  Install everything missing with one command:")
+        print(f"    pip install {' '.join(_all_missing)}")
+        print()
+        if _need_required:
+            sys.exit(1)
     else:
-        print(f"[*] Prerequisites: all 5 packages OK")
-
-    if _need_required:
-        print()
-        print("  ERROR: Missing required package(s). Install and re-run:")
-        for n, d in _need_required:
-            print(f"    pip install {n}")
-        if len(_need_required) > 1:
-            print(f"  All at once:  pip install {' '.join(n for n, d in _need_required)}")
-        print()
-        sys.exit(1)
-
-    if _missing_opt:
-        print()
-        print("  Optional package(s) not installed — affected features will be skipped.")
-        print(f"  To install:  pip install {' '.join(n for n, d in _missing_opt)}")
-        print()
+        print(f"  All {len(_PKG_TABLE)} packages OK")
+    print()
 
     # Build output filename: include customer name (if given) + local timestamp
     if args.output == "cohesity_health_check":
