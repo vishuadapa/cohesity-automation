@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] fix(health_check): v1.66 — prereq security hardening and packaging fixes
+
+### Changed — `health_check/health_check_report.py`
+- **`python-pptx` promoted to required**: PPT deck is generated on every run unconditionally — classifying it as optional caused users on fresh machines to discover it missing only after a second run. It now appears in the required block alongside `requests`, `openpyxl`, and `python-docx`.
+- **`keyring` security description updated**: Description now explicitly states the security rationale — without keyring, API keys passed via `--apikey` appear in shell history and process lists (`ps aux`). Updated to: *"Stores API key in OS secure vault (macOS Keychain / Windows Credential Manager) — prevents credentials appearing in shell history and process lists"*.
+- **Security note at startup**: When `keyring` is not installed, the prereq check now prints a clear security advisory explaining the credential exposure risk and noting that it is not applicable on headless Linux servers.
+- **Single install command**: All missing packages (required + optional) are now collected into one `pip install` command shown in a single output block — no more running the script twice to discover all missing dependencies.
+
+---
+
 ## [2026-04-21] feat(health_check): v1.65 — AD/LDAP health, certificate inventory, performance trends, audit log 403 fix
 
 ### Added — `health_check/health_check_report.py`

@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.65**
+**Current version: 1.66**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **28-tab Excel workbook** (Guide + 27 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (optional, requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **28-tab Excel workbook** (Guide + 27 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -281,6 +281,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.66 | 2026-04-22 | fix: prereq security hardening — `python-pptx` promoted to required (PPT generated on every run); `keyring` description updated to explain credential exposure risk (shell history / process lists); security note printed at startup when keyring absent; single `pip install` command covers all missing packages in one block. |
 | 1.65 | 2026-04-21 | feat: AD/LDAP identity health sheet; full certificate inventory sheet with expiry RAG; Capacity & Perf Trends sheet (dedup ratio + I/O throughput charts); audit log 403 now surfaces actionable permission message; cert-expiry and AD/LDAP-disconnect recommendations added. Sheet count 25 → 28. |
 | 1.64 | 2026-04-21 | feat: 4 new API-backed features — **Recovery Audit sheet** (`/v2/data-protect/recoveries`): per-recovery status/duration/type with days-since-last-recovery RAG; **DataLock Verification sheet** (`/v2/data-protect/snapshots`): snapshot-level VERIFIED/PARTIAL/NOT LOCKED per DataLock group; **KMS section** in Security sheet (`/v1/public/kmsConfig`): key management type and risk; **Custom Role Definitions** in User Security (`/v1/public/roles`): privilege analysis with cluster/user/security-modify flags. Sheet count 23 → 25. CRITICAL recommendation if DataLock policy set but snapshots not locked. HIGH if no recovery in lookback window. |
 | 1.63 | 2026-04-21 | feat: 9 security & recoverability analytics using existing collected data — Risk Flag column (Stale Admin / Admin No MFA / Locked Admin) in User Security; Data Exposure sheet (NAS SMB/NFS/S3 risk); Security & Anomaly Alerts sub-section in Security sheet; Node SW Version Match column with MISMATCH flag; Cluster Fault Tolerance margin column; FortKnox Last Archival date + Days Since Transfer columns; Replication Lag (hrs) column; Unprotected Objects sheet with named object list; Avg Duration (min) column + duration trend chart in Trends. Sheet count 21 → 23. |

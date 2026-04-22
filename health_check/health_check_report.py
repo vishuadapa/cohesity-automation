@@ -93,6 +93,14 @@ Requirements
 
 Version history
 ───────────────
+  1.66 (2026-04-22) — fix(health_check): prereq security hardening. python-pptx
+                     promoted to required (PPT is always generated). keyring
+                     description updated to explain the security rationale
+                     (prevents API key exposure in shell history / process
+                     lists). Security note printed at startup when keyring is
+                     absent so users understand the credential exposure risk.
+                     Single pip install command now covers all missing packages
+                     (required + optional) in one output block.
   1.65 (2026-04-21) — feat(health_check): AD/LDAP health, full cert inventory,
                      dedup/IO performance trends, audit-log 403 surfacing. New
                      fetch functions: _active_directory, _ldap_providers,
@@ -666,7 +674,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.65"
+__version__ = "1.66"
 
 import argparse
 import datetime
@@ -10324,7 +10332,7 @@ def main():
         ("python-docx",   DOCX_OK,      "required", "Word document generation (skip with --excel-only)"),
         ("python-pptx",   PPTX_OK,      "required", "PowerPoint deck output (~31 slides, always generated)"),
         ("matplotlib",    _pkg_ok("matplotlib"), "optional", "Topology PNG fallback for Word diagram"),
-        ("keyring",       _pkg_ok("keyring"),    "optional", "OS keychain credential storage"),
+        ("keyring",       _pkg_ok("keyring"),    "optional", "Stores API key in OS secure vault (macOS Keychain / Windows Credential Manager) — prevents credentials appearing in shell history and process lists"),
     ]
 
     # Apply mode exemptions: some required packages are not needed in certain modes
@@ -10368,6 +10376,13 @@ def main():
             sys.exit(1)
     else:
         print(f"  All {len(_PKG_TABLE)} packages OK")
+
+    if not _pkg_ok("keyring"):
+        print()
+        print("  SECURITY NOTE: keyring is not installed. API keys passed via --apikey")
+        print("  will appear in shell history and process lists (ps aux). Installing")
+        print("  keyring stores credentials in the OS secure vault instead.")
+        print("  Not applicable on headless Linux servers (no D-Bus/Secret Service).")
     print()
 
     # Build output filename: include customer name (if given) + local timestamp
