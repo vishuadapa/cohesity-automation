@@ -3177,10 +3177,11 @@ def _sheet_summary(wb, all_data):
         runway  = cd.get("capacity_runway") or {}
         dq      = runway.get("data_quality", "no_data")
         d80     = runway.get("days_to_80")
+        gr      = runway.get("daily_growth_tb", 0.0)
         if dq in ("no_data", "insufficient"):
             runway_val = "Insufficient data"
         elif d80 is None:
-            runway_val = "N/A — stable"
+            runway_val = f"Stable ({gr:+.2f} TB/day)"
         else:
             runway_val = f"{d80}d"
 
@@ -3607,7 +3608,7 @@ def _sheet_storage(wb, all_data):
         elif dq == "insufficient":
             runway_str = "Insufficient data"
         elif d80 is None:
-            runway_str = "N/A — stable"
+            runway_str = f"Stable ({daily_gr:+.2f} TB/day)" if daily_gr is not None else "Stable"
         elif d80 == 0:
             runway_str = "Already >80%"
         else:
