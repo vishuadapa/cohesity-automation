@@ -11214,8 +11214,13 @@ def main():
     print(f"\nCohesity Health Check Report  v{__version__}")
     print(f"  Auth     : {auth_desc}")
     print(f"  Customer : {args.customer or '(not specified)'}")
-    print(f"  Lookback : {args.days} days")
-    print(f"  Mode     : {'Quick (last-run only)' if args.quick else 'Full (run history)'}")
+    if args.quick:
+        print(f"  Lookback : {args.days} days (alerts, audit log, summaries)")
+        print(f"  Mode     : Quick — per-group run history skipped; "
+              f"protection stats from last-run only; FortKnox Data Transfer: last 1 day")
+    else:
+        print(f"  Lookback : {args.days} days")
+        print(f"  Mode     : Full (complete run history)")
     print(f"  Clusters : {', '.join(c.get('name', '?') for c in clusters)}")
     print()
 
