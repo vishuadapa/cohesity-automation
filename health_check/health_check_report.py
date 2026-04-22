@@ -8673,6 +8673,10 @@ def _sheet_guide(wb, all_data):
     from openpyxl.styles import Alignment as _Aln, PatternFill as _PF, Font as _Fnt
 
     ws = wb.create_sheet("Guide")
+    try:
+        ws.sheet_view.zoomScale = 130
+    except Exception:
+        pass
     SPAN  = "F"   # merge across A:F
     NC    = 6     # number of meaningful columns
 
