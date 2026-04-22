@@ -9,13 +9,13 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (including a built-in Guide tab), a **Word document**, an **editable topology diagram**, and an optional **PowerPoint topology slide**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **30-tab Excel workbook** (Guide tab + 29 data sheets), a **Word document**, and a **comprehensive ~27-slide PowerPoint deck**.
 
 ### What it produces
 
 | Output | Description |
 |--------|-------------|
-| Excel workbook | **25 tabs** — a **Guide tab** (first tab, with sheet descriptions, scoring methodology, and color legend) plus **24 data sheets** covering infrastructure (**fault tolerance margin**), node hardware with EOL status and **SW version skew flag**, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), **DataLock Verification** (snapshot-level WORM proof), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, quorum, **KMS type & risk**, **security & anomaly alert counts**), **agent health**, **source coverage**, **Recovery Audit** (recoverability proof — days since last test), **Unprotected Objects** (named object list), FortKnox/replication with **replication lag hours** and **last FK transfer date**, **Data Exposure** (NAS SMB/NFS/S3 risk), data services, coverage gaps, **user security** (MFA/locked/roles, **Risk Flag**, **custom role privilege audit**), 30-day trends with **duration trend chart**, recommendations, **per-workload risk heatmap**, and **30-day audit log** |
+| Excel workbook | **30 tabs** — a **Guide tab** (first tab, with sheet descriptions, scoring methodology, and color legend) plus **29 data sheets** covering infrastructure (**fault tolerance margin**), node hardware with EOL status and **SW version skew flag**, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), **Retention Health** (cluster retention summary, per-policy detail, P1/P2/P3 security recommendations), **DataLock Verification** (snapshot-level WORM proof), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, quorum, **KMS type & risk**, **security & anomaly alert counts**), **agent health**, **source coverage**, **Recovery Audit** (recoverability proof — days since last test), **Unprotected Objects** (named object list), FortKnox/replication with **replication lag hours**, **vault type**, and **last FK transfer date**, **Data Exposure** (NAS SMB/NFS/S3 risk), data services, coverage gaps, **user security** (MFA/locked/roles, **Risk Flag**, **custom role privilege audit**), 30-day trends with **duration trend chart**, recommendations, **per-workload risk heatmap**, **30-day audit log**, **AD & Identity Health** (AD/LDAP connection status), **Certificate Inventory** (TLS cert expiry RAG), and **Capacity & Perf Trends** (dedup ratio trend + I/O throughput) |
 | Word document | Narrative report with cover page, executive scorecard with **top at-risk workloads table**, environment overview, software & hardware lifecycle, protection health, storage with **capacity runway forecast**, **fully color-coded security posture table** (11 columns including **ransomware readiness score**, red/amber/green per finding) with **governance & change activity summary**, **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
 | PowerPoint deck | **~27-slide `.pptx` file** (requires `python-pptx`) — comprehensive presentation across 5 native PowerPoint sections: **Cover**, **Contents** (hyperlinked TOC), **Executive Summary** (KPI snapshot, health scorecard, capacity, protection, ransomware readiness, top at-risk workloads, priority actions), **Environment Topology** (cluster/replication/archival/FortKnox diagram with connector labels and legend), **Security Deep-Dive** (posture overview, user security & MFA, audit activity, security recommendations), **Backup Engineering** (SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations). Scoring methodology tables embedded inline at the bottom of each data slide. All data slides RAG colour-coded; 10pt body font. Topology also embedded as editable native shapes in the Word document. |
 
@@ -154,9 +154,9 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bun
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.62_AcmeCorp_20260417_1430.xlsx
-cohesity_health_check_v1.62_AcmeCorp_20260417_1430.docx
-cohesity_health_check_v1.62_AcmeCorp_20260417_1430.pptx
+cohesity_health_check_v1.68_AcmeCorp_20260422_1430.xlsx
+cohesity_health_check_v1.68_AcmeCorp_20260422_1430.docx
+cohesity_health_check_v1.68_AcmeCorp_20260422_1430.pptx
 ```
 
 The `.pptx` file is a comprehensive ~27-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Contents (hyperlinked TOC) · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering — all with RAG colour-coding and inline scoring methodology tables.
@@ -314,7 +314,7 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 
 | Folder | Purpose |
 |--------|---------|
-| [health_check/](health_check/) | **Multi-cluster health check** — 22-tab Excel workbook + Word report + editable topology diagram + PowerPoint slide for CBRs and SE engagements |
+| [health_check/](health_check/) | **Multi-cluster health check** — 30-tab Excel workbook (Guide + 29 data sheets) + Word report + ~27-slide PowerPoint deck for CBRs and SE engagements |
 | [reporting/](reporting/) | Protection group run reports and FortKnox vault data transfer reports |
 | [protection/](protection/) | Protection group management — run, pause, clone jobs |
 | [recovery/](recovery/) | Restore automation — VMs, files, file/folder recovery |

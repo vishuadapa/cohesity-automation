@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.67**
+**Current version: 1.68**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (Guide + 28 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
@@ -282,7 +282,8 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
-| 1.67 | 2026-04-22 | feat: new "Retention Health" tab (sheet 10) — cluster retention summary, per-policy detail, and P1/P2/P3 security recommendations covering short retention, no off-site copy, missing WORM, archive-shorter-than-local, and FortKnox gaps; `AMBER` color constant added (was referenced but undefined); sheet count 28 → 29. |
+| 1.68 | 2026-04-22 | fix: six post-v1.67 bug fixes — Key Rotation displays correctly in Security tab; Recovery Audit populates Objects Recovered, Source Cluster, and Target columns; Vault Type column D populated in Replication & Archive tab; topology excludes inactive targets and uses active vault count; keyring `NoKeyringError` handled on headless Linux (Rocky Linux); auth failure message includes shell quoting hint. |
+| 1.67 | 2026-04-22 | feat: new "Retention Health" tab (sheet 9) — cluster retention summary, per-policy detail, and P1/P2/P3 security recommendations covering short retention, no off-site copy, missing WORM, archive-shorter-than-local, and FortKnox gaps; `AMBER` color constant added (was referenced but undefined); sheet count 28 → 29. |
 | 1.66 | 2026-04-22 | fix: prereq security hardening — `python-pptx` promoted to required (PPT generated on every run); `keyring` description updated to explain credential exposure risk (shell history / process lists); security note printed at startup when keyring absent; single `pip install` command covers all missing packages in one block. |
 | 1.65 | 2026-04-21 | feat: AD/LDAP identity health sheet; full certificate inventory sheet with expiry RAG; Capacity & Perf Trends sheet (dedup ratio + I/O throughput charts); audit log 403 now surfaces actionable permission message; cert-expiry and AD/LDAP-disconnect recommendations added. Sheet count 25 → 28. |
 | 1.64 | 2026-04-21 | feat: 4 new API-backed features — **Recovery Audit sheet** (`/v2/data-protect/recoveries`): per-recovery status/duration/type with days-since-last-recovery RAG; **DataLock Verification sheet** (`/v2/data-protect/snapshots`): snapshot-level VERIFIED/PARTIAL/NOT LOCKED per DataLock group; **KMS section** in Security sheet (`/v1/public/kmsConfig`): key management type and risk; **Custom Role Definitions** in User Security (`/v1/public/roles`): privilege analysis with cluster/user/security-modify flags. Sheet count 23 → 25. CRITICAL recommendation if DataLock policy set but snapshots not locked. HIGH if no recovery in lookback window. |

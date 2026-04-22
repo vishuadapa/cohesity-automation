@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.67
+health_check_report.py  v1.68
 
 Multi-cluster Cohesity health check — 29-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -17,33 +17,37 @@ cluster) and produces:
   Excel sheets
   ────────────
   1  Executive Summary       — per-cluster health score & grade
-  2  Infrastructure          — versions, nodes, disks, config
-  3  Node Hardware           — per-node model, serial, EOL status
+  2  Infrastructure          — versions, nodes, disks, config; fault tolerance margin
+  3  Node Hardware           — per-node model, serial, EOL status, SW version match
   4  Disk Health             — per-disk status, SSD wear %, encryption
   5  Protection Health       — success rates, SLA, RPO gaps, DataLock per group
-  6  Storage & Capacity      — utilization, data reduction, runway
+  6  Storage & Capacity      — utilization, data reduction, predictive runway
   7  Policy Audit            — retention, replication, archival, DataLock per policy
   8  Policy → Groups         — every group with the policy that governs it
-  9  Alerts                  — open critical/warning with age
-  10 Security                — expanded checklist: encryption, FIPS, audit log, MFA,
+  9  Retention Health        — cluster retention summary, per-policy detail, P1/P2/P3 recs
+  10 Alerts                  — open critical/warning with age
+  11 Security                — expanded checklist: encryption, FIPS, audit log, MFA,
                                NTP auth, tunnel, SSO, cert expiry, vault, FK, DataLock,
-                               KMS sub-section
-  11 Agent Health            — per-host agent version, status, upgradability
-  12 Source Coverage         — registered sources with protected/unprotected counts
-  13 Unprotected Objects     — named unprotected objects per source
-  14 Recovery Audit          — recovery testing history, success rate, days since
-  15 Replication/Archive     — targets, last transfer, FortKnox
-  16 FortKnox Data Transfer  — per-group transfer to external targets (30d full / 1d quick)
-  17 Data Services           — NAS views, quota utilization
-  18 Data Exposure           — NAS share risk (SMB discovery, NFS open mount, S3)
-  19 Coverage Gaps           — groups with no recent successful backup
-  20 User Security           — user accounts, MFA, locked status, roles, last login,
-                               custom role definitions sub-section
-  21 Trends (30d)            — daily success rate + storage growth charts
-  22 Recommendations         — prioritized action list
-  23 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
-  24 Audit Log               — 30-day configuration change summary and detail log
-  25 DataLock Verification   — snapshot-level WORM confirmation for DataLock groups
+                               KMS sub-section, security & anomaly alert counts
+  12 Agent Health            — per-host agent version, status, upgradability
+  13 Source Coverage         — registered sources with protected/unprotected counts
+  14 Unprotected Objects     — named unprotected objects per source
+  15 Recovery Audit          — recovery testing history, success rate, days since
+  16 Replication & Archive   — targets, last transfer, vault type, FortKnox; replication lag
+  17 FortKnox Data Transfer  — per-group transfer to external targets (30d full / 1d quick)
+  18 Data Services           — NAS views, quota utilization
+  19 Data Exposure           — NAS share risk (SMB discovery, NFS open mount, S3)
+  20 Coverage Gaps           — groups with no recent successful backup
+  21 User Security           — user accounts, MFA, locked status, roles, last login,
+                               risk flags, custom role definitions sub-section
+  22 Trends (30d)            — daily success rate + avg duration charts
+  23 Recommendations         — prioritized action list
+  24 Workload Risk Heatmap   — all protection groups scored by recovery risk, worst-first
+  25 Audit Log               — 30-day configuration change summary and detail log
+  26 DataLock Verification   — snapshot-level WORM confirmation for DataLock groups
+  27 AD & Identity Health    — Active Directory / LDAP connection status
+  28 Certificate Inventory   — TLS certificate expiry with CRITICAL/HIGH/OK RAG
+  29 Capacity & Perf Trends  — dedup ratio trend (ransomware indicator) + I/O throughput
   + Guide tab (first)        — sheet descriptions, scoring methodology, color legend
 
   Word document
@@ -93,6 +97,23 @@ Requirements
 
 Version history
 ───────────────
+  1.68 (2026-04-22) — fix(health_check): six post-v1.67 bug fixes. Key Rotation
+                     now displays correctly in Security tab (was "Unknown").
+                     Recovery Audit populates Objects Recovered, Source Cluster,
+                     and Target columns. Vault Type column D populated in
+                     Replication & Archive tab. Topology diagram excludes
+                     inactive replication/archive targets and uses active vault
+                     count. keyring NoKeyringError handled gracefully on headless
+                     Linux (Rocky Linux). Auth failure message includes shell
+                     quoting hint for passwords with special characters.
+  1.67 (2026-04-22) — feat(health_check): new Retention Health tab (sheet 9) —
+                     cluster retention summary (min/max/avg local, archival,
+                     replication; DataLock coverage; FortKnox status; Risk Level
+                     HIGH/MEDIUM/LOW), per-policy detail (targets, WORM mode,
+                     flags), P1/P2/P3 security recommendations per cluster.
+                     AMBER color constant added (was referenced but undefined —
+                     caused NameError at runtime). Sheet count 28 → 29; all
+                     subsequent sheets renumbered; Guide tab updated.
   1.66 (2026-04-22) — fix(health_check): prereq security hardening. python-pptx
                      promoted to required (PPT is always generated). keyring
                      description updated to explain the security rationale
@@ -674,7 +695,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.67"
+__version__ = "1.68"
 
 import argparse
 import datetime

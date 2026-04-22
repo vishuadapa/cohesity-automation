@@ -7,6 +7,23 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] fix(health_check): v1.68 — six post-v1.67 bug fixes
+
+### Fixed — `health_check/health_check_report.py`
+- **Key Rotation showing "Unknown" in Security tab**: resolved field path mismatch that caused the KMS key rotation status to display as Unknown rather than the actual policy value.
+- **Recovery Audit missing columns**: `Objects Recovered`, `Source Cluster`, and `Target` columns now populated correctly from the recoveries API response.
+- **Vault Type column D empty in Replication & Archive tab**: vault type (e.g. `kFortKnox`, `kS3Compatible`) now correctly written to column D for all archive target rows.
+- **Topology diagram included inactive targets**: replication and archive targets that are no longer active were incorrectly shown in the environment topology; now filtered to active targets only. Vault count in topology also corrected to use the active vault count.
+- **keyring `NoKeyringError` crash on headless Linux**: Rocky Linux (and other headless servers) raise `NoKeyringError` instead of `keyring.errors.NoKeyringError` when no system keyring is available. Both exception types now caught so the script falls back gracefully without crashing.
+- **Auth failure message lacked shell quoting hint**: when authentication fails, the troubleshooting output now includes a note to quote passwords containing special characters (e.g. `!`, `$`, `&`) to prevent shell interpretation.
+
+### Changed
+- In-file docstring updated to v1.68; version history entry added.
+- README.md updated: tab count corrected to 30 (Guide + 29 data sheets); output filename examples updated to v1.68; repository structure row updated.
+- `health_check/health_check_report.md` version and history table updated.
+
+---
+
 ## [2026-04-22] feat(health_check): v1.67 — Retention Health tab + AMBER color constant fix
 
 ### Added — `health_check/health_check_report.py`
