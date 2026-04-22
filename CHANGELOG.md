@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] feat(health_check): v1.67 — Retention Health tab + AMBER color constant fix
+
+### Added — `health_check/health_check_report.py`
+- **New "Retention Health" tab (sheet 9)**: Three-section worksheet covering retention posture across all clusters and policies.
+  - *Section 1 — Cluster Summary*: One row per cluster showing min/max/avg local retention, min/max archival retention, min replication retention, DataLock coverage, FortKnox status, and a derived Risk Level (HIGH/MEDIUM/LOW) with full RAG color coding.
+  - *Section 2 — Per-Policy Detail*: One row per policy showing local retention + WORM mode, log retention, replication targets + min replication retention, archival targets + min archival retention, archive DataLock, and a per-policy Flags column (No off-site copy / Local < 7 days / Local < 14 days / Archive < Local retention / No WORM / Short archive).
+  - *Section 3 — Security Recommendations*: Auto-generated P1/P2/P3 prioritized findings per cluster: short local retention, no off-site copy, no WORM, retention 7–13 days, archive shorter than local, FortKnox not active/idle, and short archival (<30 days).
+- **`AMBER = "FFC000"` color constant defined**: AMBER was referenced in `_sheet_policy_groups` and `_sheet_cert_inventory` but was never declared, causing a `NameError` at runtime when those paths were hit. Added to the Excel palette block alongside RED, ORANGE, and YELLOW.
+
+### Changed
+- Sheet count updated: 28 tabs → 29 tabs; Alerts renumbered from 9 → 10, Security 10 → 11, and all subsequent sheets incremented by 1.
+- Guide tab `sheets_info` updated with entry for "Retention Health".
+- In-file docstring updated to v1.67 / 29-tab.
+
+---
+
 ## [2026-04-22] fix(health_check): v1.66 — prereq security hardening and packaging fixes
 
 ### Changed — `health_check/health_check_report.py`

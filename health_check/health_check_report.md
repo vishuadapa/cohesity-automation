@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.66**
+**Current version: 1.67**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **28-tab Excel workbook** (Guide + 27 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (Guide + 28 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,7 +10,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (28 tabs)
+### Excel Workbook (29 tabs)
 
 | # | Sheet | Contents |
 |---|-------|----------|
@@ -24,25 +24,26 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 7 | Policy Audit | Retention schedules, replication targets, archival targets, **DataLock (WORM)** mode + duration per policy; FortKnox/RPaaS policies show **"FortKnox (Indelible)"** in green — not flagged as "No DataLock" |
 | 8 | **DataLock Verification** | Snapshot-level DataLock check — VERIFIED / PARTIAL / NOT LOCKED per group; CRITICAL recommendation if policy says locked but snapshots are not |
 | 9 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
-| 10 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 11 | Security | **Expanded checklist** with security & anomaly alert sub-section and **Encryption Key Management** sub-section (KMS type, server, risk) |
-| 12 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
-| 13 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
-| 14 | **Recovery Audit** | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
-| 15 | **Unprotected Objects** | Named list of unprotected objects per source — red if count >10, amber if count >0 |
-| 16 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), **Replication Lag (hrs)** |
-| 17 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, **Last FK Archival date**, **Days Since FK Transfer** |
-| 18 | **Data Exposure** | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
-| 19 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
-| 20 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
-| 21 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login, **Risk Flag** (Stale Admin / Admin No MFA / Locked Admin); **Custom Role Definitions** sub-section |
-| 22 | Trends (30d) | Daily backup success rate + **Avg Duration (min)** column; dual line charts (success rate + duration trend) |
-| 23 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
-| 24 | **Workload Risk Heatmap** | All protection groups scored 0–100 by recovery risk (last-run status 35pts, SLA 25pts, RPO gap 25pts, DataLock 15pts); sorted worst-first with full-row RAG coloring |
-| 25 | **Audit Log** | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable message if API key lacks audit-log permission (HTTP 403) |
-| 26 | **AD / Identity Health** | Active Directory domain connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected identity sources highlighted red |
-| 27 | **Certificate Inventory** | Full TLS certificate inventory: name, type, subject, issuer, issued/expiry dates, days remaining — CRITICAL (<30d), HIGH (<90d), OK |
-| 28 | **Capacity & Perf Trends** | 30-day dedup ratio trend (ransomware indicator — sudden drop = data incompressible) and daily read/write I/O throughput (GB/day) with embedded line charts |
+| 10 | **Retention Health** | Three-section retention security analysis: (1) per-cluster summary — min/max/avg local retention, min/max archive, min replication, DataLock coverage, FortKnox status, Risk Level (HIGH/MEDIUM/LOW); (2) per-policy detail — local retention, WORM mode, log retention, replication targets + min retention, archival targets + min retention, archive DataLock, per-policy Flags; (3) prioritized P1/P2/P3 security recommendations per cluster |
+| 11 | Alerts | All open alerts sorted by severity, with age, description, and entity |
+| 12 | Security | **Expanded checklist** with security & anomaly alert sub-section and **Encryption Key Management** sub-section (KMS type, server, risk) |
+| 13 | **Agent Health** | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
+| 14 | **Source Coverage** | Registered sources with protected/unprotected object counts and coverage % |
+| 15 | **Recovery Audit** | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
+| 16 | **Unprotected Objects** | Named list of unprotected objects per source — red if count >10, amber if count >0 |
+| 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), **Replication Lag (hrs)** |
+| 18 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, **Last FK Archival date**, **Days Since FK Transfer** |
+| 19 | **Data Exposure** | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
+| 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
+| 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
+| 22 | **User Security** | User accounts, domain, roles, MFA status, locked status, last login, **Risk Flag** (Stale Admin / Admin No MFA / Locked Admin); **Custom Role Definitions** sub-section |
+| 23 | Trends (30d) | Daily backup success rate + **Avg Duration (min)** column; dual line charts (success rate + duration trend) |
+| 24 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+| 25 | **Workload Risk Heatmap** | All protection groups scored 0–100 by recovery risk (last-run status 35pts, SLA 25pts, RPO gap 25pts, DataLock 15pts); sorted worst-first with full-row RAG coloring |
+| 26 | **Audit Log** | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable message if API key lacks audit-log permission (HTTP 403) |
+| 27 | **AD & Identity Health** | Active Directory domain connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected identity sources highlighted red |
+| 28 | **Certificate Inventory** | Full TLS certificate inventory: name, type, subject, issuer, issued/expiry dates, days remaining — CRITICAL (<30d), HIGH (<90d), OK |
+| 29 | **Capacity & Perf Trends** | 30-day dedup ratio trend (ransomware indicator — sudden drop = data incompressible) and daily read/write I/O throughput (GB/day) with embedded line charts |
 
 ### Word Document
 
@@ -281,6 +282,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.67 | 2026-04-22 | feat: new "Retention Health" tab (sheet 10) — cluster retention summary, per-policy detail, and P1/P2/P3 security recommendations covering short retention, no off-site copy, missing WORM, archive-shorter-than-local, and FortKnox gaps; `AMBER` color constant added (was referenced but undefined); sheet count 28 → 29. |
 | 1.66 | 2026-04-22 | fix: prereq security hardening — `python-pptx` promoted to required (PPT generated on every run); `keyring` description updated to explain credential exposure risk (shell history / process lists); security note printed at startup when keyring absent; single `pip install` command covers all missing packages in one block. |
 | 1.65 | 2026-04-21 | feat: AD/LDAP identity health sheet; full certificate inventory sheet with expiry RAG; Capacity & Perf Trends sheet (dedup ratio + I/O throughput charts); audit log 403 now surfaces actionable permission message; cert-expiry and AD/LDAP-disconnect recommendations added. Sheet count 25 → 28. |
 | 1.64 | 2026-04-21 | feat: 4 new API-backed features — **Recovery Audit sheet** (`/v2/data-protect/recoveries`): per-recovery status/duration/type with days-since-last-recovery RAG; **DataLock Verification sheet** (`/v2/data-protect/snapshots`): snapshot-level VERIFIED/PARTIAL/NOT LOCKED per DataLock group; **KMS section** in Security sheet (`/v1/public/kmsConfig`): key management type and risk; **Custom Role Definitions** in User Security (`/v1/public/roles`): privilege analysis with cluster/user/security-modify flags. Sheet count 23 → 25. CRITICAL recommendation if DataLock policy set but snapshots not locked. HIGH if no recovery in lookback window. |

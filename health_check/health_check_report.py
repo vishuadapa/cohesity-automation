@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.66
+health_check_report.py  v1.67
 
-Multi-cluster Cohesity health check — 28-tab Excel workbook + Word document + comprehensive PowerPoint deck.
+Multi-cluster Cohesity health check — 29-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -674,7 +674,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.66"
+__version__ = "1.67"
 
 import argparse
 import datetime
@@ -1030,6 +1030,7 @@ COH_GREEN   = "70AD47"
 DARK_GREEN  = "4E7A2E"
 LT_GREEN    = "E2EFDA"
 RED         = "FF4C4C"
+AMBER       = "FFC000"
 ORANGE      = "FF8C00"
 YELLOW      = "FFD700"
 LIGHT_GRAY  = "F2F2F2"
@@ -3956,6 +3957,383 @@ def _sheet_policy_groups(wb, all_data):
             elif "warn" in status.lower() or "warning" in status.lower():
                 ws.cell(row=rn, column=7).fill = _fill(AMBER)
                 ws.cell(row=rn, column=7).font = _font(bold=True)
+
+    auto_fit_columns(ws)
+
+
+def _sheet_retention_health(wb, all_data):
+    ws = wb.create_sheet("Retention Health")
+    ws.freeze_panes = "A3"
+    _title(ws, "Retention Health — Local, Replication, Archival & WORM", "K")
+
+    _RET_MULT_R = {"Days": 1, "Weeks": 7, "Months": 30, "Years": 365}
+
+    def _r_to_days(r):
+        d = (r or {}).get("duration") or 0
+        u = (r or {}).get("unit", "Days")
+        return d * _RET_MULT_R.get(u, 1) if d else 0
+
+    def _days_label(days):
+        if not days:
+            return "N/A"
+        if days % 365 == 0:
+            y = days // 365
+            return f"{y} Year{'s' if y != 1 else ''}"
+        if days % 30 == 0:
+            m = days // 30
+            return f"{m} Month{'s' if m != 1 else ''}"
+        if days % 7 == 0:
+            w = days // 7
+            return f"{w} Week{'s' if w != 1 else ''}"
+        return f"{days} Days"
+
+    # ── Section 1: Cluster retention summary ─────────────────────────────────
+    s1_cols = [
+        "Cluster", "# Policies",
+        "Min Local", "Max Local", "Avg Local",
+        "Min Archive", "Max Archive",
+        "Min Replication",
+        "DataLock Coverage", "FortKnox",
+        "Risk Level",
+    ]
+    _hdr(ws, 2, s1_cols)
+
+    for cd in all_data:
+        policies   = cd["policies"]
+        local_vals, arch_vals, rep_vals = [], [], []
+
+        for p in policies:
+            bp  = p.get("backupPolicy") or {}
+            reg = bp.get("regular") or {}
+            rtp = p.get("remoteTargetPolicy") or {}
+            v = _r_to_days(reg.get("retention") or bp.get("retention") or {})
+            if v:
+                local_vals.append(v)
+            for t in (rtp.get("archivalTargets") or []):
+                v = _r_to_days(t.get("retention") or {})
+                if v:
+                    arch_vals.append(v)
+            for t in (rtp.get("replicationTargets") or []):
+                v = _r_to_days(t.get("retention") or {})
+                if v:
+                    rep_vals.append(v)
+
+        min_local = min(local_vals) if local_vals else None
+        max_local = max(local_vals) if local_vals else None
+        avg_local = round(sum(local_vals) / len(local_vals)) if local_vals else None
+        min_arch  = min(arch_vals)  if arch_vals  else None
+        max_arch  = max(arch_vals)  if arch_vals  else None
+        min_rep   = min(rep_vals)   if rep_vals   else None
+
+        dl_status, dl_label, _, _ = _cluster_datalock(policies, cd.get("groups") or [])
+        fk_st = cd.get("fk_status") or "none"
+
+        has_offsite = bool(arch_vals or rep_vals)
+        has_worm    = dl_status != "none"
+
+        if (min_local is not None and min_local < 7) or not has_offsite or not has_worm:
+            risk = "HIGH"
+        elif (min_local is not None and min_local < 14) or dl_status == "partial" or fk_st == "none":
+            risk = "MEDIUM"
+        else:
+            risk = "LOW"
+
+        row = [
+            cd["name"], len(policies),
+            _days_label(min_local), _days_label(max_local), _days_label(avg_local),
+            _days_label(min_arch),  _days_label(max_arch),
+            _days_label(min_rep),
+            dl_label,
+            (fk_st.capitalize() if fk_st else "None"),
+            risk,
+        ]
+        rn = ws.max_row + 1
+        for c, val in enumerate(row, 1):
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+        # Min Local (col 3) color
+        if min_local is not None:
+            lc = ws.cell(row=rn, column=3)
+            if min_local < 7:
+                lc.fill = _fill(RED);      lc.font = _font(bold=True, color=WHITE)
+            elif min_local < 14:
+                lc.fill = _fill(AMBER);    lc.font = _font(bold=True)
+            elif min_local < 30:
+                lc.fill = _fill(YELLOW);   lc.font = _font(bold=True)
+            else:
+                lc.fill = _fill(LT_GREEN)
+
+        # Min Archive (col 6) color
+        if min_arch is not None:
+            ac = ws.cell(row=rn, column=6)
+            if min_arch < 30:
+                ac.fill = _fill(AMBER); ac.font = _font(bold=True)
+            else:
+                ac.fill = _fill(LT_GREEN)
+
+        # DataLock (col 9)
+        dlc = ws.cell(row=rn, column=9)
+        if dl_status == "full_compliance":
+            dlc.fill = _fill(LT_GREEN); dlc.font = _font(bold=True)
+        elif dl_status in ("full_any", "partial"):
+            dlc.fill = _fill(YELLOW);   dlc.font = _font(bold=True)
+        else:
+            dlc.fill = _fill(RED);      dlc.font = _font(bold=True, color=WHITE)
+
+        # FortKnox (col 10)
+        fkc = ws.cell(row=rn, column=10)
+        if fk_st == "active":
+            fkc.fill = _fill(LT_GREEN); fkc.font = _font(bold=True)
+        elif fk_st == "idle":
+            fkc.fill = _fill(YELLOW);   fkc.font = _font(bold=True)
+        else:
+            fkc.fill = _fill(AMBER);    fkc.font = _font(bold=True)
+
+        # Risk (col 11)
+        rc = ws.cell(row=rn, column=11)
+        if risk == "HIGH":
+            rc.fill = _fill(RED);      rc.font = _font(bold=True, color=WHITE)
+        elif risk == "MEDIUM":
+            rc.fill = _fill(AMBER);    rc.font = _font(bold=True)
+        else:
+            rc.fill = _fill(LT_GREEN); rc.font = _font(bold=True)
+
+    # ── Section 2: Per-policy retention detail ───────────────────────────────
+    sec2_start = ws.max_row + 2
+    ws.cell(row=sec2_start, column=1,
+            value="Per-Policy Retention Detail").font = _font(bold=True, size=11)
+
+    s2_cols = [
+        "Cluster", "Policy Name",
+        "Local Retention", "Local DataLock (WORM)",
+        "Log Retention",
+        "Replication Targets", "Min Rep Retention",
+        "Archival Targets", "Min Archive Retention",
+        "Archive DataLock",
+        "Flags",
+    ]
+    _hdr(ws, sec2_start + 1, s2_cols)
+
+    for cd in all_data:
+        for p in cd["policies"]:
+            bp  = p.get("backupPolicy") or {}
+            reg = bp.get("regular") or {}
+            rtp = p.get("remoteTargetPolicy") or {}
+            rep_tgts  = rtp.get("replicationTargets") or []
+            arch_tgts = rtp.get("archivalTargets") or []
+
+            local_ret  = reg.get("retention") or bp.get("retention") or {}
+            log_ret    = (bp.get("log") or {}).get("retention") or {}
+            local_days = _r_to_days(local_ret)
+
+            def _rep_name(t):
+                return (t.get("targetName")
+                        or (t.get("remoteTargetConfig") or {}).get("clusterName")
+                        or (t.get("remoteTargetConfig") or {}).get("name") or "")
+
+            def _arch_name(t):
+                return (t.get("targetName")
+                        or (t.get("archivalTargetConfig") or {}).get("name")
+                        or (t.get("archivalTargetConfig") or {}).get("vaultName") or "")
+
+            rep_names  = ", ".join(filter(None, (_rep_name(t)  for t in rep_tgts)))  or "None"
+            arch_names = ", ".join(filter(None, (_arch_name(t) for t in arch_tgts))) or "None"
+
+            rep_days_l  = [_r_to_days(t.get("retention") or {}) for t in rep_tgts
+                           if _r_to_days(t.get("retention") or {})]
+            arch_days_l = [_r_to_days(t.get("retention") or {}) for t in arch_tgts
+                           if _r_to_days(t.get("retention") or {})]
+            min_rep_d  = min(rep_days_l)  if rep_days_l  else None
+            min_arch_d = min(arch_days_l) if arch_days_l else None
+
+            # Archive DataLock summary
+            arch_dl_parts = []
+            for t in arch_tgts:
+                dlc2 = (t.get("retention") or {}).get("dataLockConfig")
+                if isinstance(dlc2, dict) and dlc2.get("mode"):
+                    dur2  = dlc2.get("duration")
+                    unit2 = dlc2.get("unit", "Days")
+                    arch_dl_parts.append(
+                        f"{dlc2['mode']} / {dur2} {unit2}" if dur2 else dlc2["mode"])
+            arch_dl_str = "; ".join(arch_dl_parts) if arch_dl_parts else "None"
+
+            # Per-policy flags
+            flags = []
+            if not rep_tgts and not arch_tgts:
+                flags.append("No off-site copy")
+            if local_days and local_days < 7:
+                flags.append("Local < 7 days")
+            elif local_days and local_days < 14:
+                flags.append("Local < 14 days")
+            if min_arch_d and local_days and min_arch_d < local_days:
+                flags.append("Archive < Local retention")
+            dl_str = _policy_datalock_str(p)
+            if dl_str == "None":
+                flags.append("No WORM")
+            if min_arch_d and min_arch_d < 30:
+                flags.append("Short archive (<30d)")
+
+            row = [
+                cd["name"], p.get("name", ""),
+                _ret_str(local_ret) or "N/A",
+                dl_str,
+                _ret_str(log_ret) or "N/A",
+                rep_names, _days_label(min_rep_d),
+                arch_names, _days_label(min_arch_d),
+                arch_dl_str,
+                "; ".join(flags) if flags else "OK",
+            ]
+            rn = ws.max_row + 1
+            for c, val in enumerate(row, 1):
+                ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+
+            # Local retention (col 3) color
+            if local_days:
+                lc2 = ws.cell(row=rn, column=3)
+                if local_days < 7:
+                    lc2.fill = _fill(RED);   lc2.font = _font(bold=True, color=WHITE)
+                elif local_days < 14:
+                    lc2.fill = _fill(AMBER); lc2.font = _font(bold=True)
+
+            # Local DataLock (col 4) color
+            dl_cell = ws.cell(row=rn, column=4)
+            dl_low = dl_str.lower()
+            if "compliance" in dl_low:
+                dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
+            elif "admin" in dl_low:
+                dl_cell.fill = _fill(YELLOW);   dl_cell.font = _font(bold=True)
+            elif "fortknox" in dl_low:
+                dl_cell.fill = _fill(LT_GREEN); dl_cell.font = _font(bold=True)
+            else:
+                dl_cell.fill = _fill(RED);      dl_cell.font = _font(bold=True, color=WHITE)
+
+            # Flags (col 11) color
+            fc = ws.cell(row=rn, column=11)
+            if flags:
+                critical_flags = {"No off-site copy", "Local < 7 days", "No WORM"}
+                if any(f in critical_flags for f in flags):
+                    fc.fill = _fill(RED);   fc.font = _font(bold=True, color=WHITE)
+                else:
+                    fc.fill = _fill(AMBER); fc.font = _font(bold=True)
+
+    # ── Section 3: Retention security recommendations ─────────────────────────
+    sec3_start = ws.max_row + 2
+    ws.cell(row=sec3_start, column=1,
+            value="Retention Security Recommendations").font = _font(bold=True, size=11)
+
+    s3_cols = ["Priority", "Cluster", "Finding", "Detail", "Recommendation"]
+    _hdr(ws, sec3_start + 1, s3_cols)
+
+    _P_CLR = {"P1": (RED, WHITE), "P2": (AMBER, "000000"), "P3": (YELLOW, "000000")}
+
+    def _rec(priority, cluster, finding, detail, recommendation):
+        rn = ws.max_row + 1
+        for c, val in enumerate([priority, cluster, finding, detail, recommendation], 1):
+            ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
+        bg, fg = _P_CLR.get(priority, (YELLOW, "000000"))
+        pc = ws.cell(row=rn, column=1)
+        pc.fill = _fill(bg)
+        pc.font = _font(bold=True, color=fg)
+
+    def _plist(names):
+        s = ", ".join(names[:5])
+        return s + ("…" if len(names) > 5 else "")
+
+    def _pn(n, singular="policy", plural="policies"):
+        return f"{n} {singular if n == 1 else plural}"
+
+    for cd in all_data:
+        cname    = cd["name"]
+        policies = cd["policies"]
+        fk_st    = cd.get("fk_status") or "none"
+
+        short_local, medium_local, no_offsite = [], [], []
+        no_worm, arch_lt_local, short_archive = [], [], []
+
+        for p in policies:
+            pname = p.get("name", "")
+            bp    = p.get("backupPolicy") or {}
+            reg   = bp.get("regular") or {}
+            rtp   = p.get("remoteTargetPolicy") or {}
+            rep_t  = rtp.get("replicationTargets") or []
+            arch_t = rtp.get("archivalTargets") or []
+
+            local_ret  = reg.get("retention") or bp.get("retention") or {}
+            ld = _r_to_days(local_ret)
+
+            ad_list = [_r_to_days(t.get("retention") or {}) for t in arch_t
+                       if _r_to_days(t.get("retention") or {})]
+            min_ad  = min(ad_list) if ad_list else None
+
+            if ld and ld < 7:
+                short_local.append(pname)
+            elif ld and ld < 14:
+                medium_local.append(pname)
+            if not rep_t and not arch_t:
+                no_offsite.append(pname)
+            if _policy_datalock_str(p) == "None":
+                no_worm.append(pname)
+            if min_ad and ld and min_ad < ld:
+                arch_lt_local.append(pname)
+            if min_ad and min_ad < 30:
+                short_archive.append(pname)
+
+        if short_local:
+            _rec("P1", cname,
+                 "Local retention < 7 days",
+                 f"{_pn(len(short_local))}: {_plist(short_local)}",
+                 "Increase local retention to ≥7 days — ransomware dwell time often"
+                 " exceeds very short snapshot windows")
+
+        if no_offsite:
+            _rec("P1", cname,
+                 "No off-site copy",
+                 f"{_pn(len(no_offsite))}: {_plist(no_offsite)}",
+                 "Add at least one replication or archival target — local-only data"
+                 " is unrecoverable if the cluster is destroyed or compromised")
+
+        if no_worm:
+            _rec("P1", cname,
+                 "No DataLock (WORM) protection",
+                 f"{_pn(len(no_worm))}: {_plist(no_worm)}",
+                 "Enable DataLock Compliance mode — without WORM a compromised admin"
+                 " can delete all snapshots before a ransom demand is discovered")
+
+        if medium_local:
+            _rec("P2", cname,
+                 "Local retention 7–13 days",
+                 f"{_pn(len(medium_local))}: {_plist(medium_local)}",
+                 "Consider extending to ≥14 days — average ransomware dwell time"
+                 " before detection is ~9–11 days")
+
+        if arch_lt_local:
+            _rec("P2", cname,
+                 "Archival retention shorter than local retention",
+                 f"{_pn(len(arch_lt_local))}: {_plist(arch_lt_local)}",
+                 "Archival copies should retain data at least as long as local copies;"
+                 " otherwise the remote copy expires first, leaving only the"
+                 " (potentially compromised) local snapshot")
+
+        if fk_st == "none":
+            _rec("P2", cname,
+                 "FortKnox not active",
+                 "No FortKnox data transfer detected",
+                 "Enable FortKnox for immutable, air-gapped cloud copies that cannot"
+                 " be deleted even by a cluster admin")
+
+        if short_archive:
+            _rec("P3", cname,
+                 "Archival retention < 30 days",
+                 f"{_pn(len(short_archive))}: {_plist(short_archive)}",
+                 "Archival targets should retain ≥30 days for incident response;"
+                 " consider 90+ days for regulated workloads")
+
+        if fk_st == "idle":
+            _rec("P3", cname,
+                 "FortKnox configured but not transferring data",
+                 "Vault exists but no recent transfer activity detected",
+                 "Review FortKnox archival policy targets — a configured but idle"
+                 " vault provides no protection")
 
     auto_fit_columns(ws)
 
@@ -8819,6 +9197,11 @@ def _sheet_guide(wb, all_data):
         ("Policy Audit",           "Policy retention schedules, replication targets, archival targets, "
                                    "and DataLock (WORM) mode and duration per policy"),
         ("Policy → Groups",        "Every protection group listed alongside the policy that governs it"),
+        ("Retention Health",       "Three-section retention analysis: (1) per-cluster summary — min/max/avg local, "
+                                   "archival, replication retention, DataLock coverage, FortKnox status, and risk level; "
+                                   "(2) per-policy detail — all targets, WORM status, and per-policy flags; "
+                                   "(3) prioritised security recommendations (P1/P2/P3) for short retention, "
+                                   "no off-site copy, missing WORM, archive-shorter-than-local, and FortKnox gaps"),
         ("Alerts",                 "All open critical and warning alerts, sorted by severity, with age and description"),
         ("Security",               "21-column checklist: encryption, vault, FortKnox, replication, audit log, MFA, "
                                    "NTP auth, quorum, TLS cert expiry, ransomware score; plus KMS sub-section "
@@ -9374,26 +9757,27 @@ def write_excel(all_data, args):
     _sheet_storage(wb, all_data)           # 6
     _sheet_policies(wb, all_data)          # 7
     _sheet_policy_groups(wb, all_data)     # 8
-    _sheet_alerts(wb, all_data)            # 9
-    _sheet_security(wb, all_data)          # 10 (+ KMS sub-section)
-    _sheet_agent_health(wb, all_data)      # 11
-    _sheet_source_coverage(wb, all_data)   # 12
-    _sheet_unprotected_objects(wb, all_data) # 13
-    _sheet_recovery_history(wb, all_data)  # 14 NEW
-    _sheet_replication(wb, all_data)       # 15
-    _sheet_fortknox_detail(wb, all_data)   # 16
-    _sheet_views(wb, all_data)             # 17
-    _sheet_data_exposure(wb, all_data)     # 18
-    _sheet_coverage(wb, all_data)          # 19
-    _sheet_user_security(wb, all_data)     # 20 (+ Custom Roles sub-section)
-    _sheet_trends(wb, all_data)            # 21
-    _sheet_recommendations(wb, all_data)   # 22
-    _sheet_risk_heatmap(wb, all_data)      # 23
-    _sheet_audit_log(wb, all_data)         # 24
-    _sheet_datalock_verification(wb, all_data)  # 25
-    _sheet_ad_identity(wb, all_data)       # 26 NEW
-    _sheet_cert_inventory(wb, all_data)    # 27 NEW
-    _sheet_perf_trends(wb, all_data)       # 28 NEW
+    _sheet_retention_health(wb, all_data)  # 9
+    _sheet_alerts(wb, all_data)            # 10
+    _sheet_security(wb, all_data)          # 11 (+ KMS sub-section)
+    _sheet_agent_health(wb, all_data)      # 12
+    _sheet_source_coverage(wb, all_data)   # 13
+    _sheet_unprotected_objects(wb, all_data) # 14
+    _sheet_recovery_history(wb, all_data)  # 15
+    _sheet_replication(wb, all_data)       # 16
+    _sheet_fortknox_detail(wb, all_data)   # 17
+    _sheet_views(wb, all_data)             # 18
+    _sheet_data_exposure(wb, all_data)     # 19
+    _sheet_coverage(wb, all_data)          # 20
+    _sheet_user_security(wb, all_data)     # 21 (+ Custom Roles sub-section)
+    _sheet_trends(wb, all_data)            # 22
+    _sheet_recommendations(wb, all_data)   # 23
+    _sheet_risk_heatmap(wb, all_data)      # 24
+    _sheet_audit_log(wb, all_data)         # 25
+    _sheet_datalock_verification(wb, all_data)  # 26
+    _sheet_ad_identity(wb, all_data)       # 27
+    _sheet_cert_inventory(wb, all_data)    # 28
+    _sheet_perf_trends(wb, all_data)       # 29
 
     out = f"{args.output}.xlsx"
     wb.save(out)

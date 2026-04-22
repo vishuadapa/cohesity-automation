@@ -9,7 +9,7 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **28-tab Excel workbook** (including a built-in Guide tab), a **Word document**, an **editable topology diagram**, and an optional **PowerPoint topology slide**.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (including a built-in Guide tab), a **Word document**, an **editable topology diagram**, and an optional **PowerPoint topology slide**.
 
 ### What it produces
 
@@ -19,7 +19,7 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 | Word document | Narrative report with cover page, executive scorecard with **top at-risk workloads table**, environment overview, software & hardware lifecycle, protection health, storage with **capacity runway forecast**, **fully color-coded security posture table** (11 columns including **ransomware readiness score**, red/amber/green per finding) with **governance & change activity summary**, **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
 | PowerPoint deck | **~27-slide `.pptx` file** (requires `python-pptx`) — comprehensive presentation across 5 native PowerPoint sections: **Cover**, **Contents** (hyperlinked TOC), **Executive Summary** (KPI snapshot, health scorecard, capacity, protection, ransomware readiness, top at-risk workloads, priority actions), **Environment Topology** (cluster/replication/archival/FortKnox diagram with connector labels and legend), **Security Deep-Dive** (posture overview, user security & MFA, audit activity, security recommendations), **Backup Engineering** (SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations). Scoring methodology tables embedded inline at the bottom of each data slide. All data slides RAG colour-coded; 10pt body font. Topology also embedded as editable native shapes in the Word document. |
 
-### Sheet reference (28 tabs)
+### Sheet reference (29 tabs)
 
 | # | Sheet | Key content |
 |---|-------|-------------|
@@ -33,25 +33,26 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 | 7 | Policy Audit | Retention schedules, replication targets, archival targets, DataLock (WORM) mode + duration per policy; FortKnox/RPaaS policies flagged "FortKnox (Indelible)" |
 | 8 | DataLock Verification | Snapshot-level DataLock check — VERIFIED / PARTIAL / NOT LOCKED per group; CRITICAL recommendation if policy says locked but snapshots are not |
 | 9 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
-| 10 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 11 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, ransomware score, anomaly alerts, KMS/encryption key management |
-| 12 | Agent Health | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
-| 13 | Source Coverage | Registered sources with protected/unprotected object counts and coverage % |
-| 14 | Recovery Audit | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
-| 15 | Unprotected Objects | Named list of unprotected objects per source — red if count >10, amber if count >0 |
-| 16 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), replication lag (hrs) |
-| 17 | FortKnox Data Transfer | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, last FK archival date, days since FK transfer |
-| 18 | Data Exposure | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
-| 19 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
-| 20 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
-| 21 | User Security | Per-user MFA status, locked state, roles, last login, risk flag (Stale Admin / Admin No MFA / Locked Admin); custom role definitions sub-section |
-| 22 | Trends (30d) | Daily backup success rate and avg duration; dual line charts for success rate and duration trend |
-| 23 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
-| 24 | Workload Risk Heatmap | All protection groups scored 0–100 by recovery risk (last-run 35pts, SLA 25pts, RPO 25pts, DataLock 15pts); sorted worst-first with RAG coloring |
-| 25 | Audit Log | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable permission message on HTTP 403 |
-| 26 | AD / Identity Health | Active Directory connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected sources flagged red |
-| 27 | Certificate Inventory | Full TLS certificate inventory with expiry dates and days remaining — CRITICAL (<30d), HIGH (<90d), OK |
-| 28 | Capacity & Perf Trends | 30-day dedup ratio trend (ransomware indicator) and daily I/O throughput (read/write GB) with embedded charts |
+| 10 | Retention Health | Three-section retention analysis: cluster summary (min/max/avg local, archive, replication retention + DataLock + FortKnox + Risk Level); per-policy detail with flags; P1/P2/P3 security recommendations |
+| 11 | Alerts | All open alerts sorted by severity, with age, description, and entity |
+| 12 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, ransomware score, anomaly alerts, KMS/encryption key management |
+| 13 | Agent Health | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
+| 14 | Source Coverage | Registered sources with protected/unprotected object counts and coverage % |
+| 15 | Recovery Audit | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
+| 16 | Unprotected Objects | Named list of unprotected objects per source — red if count >10, amber if count >0 |
+| 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), replication lag (hrs) |
+| 18 | FortKnox Data Transfer | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, last FK archival date, days since FK transfer |
+| 19 | Data Exposure | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
+| 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
+| 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
+| 22 | User Security | Per-user MFA status, locked state, roles, last login, risk flag (Stale Admin / Admin No MFA / Locked Admin); custom role definitions sub-section |
+| 23 | Trends (30d) | Daily backup success rate and avg duration; dual line charts for success rate and duration trend |
+| 24 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
+| 25 | Workload Risk Heatmap | All protection groups scored 0–100 by recovery risk (last-run 35pts, SLA 25pts, RPO 25pts, DataLock 15pts); sorted worst-first with RAG coloring |
+| 26 | Audit Log | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable permission message on HTTP 403 |
+| 27 | AD & Identity Health | Active Directory connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected sources flagged red |
+| 28 | Certificate Inventory | Full TLS certificate inventory with expiry dates and days remaining — CRITICAL (<30d), HIGH (<90d), OK |
+| 29 | Capacity & Perf Trends | 30-day dedup ratio trend (ransomware indicator) and daily I/O throughput (read/write GB) with embedded charts |
 
 ### Prerequisites
 
@@ -68,7 +69,7 @@ Full package list:
 | Package | Required? | Purpose | Install |
 |---------|-----------|---------|---------|
 | `requests` | **Yes** | HTTP client for Cohesity REST API calls | `pip install requests` |
-| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (28 sheets) | `pip install openpyxl` |
+| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (29 sheets) | `pip install openpyxl` |
 | `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip install python-docx` |
 | `matplotlib` | Optional | Topology PNG fallback if native Word shapes fail | `pip install matplotlib` |
 | `python-pptx` | Optional | Comprehensive ~27-slide PowerPoint deck (.pptx) | `pip install python-pptx` |
