@@ -3949,10 +3949,13 @@ def _sheet_policy_groups(wb, all_data):
             if paused:
                 ws.cell(row=rn, column=6).fill = _fill(YELLOW)
                 ws.cell(row=rn, column=6).font = _font(bold=True)
-            # Highlight failed status
+            # Highlight last run status
             if status in ("kFailure", "Failed"):
                 ws.cell(row=rn, column=7).fill = _fill(RED)
                 ws.cell(row=rn, column=7).font = _font(bold=True, color=WHITE)
+            elif "warn" in status.lower() or "warning" in status.lower():
+                ws.cell(row=rn, column=7).fill = _fill(AMBER)
+                ws.cell(row=rn, column=7).font = _font(bold=True)
 
     auto_fit_columns(ws)
 
