@@ -9573,18 +9573,74 @@ def _sheet_recovery_history(wb, all_data):
 
             rec_type   = (rec.get("recoveryAction") or rec.get("type")
                           or rec.get("snapshotEnvironment") or "")
-            obj_list   = rec.get("objects") or []
-            obj_count  = len(obj_list) if isinstance(obj_list, list) else ""
 
+            # Objects Recovered — try top-level list first, then env-specific params
+            obj_list = rec.get("objects") or []
+            # env-specific params may also carry an objects list
+            _env_params_keys = [
+                "vmwareParams", "physicalParams", "sqlParams", "oracleParams",
+                "hypervParams", "nutanixParams", "awsParams", "azureParams",
+                "gcpParams", "nasParams", "filesAndFoldersParams",
+                "office365Params", "pureParams",
+            ]
+            if not obj_list:
+                for _epk in _env_params_keys:
+                    _ep = rec.get(_epk)
+                    if isinstance(_ep, dict):
+                        _ep_objs = _ep.get("objects") or _ep.get("recoverVmParams", {}).get("objects") or []
+                        if _ep_objs:
+                            obj_list = _ep_objs
+                            break
+            # Also try top-level objectCount
+            _obj_count_field = rec.get("objectCount") or rec.get("numObjects")
+            if obj_list:
+                obj_count = len(obj_list) if isinstance(obj_list, list) else _obj_count_field or ""
+            else:
+                obj_count = _obj_count_field or ""
+
+            # Source Cluster — from objects[].object.sourceInfo or snapshotInfo
             src_cluster = ""
-            target      = ""
-            params      = rec.get("vmwareParams") or rec.get("physicalParams") or {}
-            if isinstance(params, dict):
-                target = (params.get("targetHost") or params.get("recoveryTargetConfig")
-                          or {})
-                if isinstance(target, dict):
-                    target = target.get("newSourceConfig", {}).get("host", {}).get("name", "") or \
-                             target.get("originalSourceConfig", {}).get("host", {}).get("name", "")
+            if isinstance(obj_list, list) and obj_list:
+                _o0 = obj_list[0] if isinstance(obj_list[0], dict) else {}
+                src_cluster = (
+                    (_o0.get("object") or {}).get("sourceInfo", {}).get("name", "")
+                    or (_o0.get("snapshotInfo") or {}).get("sourceClusterName", "")
+                    or (_o0.get("objectInfo") or {}).get("sourceInfo", {}).get("name", "")
+                    or (_o0.get("object") or {}).get("parentSourceName", "")
+                )
+
+            # Target — try all env param keys for recoveryTargetConfig / targetHost
+            target = ""
+            for _epk in _env_params_keys:
+                _ep = rec.get(_epk)
+                if not isinstance(_ep, dict):
+                    continue
+                _rtc = _ep.get("recoveryTargetConfig") or _ep.get("recoverToNewSource") or {}
+                if isinstance(_rtc, dict):
+                    target = (
+                        _rtc.get("newSourceConfig", {}).get("host", {}).get("name", "")
+                        or _rtc.get("recoverToNewSource", {}).get("targetHost", {}).get("name", "")
+                        or (_rtc.get("recoverToNewSource") or {}).get("name", "")
+                    )
+                if not target:
+                    _th = _ep.get("targetHost") or _ep.get("targetEnvironment") or ""
+                    if isinstance(_th, dict):
+                        target = _th.get("name", "") or _th.get("hostname", "")
+                    elif isinstance(_th, str):
+                        target = _th
+                if target:
+                    break
+            # Fall back: top-level recoveryTargetConfig
+            if not target:
+                _rtc2 = rec.get("recoveryTargetConfig") or {}
+                if isinstance(_rtc2, dict):
+                    target = (
+                        _rtc2.get("newSourceConfig", {}).get("host", {}).get("name", "")
+                        or _rtc2.get("originalSourceConfig", {}).get("host", {}).get("name", "")
+                        or _rtc2.get("targetClusterName", "")
+                    )
+            if not target:
+                target = "Original Location"
 
             notes = ""
             if is_succ:
