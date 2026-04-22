@@ -726,9 +726,13 @@ except ImportError:
 
     def _keyring_available():
         try:
-            import keyring  # noqa: F401
+            import keyring
+            # A real get_password call returns None (no such entry) when a
+            # working backend exists, or raises NoKeyringError on headless Linux
+            # where keyring is installed but no OS keychain is present.
+            keyring.get_password("_cohesity_probe_", "_probe_")
             return True
-        except ImportError:
+        except Exception:
             return False
 
     def get_api_key(cli_key=None):
