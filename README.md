@@ -41,7 +41,7 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 | 15 | Recovery Audit | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
 | 16 | Unprotected Objects | Named list of unprotected objects per source — red if count >10, amber if count >0 |
 | 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), replication lag (hrs) |
-| 18 | FortKnox Data Transfer | Per-protection-group transfer to every external vault: storage consumed TB (cumulative, from dataTransferToVaults API), logical TB, physical TB, data read TB, data written TB (from group run records — same sources as FortKnox vault report), last FK archival date, days since FK transfer |
+| 18 | FortKnox Data Transfer | Per-protection-group transfer to every external vault: storage consumed TB (cumulative), last FK archival date, days since FK transfer |
 | 19 | Data Exposure | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
 | 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
 | 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
@@ -154,9 +154,9 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bun
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.70_AcmeCorp_20260422_1430.xlsx
-cohesity_health_check_v1.70_AcmeCorp_20260422_1430.docx
-cohesity_health_check_v1.70_AcmeCorp_20260422_1430.pptx
+cohesity_health_check_v1.71_AcmeCorp_20260422_1430.xlsx
+cohesity_health_check_v1.71_AcmeCorp_20260422_1430.docx
+cohesity_health_check_v1.71_AcmeCorp_20260422_1430.pptx
 ```
 
 The `.pptx` file is a comprehensive ~27-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Contents (hyperlinked TOC) · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering — all with RAG colour-coding and inline scoring methodology tables.

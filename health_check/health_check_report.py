@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.70
+health_check_report.py  v1.71
 
 Multi-cluster Cohesity health check — 29-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -34,8 +34,7 @@ cluster) and produces:
   14 Unprotected Objects     — named unprotected objects per source
   15 Recovery Audit          — recovery testing history, success rate, days since
   16 Replication & Archive   — targets, last transfer, vault type, FortKnox; replication lag
-  17 FortKnox Data Transfer  — per-group transfer: storage consumed, logical, physical,
-                               data read, data written (all TB); last FK archival date
+  17 FortKnox Data Transfer  — per-group storage consumed (TB); last FK archival date
   18 Data Services           — NAS views, quota utilization
   19 Data Exposure           — NAS share risk (SMB discovery, NFS open mount, S3)
   20 Coverage Gaps           — groups with no recent successful backup
@@ -98,6 +97,11 @@ Requirements
 
 Version history
 ───────────────
+  1.71 (2026-04-22) — fix(health_check): FortKnox Data Transfer — remove columns
+                     Logical Transferred, Physical Transferred, Data Read, and
+                     Data Written. Sheet now shows Cluster, Vault Name, Vault
+                     Type, Protection Group, Storage Consumed (TB), Period,
+                     Last FK Archival, Days Since FK Transfer.
   1.70 (2026-04-22) — fix(health_check): clarify quick-mode CLI output. In quick
                      mode "Lookback: 30 days" was misleading because it implied
                      all data covered 30 days. Lookback line now reads "N days
@@ -714,7 +718,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.70"
+__version__ = "1.71"
 
 import argparse
 import datetime
@@ -5090,29 +5094,23 @@ def _sheet_replication(wb, all_data):
 def _sheet_fortknox_detail(wb, all_data):
     """Per-protection-group data transfer to FortKnox / external vault targets.
 
-    Data sources mirror the FortKnox vault report:
-      - Storage Consumed (TB): dataTransferToVaults API → storageConsumed (cumulative)
-      - Logical/Physical Transferred (TB): group runs API →
-          archivalInfo.archivalTargetResults logicalBytesTransferred /
-          physicalBytesTransferred (summed over the lookback window)
-      - Data Read/Written (TB): group runs API →
-          localBackupInfo.localSnapshotStats bytesRead / bytesWritten
+    Columns: Cluster, Vault Name, Vault Type, Protection Group,
+             Storage Consumed (TB), Period, Last FK Archival, Days Since FK Transfer.
+    Storage Consumed from dataTransferToVaults API (cumulative vault footprint).
+    Last FK Archival derived from full group run history.
     Full mode: covers the full lookback window (args.days, default 30 days).
-    Quick mode: covers the last 1 day only; runs-derived columns show 0.
+    Quick mode: covers the last 1 day only; last archival falls back to lastRun.
     """
     ws = wb.create_sheet("FortKnox Data Transfer")
     ws.freeze_panes = "A3"
     _title(ws,
-           "FortKnox / External Target Data Transfer — Per Protection Group", "L")
+           "FortKnox / External Target Data Transfer — Per Protection Group", "H")
 
     import datetime as _dt_fk
 
     cols = ["Cluster", "Vault Name", "Vault Type", "Protection Group",
             "Storage Consumed (TB)",
-            "Logical Transferred (TB)", "Physical Transferred (TB)",
-            "Data Read (TB)", "Data Written (TB)",
-            "Period",
-            "Last FK Archival", "Days Since FK Transfer"]
+            "Period", "Last FK Archival", "Days Since FK Transfer"]
     _hdr(ws, 2, cols)
 
     def _vtype_label(vt):
@@ -5134,23 +5132,15 @@ def _sheet_fortknox_detail(wb, all_data):
         tl = (ttype or "").lower()
         return any(x in tl for x in _FK_TYPES) or "fortknox" in (tname or "").lower()
 
-    def _xfer_bytes(ar, field):
-        stats = ar.get("stats") or {}
-        return int(stats.get(field) or ar.get(field) or 0)
-
     for cd in all_data:
         quick     = cd.get("quick", False)
         days      = cd.get("days", 30)
         fk_source = cd.get("fk_data_1d") if quick else (cd.get("fk_data") or [])
         period    = "Last 1 day" if quick else f"Last {days} days"
 
-        # Build per-(group_name, vault_name) aggregates from full run history.
-        # Mirrors the FortKnox vault report: logical/physical from each archival
-        # run's archivalTargetResults; bytesRead/bytesWritten from each backup
-        # run's localSnapshotStats.  In quick mode group_runs is empty so all
-        # runs-derived values remain 0.
-        run_agg = {}   # group_name → vault_name → {logical, physical, last_end}
-        act_agg = {}   # group_name → {data_read, data_written}
+        # Build per-(group_name, vault_name) most-recent FK archival end time
+        # from full run history. In quick mode group_runs is empty.
+        run_last = {}  # group_name → vault_name → last_end (usecs)
 
         gid_to_name = {g.get("id"): g.get("name", "") for g in cd["groups"]}
 
@@ -5158,13 +5148,7 @@ def _sheet_fortknox_detail(wb, all_data):
             gname = gid_to_name.get(gid, "")
             if not gname:
                 continue
-            dr = dw = 0
             for run in runs:
-                local_stats = ((run.get("localBackupInfo") or {})
-                               .get("localSnapshotStats") or {})
-                dr += int(local_stats.get("bytesRead",    0) or 0)
-                dw += int(local_stats.get("bytesWritten", 0) or 0)
-
                 for ar in ((run.get("archivalInfo") or {})
                            .get("archivalTargetResults") or []):
                     ttype = (ar.get("targetType") or
@@ -5172,21 +5156,11 @@ def _sheet_fortknox_detail(wb, all_data):
                     tname = ar.get("targetName") or ""
                     if not _is_fk_target(ttype, tname):
                         continue
-                    log   = _xfer_bytes(ar, "logicalBytesTransferred")
-                    phy   = _xfer_bytes(ar, "physicalBytesTransferred")
                     end_u = ar.get("endTimeUsecs") or 0
-                    vagg  = run_agg.setdefault(gname, {}).setdefault(tname, {
-                        "logical": 0, "physical": 0, "last_end": 0
-                    })
-                    vagg["logical"]  += log
-                    vagg["physical"] += phy
-                    if end_u > vagg["last_end"]:
-                        vagg["last_end"] = end_u
+                    if end_u > run_last.setdefault(gname, {}).get(tname, 0):
+                        run_last[gname][tname] = end_u
 
-            act_agg[gname] = {"data_read": dr, "data_written": dw}
-
-        # Fallback for last FK archival when group_runs is empty (quick mode):
-        # use lastRun from each group summary (less accurate but better than nothing).
+        # Fallback (quick mode): use lastRun from group summary.
         if not cd.get("group_runs"):
             for g in cd["groups"]:
                 gname = g.get("name", "")
@@ -5200,11 +5174,8 @@ def _sheet_fortknox_detail(wb, all_data):
                     if not _is_fk_target(ttype, tname):
                         continue
                     end_u = ar.get("endTimeUsecs") or 0
-                    vagg  = run_agg.setdefault(gname, {}).setdefault(tname, {
-                        "logical": 0, "physical": 0, "last_end": 0
-                    })
-                    if end_u > vagg["last_end"]:
-                        vagg["last_end"] = end_u
+                    if end_u > run_last.setdefault(gname, {}).get(tname, 0):
+                        run_last[gname][tname] = end_u
 
         has_rows = False
         for fk in (fk_source or []):
@@ -5214,14 +5185,7 @@ def _sheet_fortknox_detail(wb, all_data):
                 jname    = job.get("protectionJobName", "")
                 consumed = round(bytes_to_tb(job.get("storageConsumed") or 0), 4)
 
-                rv       = (run_agg.get(jname) or {}).get(vname) or {}
-                logical  = round(bytes_to_tb(rv.get("logical",  0)), 4)
-                physical = round(bytes_to_tb(rv.get("physical", 0)), 4)
-                acts     = act_agg.get(jname) or {}
-                data_read    = round(bytes_to_tb(acts.get("data_read",    0)), 4)
-                data_written = round(bytes_to_tb(acts.get("data_written", 0)), 4)
-
-                last_end_u = rv.get("last_end", 0)
+                last_end_u = (run_last.get(jname) or {}).get(vname, 0)
                 if last_end_u:
                     last_fk_str = _dt_fk.datetime.fromtimestamp(
                         last_end_u / 1_000_000,
@@ -5234,14 +5198,13 @@ def _sheet_fortknox_detail(wb, all_data):
 
                 rn  = ws.max_row + 1
                 row = [cd["name"], vname, vtype, jname,
-                       consumed, logical, physical, data_read, data_written,
-                       period, last_fk_str,
+                       consumed, period, last_fk_str,
                        days_since if days_since is not None else ""]
                 for c, val in enumerate(row, 1):
                     ws.cell(row=rn, column=c, value=_safe_cell(val)).font = _FONT_NORMAL
 
-                # Color "Days Since FK Transfer" cell (col 12)
-                dc = ws.cell(row=rn, column=12)
+                # Color "Days Since FK Transfer" cell (col 8)
+                dc = ws.cell(row=rn, column=8)
                 if days_since is None:
                     dc.fill = _fill(YELLOW); dc.font = _font(bold=True)
                 elif days_since > 14:
@@ -9463,9 +9426,8 @@ def _sheet_guide(wb, all_data):
         ("Replication & Archive",  "Replication partner targets, archival vault names/types, FortKnox storage consumed, "
                                    "and replication lag in hours"),
         ("FortKnox Data Transfer", "Per-group transfer to FortKnox/external vaults: storage consumed TB "
-                                   "(cumulative, from dataTransferToVaults API), logical TB, physical TB, "
-                                   "data read TB, data written TB (all from group run records — same sources "
-                                   "as the FortKnox vault report); last FK archival date and days since"),
+                                   "(cumulative, from dataTransferToVaults API); last FK archival date "
+                                   "and days since (from full run history)"),
         ("Data Services",          "NAS views with protocol, quota configuration, usage %, and near-quota warnings"),
         ("Data Exposure",          "NAS view access risk: SMB discovery, NFS open mount, S3 enabled, quota presence — "
                                    "HIGH/MEDIUM/LOW risk per view"),

@@ -7,6 +7,15 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] fix(health_check): v1.71 — FortKnox Data Transfer column reduction
+
+### Changed — `health_check/health_check_report.py`
+- **Removed columns**: Logical Transferred (TB), Physical Transferred (TB), Data Read (TB), Data Written (TB).
+- **Remaining columns**: Cluster, Vault Name, Vault Type, Protection Group, Storage Consumed (TB), Period, Last FK Archival, Days Since FK Transfer.
+- Run aggregation simplified — only tracks most-recent FK archival `endTimeUsecs` per (group, vault); logical/physical/activity byte summation removed.
+
+---
+
 ## [2026-04-22] fix(health_check): v1.70 — clarify quick-mode CLI output
 
 ### Changed — `health_check/health_check_report.py`
