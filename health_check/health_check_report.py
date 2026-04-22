@@ -1657,7 +1657,6 @@ def collect_cluster(session, api_key, cluster, args):
         _fut_users   = _ex.submit(_users,                 session, h, dbg)
         _fut_idps    = _ex.submit(_idps,                  session, h, dbg)
         _fut_tenants = _ex.submit(_tenants,               session, h, dbg)
-        _fut_capts   = _ex.submit(_capacity_timeseries,   session, h, cid, dbg)
         _fut_audit   = _ex.submit(_fetch_audit_log,       session, h, args.days, dbg)
         _fut_recov   = _ex.submit(_recoveries,            session, h, start_usecs, end_usecs, dbg)
         _fut_kms     = _ex.submit(_kms_config,            session, h, dbg)
@@ -1665,8 +1664,6 @@ def collect_cluster(session, api_key, cluster, args):
         _fut_ad      = _ex.submit(_active_directory,      session, h, dbg)
         _fut_ldap    = _ex.submit(_ldap_providers,        session, h, dbg)
         _fut_allcerts= _ex.submit(_all_certs,             session, h, dbg)
-        _fut_dedup   = _ex.submit(_dedup_trend,           session, h, cid, dbg)
-        _fut_io      = _ex.submit(_io_stats,              session, h, cid, dbg)
 
         info         = _fut_info.result()
         nodes        = _fut_nodes.result()
@@ -1684,7 +1681,6 @@ def collect_cluster(session, api_key, cluster, args):
         users        = _fut_users.result()
         idps         = _fut_idps.result()
         tenants      = _fut_tenants.result()
-        cap_ts       = _fut_capts.result()
         audit_events = _fut_audit.result()
         recoveries   = _fut_recov.result()
         kms          = _fut_kms.result()
@@ -1692,23 +1688,29 @@ def collect_cluster(session, api_key, cluster, args):
         active_directory  = _fut_ad.result()
         ldap_providers    = _fut_ldap.result()
         all_certs         = _fut_allcerts.result()
-        dedup_ts          = _fut_dedup.result()
-        io_ts             = _fut_io.result()
     print(" done.")
 
     # ── Wave 2: calls that depend on wave-1 results ────────────────────────────
+    # In direct mode clusterId is None on the cluster dict; resolve from info.
+    effective_cid = info.get("id") or cid
     vault_ids = [v["id"] for v in vaults if "id" in v]
-    print(f"    disks (per node), FortKnox transfer data...", end="", flush=True)
-    with _ThreadPoolExecutor(max_workers=3) as _ex:
+    print(f"    disks (per node), FortKnox transfer data, stats trends...", end="", flush=True)
+    with _ThreadPoolExecutor(max_workers=6) as _ex:
         _fut_disks = _ex.submit(_disks, session, h, nodes, dbg)
         _fut_fk    = _ex.submit(_fortknox_data, session, h, start_usecs, end_usecs, vault_ids, dbg)
         # For the FortKnox detail tab: quick mode shows last 1 day only
         _fut_fk1d  = (_ex.submit(_fortknox_data, session, h, _days_ago_usecs(1), end_usecs, vault_ids, dbg)
                       if args.quick else None)
+        _fut_capts = _ex.submit(_capacity_timeseries, session, h, effective_cid, dbg)
+        _fut_dedup = _ex.submit(_dedup_trend,         session, h, effective_cid, dbg)
+        _fut_io    = _ex.submit(_io_stats,            session, h, effective_cid, dbg)
 
         disks      = _fut_disks.result()
         fk_data    = _fut_fk.result()
         fk_data_1d = _fut_fk1d.result() if _fut_fk1d else []
+        cap_ts     = _fut_capts.result()
+        dedup_ts   = _fut_dedup.result()
+        io_ts      = _fut_io.result()
     print(" done.")
 
     # ── Per-group run history (non-quick mode): parallelised ──────────────────
