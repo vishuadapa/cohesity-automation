@@ -7,9 +7,9 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.64
+health_check_report.py  v1.66
 
-Multi-cluster Cohesity health check — 25-tab Excel workbook + Word document + comprehensive PowerPoint deck.
+Multi-cluster Cohesity health check — 28-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
