@@ -7,7 +7,7 @@
 # from its use.
 # =============================================================================
 """
-health_check_report.py  v1.69
+health_check_report.py  v1.70
 
 Multi-cluster Cohesity health check — 29-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -98,6 +98,12 @@ Requirements
 
 Version history
 ───────────────
+  1.70 (2026-04-22) — fix(health_check): clarify quick-mode CLI output. In quick
+                     mode "Lookback: 30 days" was misleading because it implied
+                     all data covered 30 days. Lookback line now reads "N days
+                     (alerts, audit log, summaries)". Mode line explicitly states
+                     that per-group run history is skipped and FortKnox Data
+                     Transfer covers last 1 day only.
   1.69 (2026-04-22) — fix(health_check): FortKnox Data Transfer sheet — data
                      sources and columns aligned with the FortKnox vault report.
                      Logical Transferred and Physical Transferred now read from
@@ -708,7 +714,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.69"
+__version__ = "1.70"
 
 import argparse
 import datetime

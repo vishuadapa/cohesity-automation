@@ -154,9 +154,9 @@ python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bun
 Auto-generated filenames include the version number and timestamp for easy tracking:
 
 ```
-cohesity_health_check_v1.69_AcmeCorp_20260422_1430.xlsx
-cohesity_health_check_v1.69_AcmeCorp_20260422_1430.docx
-cohesity_health_check_v1.69_AcmeCorp_20260422_1430.pptx
+cohesity_health_check_v1.70_AcmeCorp_20260422_1430.xlsx
+cohesity_health_check_v1.70_AcmeCorp_20260422_1430.docx
+cohesity_health_check_v1.70_AcmeCorp_20260422_1430.pptx
 ```
 
 The `.pptx` file is a comprehensive ~27-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Contents (hyperlinked TOC) · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering — all with RAG colour-coding and inline scoring methodology tables.

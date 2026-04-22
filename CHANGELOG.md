@@ -7,6 +7,15 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] fix(health_check): v1.70 — clarify quick-mode CLI output
+
+### Changed — `health_check/health_check_report.py`
+- **`Lookback` line in quick mode**: previously showed `Lookback : 30 days` regardless of mode, implying all data covered the full window. Now reads `Lookback : 30 days (alerts, audit log, summaries)` so it's clear the window applies only to non-run-history API calls.
+- **`Mode` line in quick mode**: expanded from `Quick (last-run only)` to `Quick — per-group run history skipped; protection stats from last-run only; FortKnox Data Transfer: last 1 day` so the scope limitations are explicit at a glance.
+- Full mode output unchanged: `Lookback : N days` / `Mode : Full (complete run history)`.
+
+---
+
 ## [2026-04-22] fix(health_check): v1.69 — FortKnox Data Transfer sheet aligned with vault report
 
 ### Changed — `health_check/health_check_report.py`
