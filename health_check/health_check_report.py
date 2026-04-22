@@ -6190,6 +6190,56 @@ _DG_FK      = "#1A5C3A"   # Dark green             — FortKnox vaults
 _DG_FG      = "#FFFFFF"   # White text on dark boxes
 
 
+def _active_targets(cd):
+    """Return (active_repl, active_arch) — sets of target names that received
+    at least one successful run within the collected history.
+
+    Sources checked in order:
+      1. group_runs — full run history (non-quick mode)
+      2. lastRun on each group — quick-mode fallback
+      3. fk_data transfer records — FK vaults with non-zero storage consumed
+    """
+    _SUCC = {"kSuccess", "Succeeded", "kSuccessWithWarning",
+             "SucceededWithWarning", "kWarning"}
+    active_repl = set()
+    active_arch = set()
+
+    def _scan_run(run):
+        for r in ((run.get("replicationInfo") or {})
+                  .get("replicationTargetResults") or []):
+            if r.get("status") in _SUCC:
+                tname = (r.get("targetName")
+                         or (r.get("remoteTargetConfig") or {}).get("clusterName")
+                         or (r.get("remoteTargetConfig") or {}).get("name") or "")
+                if tname:
+                    active_repl.add(tname)
+        for r in ((run.get("archivalInfo") or {})
+                  .get("archivalTargetResults") or []):
+            if r.get("status") in _SUCC:
+                tname = r.get("targetName") or r.get("vaultName") or ""
+                if tname:
+                    active_arch.add(tname)
+
+    for runs in (cd.get("group_runs") or {}).values():
+        for run in runs:
+            _scan_run(run)
+
+    for g in (cd.get("groups") or []):
+        _scan_run(g.get("lastRun") or {})
+
+    # FK supplemental: fk_data transfer records with non-zero storage consumed
+    for fk in (cd.get("fk_data") or []):
+        vn   = fk.get("vaultName") or ""
+        jobs = fk.get("dataTransferPerProtectionJob") or []
+        if vn and any(
+            (j.get("storageConsumed") or j.get("numLogicalBytesTransferred") or 0) > 0
+            for j in jobs
+        ):
+            active_arch.add(vn)
+
+    return active_repl, active_arch
+
+
 def _topology_data(all_data):
     """Extract the topology graph from all_data.
 
@@ -6199,6 +6249,9 @@ def _topology_data(all_data):
       arch_nodes — list of unique archival-vault dicts (id, name)
       fk_nodes   — list of unique FortKnox-vault dicts (id, name)
       edges      — list of edge dicts (src, tgt, type="repl"|"arch"|"fk")
+
+    Only targets with confirmed data-flow activity are included — targets that
+    are configured in policies but have no successful run history are excluded.
     """
     _fk_types = {"krpaas", "kfortknox", "kfort_knox", "krpaasarchival"}
 
@@ -6230,13 +6283,16 @@ def _topology_data(all_data):
             raw_cap = cd["info"].get("usedCapacityBytes") or 0
         cap_tb = raw_cap / (1024 ** 4) if raw_cap else 0
 
+        # Active targets for this cluster (have actual run history)
+        act_repl, act_arch = _active_targets(cd)
+
         for p in cd["policies"]:
             rtp = p.get("remoteTargetPolicy") or {}
             for t in (rtp.get("replicationTargets") or []):
                 name = (t.get("targetName")
                         or (t.get("remoteTargetConfig") or {}).get("clusterName")
                         or (t.get("remoteTargetConfig") or {}).get("name") or "")
-                if not name:
+                if not name or name not in act_repl:
                     continue
                 if name not in all_repl:
                     all_repl[name] = {"id": f"r{len(all_repl)}", "name": name}
@@ -6246,7 +6302,7 @@ def _topology_data(all_data):
                 cfg   = t.get("archivalTargetConfig") or {}
                 tt    = cfg.get("targetType") or t.get("targetType") or ""
                 tname = t.get("targetName") or cfg.get("name") or cfg.get("vaultName") or ""
-                if not tname:
+                if not tname or tname not in act_arch:
                     continue
                 if _is_fk(tt, tname):
                     if tname not in all_fk:
@@ -6257,12 +6313,11 @@ def _topology_data(all_data):
                         all_arch[tname] = {"id": f"a{len(all_arch)}", "name": tname}
                     edges.append({"src": cid, "tgt": all_arch[tname]["id"], "type": "arch"})
 
-        # Pick up FK vaults that appear in the vaults list but not in policies.
-        # Previously these only got a node entry but never an edge — fixed.
+        # FK vaults from the vaults list — only include if they have active transfers
         for v in (cd.get("vaults") or []):
             vtype = v.get("vaultType") or ""
             vname = v.get("name") or ""
-            if vname and _is_fk(vtype, vname):
+            if vname and _is_fk(vtype, vname) and vname in act_arch:
                 if vname not in all_fk:
                     all_fk[vname] = {"id": f"f{len(all_fk)}", "name": vname}
                 edges.append({"src": cid, "tgt": all_fk[vname]["id"], "type": "fk"})
@@ -6683,7 +6738,9 @@ def write_pptx(all_data, args, out_path):
     n_nodes    = sum(len(cd["nodes"])    for cd in all_data)
     n_groups   = sum(len(cd["groups"])   for cd in all_data)
     n_policies = sum(len(cd["policies"]) for cd in all_data)
-    n_vaults   = sum(len(cd["vaults"])   for cd in all_data)
+    # Active vaults = archival targets with confirmed data-flow in run history
+    _at_cache  = {id(cd): _active_targets(cd) for cd in all_data}
+    n_vaults   = sum(len(_at_cache[id(cd)][1]) for cd in all_data)
     n_crits    = sum(
         sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
         for cd in all_data)
@@ -6692,7 +6749,7 @@ def write_pptx(all_data, args, out_path):
         ("Nodes",           n_nodes,       _C_VACC,   None),
         ("Prot. Groups",    n_groups,      _C_HDR,    None),
         ("Policies",        n_policies,    "#5B6E8A", None),
-        ("Vaults",          n_vaults,      _DG_ARCH,  None),
+        ("Active Vaults",   n_vaults,      _DG_ARCH,  None),
         ("Critical Alerts", n_crits,
          "#C0392B" if n_crits else "#27AE60",
          "#C0392B" if n_crits else "#27AE60"),
@@ -6703,15 +6760,16 @@ def write_pptx(all_data, args, out_path):
         _kpi(slide, lbl, val,
              kpi_x0 + i * (kpi_w + kpi_gap), 0.82, kpi_w, 1.25, bg, vc)
     hdr_snap = ["Cluster", "Version", "Nodes", "Groups",
-                "Vaults", "Crit Alerts", "Overall Score", "Grade"]
+                "Active Vaults", "Crit Alerts", "Overall Score", "Grade"]
     rows_snap, fills_snap = [], []
     for cd in all_data:
-        ver   = (cd["info"].get("clusterSoftwareVersion") or "—").strip()
-        crits = sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
-        ov    = _ov(cd)
-        grd   = _sg(ov)
+        ver        = (cd["info"].get("clusterSoftwareVersion") or "—").strip()
+        crits      = sum(1 for a in cd["alerts"] if a.get("severity") == "kCritical")
+        ov         = _ov(cd)
+        grd        = _sg(ov)
+        act_v_cnt  = len(_at_cache[id(cd)][1])
         rows_snap.append([cd["name"], ver, len(cd["nodes"]),
-                          len(cd["groups"]), len(cd["vaults"]), crits, ov, grd])
+                          len(cd["groups"]), act_v_cnt, crits, ov, grd])
         cr_f = (_C_RED_BG, _C_RED_TX) if crits else (_C_GRN_BG, _C_GRN_TX)
         fills_snap.append(
             [None, None, None, None, None, cr_f, _rag(ov), _grade_color(grd)])
@@ -6723,8 +6781,9 @@ def write_pptx(all_data, args, out_path):
     _notes(slide,
            "Summary of all Cohesity clusters in scope. "
            "KPI tiles at the top show total clusters, nodes, protection groups, "
-           "policies, vaults, and open critical alerts. "
-           "The cluster table shows per-cluster software version, group and vault "
+           "policies, active vaults (archival targets with confirmed data flow), "
+           "and open critical alerts. "
+           "The cluster table shows per-cluster software version, group and active vault "
            "counts, overall health score (0-100), and letter grade (A>=90, B>=80, "
            "C>=70, D>=60, F<60). "
            "Red overall score = below 50 (At Risk), Amber = 50-74 (Fair), "
