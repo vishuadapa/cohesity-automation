@@ -8433,12 +8433,12 @@ def _sheet_cert_inventory(wb, all_data):
 
             expiry_str, issued_str, days_left = "", "", None
             if expiry_ms:
-                expiry_str = datetime.datetime.utcfromtimestamp(
-                    expiry_ms / 1000).strftime("%Y-%m-%d")
+                expiry_str = datetime.datetime.fromtimestamp(
+                    expiry_ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
                 days_left  = (expiry_ms - now_ms) / (1000 * 86400)
             if issued_ms:
-                issued_str = datetime.datetime.utcfromtimestamp(
-                    issued_ms / 1000).strftime("%Y-%m-%d")
+                issued_str = datetime.datetime.fromtimestamp(
+                    issued_ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
 
             if days_left is None:
                 status, sbg, sfg = "Unknown", "F2F2F2", "000000"
@@ -8491,7 +8491,7 @@ def _sheet_perf_trends(wb, all_data):
             ts  = pt.get("timestampMsecs")
             val = (pt.get("data") or {}).get("int64Value") or 0
             if ts and val:
-                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                day = datetime.datetime.fromtimestamp(ts / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
                 phys_map[day] = val
 
         # ── Logical bytes (new: kLogicalCapacityBytes) ────────────────────────
@@ -8500,7 +8500,7 @@ def _sheet_perf_trends(wb, all_data):
             ts  = pt.get("timestampMsecs")
             val = (pt.get("data") or {}).get("int64Value") or 0
             if ts and val:
-                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                day = datetime.datetime.fromtimestamp(ts / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
                 log_map[day] = val
 
         # ── I/O maps ──────────────────────────────────────────────────────────
@@ -8510,14 +8510,14 @@ def _sheet_perf_trends(wb, all_data):
             ts  = pt.get("timestampMsecs")
             val = (pt.get("data") or {}).get("int64Value") or 0
             if ts:
-                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                day = datetime.datetime.fromtimestamp(ts / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
                 read_map[day] = round(val / 1e9, 2)
         write_map = {}
         for pt in (io_ts.get("writes") or []):
             ts  = pt.get("timestampMsecs")
             val = (pt.get("data") or {}).get("int64Value") or 0
             if ts:
-                day = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+                day = datetime.datetime.fromtimestamp(ts / 1000, datetime.timezone.utc).strftime("%Y-%m-%d")
                 write_map[day] = round(val / 1e9, 2)
 
         all_days = sorted(set(phys_map) | set(log_map) | set(read_map) | set(write_map))
