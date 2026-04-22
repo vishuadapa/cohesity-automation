@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.68**
+**Current version: 1.69**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (Guide + 28 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
@@ -32,7 +32,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 15 | **Recovery Audit** | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
 | 16 | **Unprotected Objects** | Named list of unprotected objects per source — red if count >10, amber if count >0 |
 | 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), **Replication Lag (hrs)** |
-| 18 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: logical TB, physical TB, storage consumed TB, **Last FK Archival date**, **Days Since FK Transfer** |
+| 18 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: storage consumed TB (cumulative, from dataTransferToVaults API), **Logical TB**, **Physical TB**, **Data Read TB**, **Data Written TB** (all from group run records — same sources as the FortKnox vault report), **Last FK Archival date**, **Days Since FK Transfer** |
 | 19 | **Data Exposure** | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
 | 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
 | 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
@@ -282,6 +282,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.69 | 2026-04-22 | fix: FortKnox Data Transfer sheet — data sources aligned with FortKnox vault report. Logical/Physical Transferred now from group run `archivalTargetResults` (not the absent `numLogicalBytesTransferred` dataTransferToVaults field). Added **Data Read (TB)** and **Data Written (TB)** from `localSnapshotStats`. Removed Snapshots column. Last FK Archival / Days Since now from full run history (was `lastRun` only — caused "Unknown" for groups whose most recent run was not an archival run). |
 | 1.68 | 2026-04-22 | fix: six post-v1.67 bug fixes — Key Rotation displays correctly in Security tab; Recovery Audit populates Objects Recovered, Source Cluster, and Target columns; Vault Type column D populated in Replication & Archive tab; topology excludes inactive targets and uses active vault count; keyring `NoKeyringError` handled on headless Linux (Rocky Linux); auth failure message includes shell quoting hint. |
 | 1.67 | 2026-04-22 | feat: new "Retention Health" tab (sheet 9) — cluster retention summary, per-policy detail, and P1/P2/P3 security recommendations covering short retention, no off-site copy, missing WORM, archive-shorter-than-local, and FortKnox gaps; `AMBER` color constant added (was referenced but undefined); sheet count 28 → 29. |
 | 1.66 | 2026-04-22 | fix: prereq security hardening — `python-pptx` promoted to required (PPT generated on every run); `keyring` description updated to explain credential exposure risk (shell history / process lists); security note printed at startup when keyring absent; single `pip install` command covers all missing packages in one block. |

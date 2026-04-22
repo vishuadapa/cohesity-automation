@@ -7,6 +7,19 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-22] fix(health_check): v1.69 — FortKnox Data Transfer sheet aligned with vault report
+
+### Changed — `health_check/health_check_report.py`
+- **Logical Transferred (TB)** and **Physical Transferred (TB)**: previously read `numLogicalBytesTransferred` / `numPhysicalBytesTransferred` from the `dataTransferToVaults` API — these fields do not exist in the API response (always 0). Now sourced from `archivalInfo.archivalTargetResults[].logicalBytesTransferred` / `physicalBytesTransferred` in the per-group run records, exactly matching the FortKnox vault report's approach. Values are summed across all FortKnox archival runs within the lookback window.
+- **New columns**: **Data Read (TB)** and **Data Written (TB)** added — sourced from `localBackupInfo.localSnapshotStats.bytesRead` / `bytesWritten` in the per-group run records. Matches the FortKnox vault report's Activities: Data Read / Data Written columns.
+- **Storage Consumed (TB)**: unchanged — continues to use `dataTransferToVaults.storageConsumed` (cumulative vault footprint), matching the FortKnox vault report.
+- **Snapshots column removed**: `numSnapshots` from `dataTransferToVaults` was unreliable and always empty in practice.
+- **Last FK Archival** and **Days Since FK Transfer**: previously looked only at each group's `lastRun` — showed "Unknown" for any group whose most recent run was a local backup, not an archival run. Now scans the full run history (`group_runs`) to find the most recent successful FK archival endTimeUsecs per (group, vault) pair. Quick mode fallback still uses `lastRun` as a best-effort.
+- **Column layout updated**: Cluster, Vault Name, Vault Type, Protection Group, Storage Consumed (TB), Logical Transferred (TB), Physical Transferred (TB), Data Read (TB), Data Written (TB), Period, Last FK Archival, Days Since FK Transfer.
+- `_sheet_guide()` description updated; README and `health_check_report.md` sheet reference updated.
+
+---
+
 ## [2026-04-22] fix(health_check): v1.68 — six post-v1.67 bug fixes
 
 ### Fixed — `health_check/health_check_report.py`
