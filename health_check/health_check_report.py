@@ -4817,6 +4817,25 @@ def _sheet_replication(wb, all_data):
                 vault_type_by_name[vn] = vt
                 if vi: vault_id_by_name[vn] = vi
 
+        # Normalise raw targetType / vaultType codes to human-readable labels
+        _VAULT_TYPE_MAP = {
+            "krpaas": "FortKnox / RPaaS", "kfortknox": "FortKnox / RPaaS",
+            "krpaasarchival": "FortKnox / RPaaS", "kfort_knox": "FortKnox / RPaaS",
+            "ks3": "AWS S3", "kamazons3": "AWS S3", "kamazon": "AWS S3",
+            "kazure": "Azure Blob", "kazuretiering": "Azure Blob",
+            "kgoogle": "Google Cloud", "kgcs": "Google Cloud",
+            "knas": "NAS / CIFS", "knfs": "NAS / NFS",
+            "ktape": "Tape", "kqstar": "QStar Tape",
+            "koracle": "Oracle Cloud", "koracletiering": "Oracle Cloud",
+            "kwasabi": "Wasabi", "kisilon": "Isilon",
+            "kpure": "Pure Storage",
+        }
+
+        def _norm_vtype(raw):
+            if not raw:
+                return ""
+            return _VAULT_TYPE_MAP.get(raw.lower(), raw)
+
         # ── Target name extractors ────────────────────────────────────────
         def _rep_name(t):
             cfg = t.get("remoteTargetConfig") or {}
@@ -4855,8 +4874,16 @@ def _sheet_replication(wb, all_data):
                     policy_arch_targets.setdefault(pid, set()).add(n)
                     if n not in arch_target_type:
                         cfg = t.get("archivalTargetConfig") or {}
-                        arch_target_type[n] = (t.get("targetType")
-                                               or cfg.get("targetType") or "")
+                        raw_type = (
+                            t.get("targetType")
+                            or cfg.get("targetType")
+                            or cfg.get("archivalTargetType")
+                            or t.get("archivalTargetType")
+                            or t.get("vaultType")
+                            or cfg.get("vaultType")
+                            or ""
+                        )
+                        arch_target_type[n] = raw_type
 
         # ── Group → target mapping (policy chain) ────────────────────────
         rep_groups  = {}   # replication cluster name → [group names]
@@ -4955,7 +4982,7 @@ def _sheet_replication(wb, all_data):
             lag    = _repl_lag(tname)
             lag_str = lag if lag is not None else "No data"
             rn = ws.max_row + 1
-            row = [cd["name"], "Replication", tname, "", gcnt,
+            row = [cd["name"], "Replication", tname, "Replication Cluster", gcnt,
                    "", "", "", status, "",
                    ", ".join(groups), lag_str]
             for c, val in enumerate(row, 1):
@@ -4976,12 +5003,13 @@ def _sheet_replication(wb, all_data):
         for tname in sorted(all_arch_targets):
             groups = sorted(arch_groups.get(tname) or [])
             gcnt   = len(groups)
-            vtype  = arch_target_type.get(tname) or vault_type_by_name.get(tname, "")
+            vtype  = _norm_vtype(
+                arch_target_type.get(tname) or vault_type_by_name.get(tname, ""))
             fkd    = _fk_stats(tname)
             note   = "FortKnox/RPaaS" if _is_fk(tname, vtype) else ""
             status = "Configured" if gcnt else "No groups assigned"
             rn     = ws.max_row + 1
-            row    = [cd["name"], "Archival/Vault", tname, vtype, gcnt,
+            row    = [cd["name"], "Archival/Vault", tname, vtype or "Cloud/Vault", gcnt,
                       round(bytes_to_tb(fkd.get("consumed") or 0), 3),
                       round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                       round(bytes_to_tb(fkd.get("physical") or 0), 3),
@@ -4996,11 +5024,11 @@ def _sheet_replication(wb, all_data):
             vname = v.get("name") or v.get("vaultName") or ""
             if not vname or vname in shown:
                 continue
-            vtype = v.get("vaultType", "")
+            vtype = _norm_vtype(v.get("vaultType", ""))
             fkd   = _fk_stats(vname)
             note  = "FortKnox/RPaaS" if _is_fk(vname, vtype) else ""
             rn    = ws.max_row + 1
-            row   = [cd["name"], "Archival/Vault", vname, vtype, 0,
+            row   = [cd["name"], "Archival/Vault", vname, vtype or "Cloud/Vault", 0,
                      round(bytes_to_tb(fkd.get("consumed") or 0), 3),
                      round(bytes_to_tb(fkd.get("logical")  or 0), 3),
                      round(bytes_to_tb(fkd.get("physical") or 0), 3),
