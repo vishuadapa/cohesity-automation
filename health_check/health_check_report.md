@@ -1,8 +1,8 @@
 # health_check_report.py
 
-**Current version: 1.71**
+**Current version: 1.72**
 
-Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **29-tab Excel workbook** (Guide + 28 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
+Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **31-tab Excel workbook** (About + Guide + 29 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
 > See the root [README.md](../README.md) for quick-start instructions and common usage examples.
 
@@ -10,11 +10,12 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 
 ## Output
 
-### Excel Workbook (29 tabs)
+### Excel Workbook (31 tabs: About + Guide + 29 data sheets)
 
 | # | Sheet | Contents |
 |---|-------|----------|
-| — | **Guide** | First tab — descriptions of all tabs, health/security/ransomware/workload scoring methodology, recommendation priority levels, color/RAG legend |
+| — | **About** | First tab — full CLI command, run parameters (mode, days, customer, clusters), 4 explanatory notes (Quick Mode, Storage Consumed, DataLock limit, Health Score), and reference table of all 30 API endpoints with routing and purpose |
+| — | **Guide** | Sheet descriptions, health/security/ransomware/workload scoring methodology, recommendation priority levels, color/RAG legend |
 | 1 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, ransomware readiness score, capacity runway, top finding |
 | 2 | Infrastructure | Software version, node count, healthy nodes, cluster encryption, SD encryption, DNS, NTP, timezone, SW lifecycle status, SW EOS date, days to EOS, **Fault Tolerance margin** |
 | 3 | Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, HW EOL status, **SW Version Match** (MISMATCH flag) |
@@ -32,7 +33,7 @@ Multi-cluster Cohesity health check designed for enterprise customer business re
 | 15 | **Recovery Audit** | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
 | 16 | **Unprotected Objects** | Named list of unprotected objects per source — red if count >10, amber if count >0 |
 | 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), **Replication Lag (hrs)** |
-| 18 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: storage consumed TB (cumulative, from dataTransferToVaults API), **Logical TB**, **Physical TB**, **Data Read TB**, **Data Written TB** (all from group run records — same sources as the FortKnox vault report), **Last FK Archival date**, **Days Since FK Transfer** |
+| 18 | **FortKnox Data Transfer** | Per-protection-group transfer to every external vault: storage consumed TB (cumulative, from dataTransferToVaults API), **Last FK Archival date**, **Days Since FK Transfer** |
 | 19 | **Data Exposure** | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
 | 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
 | 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
@@ -282,6 +283,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.72 | 2026-04-23 | feat: added **About tab** as the first tab in the Excel workbook. Sections: Title (version + run timestamp), Command (full CLI command), Parameters (mode, days, customer, cluster filter, clusters), Notes (Quick Mode scope, Storage Consumed cumulative caveat, DataLock Verification 20-group limit, Health Score formula), APIs Used (30 endpoints: 2 Helios MCM + 21 Cluster v1 + 7 Cluster v2). Tab count updated 30 → 31. |
 | 1.71 | 2026-04-22 | fix: FortKnox Data Transfer sheet — removed Logical Transferred, Physical Transferred, Data Read, and Data Written columns. Sheet now shows: Cluster, Vault Name, Vault Type, Protection Group, Storage Consumed (TB), Period, Last FK Archival, Days Since FK Transfer. |
 | 1.70 | 2026-04-22 | fix: clarify quick-mode CLI output — `Lookback` line now reads "N days (alerts, audit log, summaries)" so it's clear the window applies to non-run-history calls; `Mode` line explicitly states per-group run history is skipped and FortKnox Data Transfer covers last 1 day. |
 | 1.69 | 2026-04-22 | fix: FortKnox Data Transfer sheet — data sources aligned with FortKnox vault report. Logical/Physical Transferred now from group run `archivalTargetResults` (not the absent `numLogicalBytesTransferred` dataTransferToVaults field). Added **Data Read (TB)** and **Data Written (TB)** from `localSnapshotStats`. Removed Snapshots column. Last FK Archival / Days Since now from full run history (was `lastRun` only — caused "Unknown" for groups whose most recent run was not an archival run). |

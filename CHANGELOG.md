@@ -7,6 +7,17 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-23] feat(health_check): v1.72 — About tab added to Excel workbook
+
+### Added — `health_check/health_check_report.py`
+- **New About tab** inserted as the first tab in the Excel workbook (before Guide).
+- Sections: **Title** (script version + run timestamp), **Command** (full CLI command used), **Parameters** (mode, lookback days, customer, cluster filter, cluster host, clusters run against), **Notes** (4 explanatory blocks: Quick Mode scope, Storage Consumed cumulative caveat, DataLock Verification 20-group limit, Health Score deduction formula), **APIs Used** (table of all 30 API endpoints with Type, Endpoint, Routing, and Purpose).
+- Total Excel tab count updated: **30 → 31** (About + Guide + 29 data sheets).
+- `_API_REF_HC` module-level list added with all 30 endpoint entries (2 Helios MCM, 21 Cluster v1, 7 Cluster v2).
+- Guide tab `sheets_info` updated to include the About tab entry.
+
+---
+
 ## [2026-04-22] fix(health_check): v1.71 — FortKnox Data Transfer column reduction
 
 ### Changed — `health_check/health_check_report.py`

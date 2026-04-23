@@ -6,9 +6,9 @@
 # damages resulting from its use.
 # =============================================================================
 """
-health_check_report.py  v1.71
+health_check_report.py  v1.72
 
-Multi-cluster Cohesity health check — 29-tab Excel workbook + Word document + comprehensive PowerPoint deck.
+Multi-cluster Cohesity health check — 31-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
 engagements.  Gathers live data from Cohesity Helios (or directly from a single
 cluster) and produces:
@@ -47,7 +47,8 @@ cluster) and produces:
   27 AD & Identity Health    — Active Directory / LDAP connection status
   28 Certificate Inventory   — TLS certificate expiry with CRITICAL/HIGH/OK RAG
   29 Capacity & Perf Trends  — dedup ratio trend (ransomware indicator) + I/O throughput
-  + Guide tab (first)        — sheet descriptions, scoring methodology, color legend
+  + Guide tab               — sheet descriptions, scoring methodology, color legend
+  + About tab (first)       — run metadata, parameters, notes, and full API reference
 
   Word document
   ─────────────
@@ -117,6 +118,15 @@ Requirements
 
 Version history
 ───────────────
+  1.72 (2026-04-23) — feat(health_check): add About tab as the first tab in the
+                     Excel workbook. Sections: Title (version + run date), Command
+                     (full CLI command used), Parameters (mode, days, customer,
+                     cluster filter, clusters run against), Notes (4 blocks:
+                     Quick Mode limitations, Storage Consumed cumulative caveat,
+                     DataLock Verification 20-group limit, Health Score formula),
+                     APIs Used (30 endpoints across Helios MCM, Cluster v1, and
+                     Cluster v2 with routing and purpose). Workbook tab count
+                     updated from 30 to 31 (About + Guide + 29 data sheets).
   1.71 (2026-04-22) — fix(health_check): FortKnox Data Transfer — remove columns
                      Logical Transferred, Physical Transferred, Data Read, and
                      Data Written. Sheet now shows Cluster, Vault Name, Vault
@@ -738,7 +748,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.71"
+__version__ = "1.72"
 
 import argparse
 import datetime
@@ -9303,6 +9313,248 @@ def _sheet_perf_trends(wb, all_data):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ABOUT SHEET — run metadata, parameter summary, notes, API reference
+# ─────────────────────────────────────────────────────────────────────────────
+
+_API_REF_HC = [
+    # (Type, Endpoint, Routing, Purpose)
+    ("Helios MCM",   "/mcm/clusters/connectionStatus",
+     "helios.cohesity.com",
+     "Cluster list and connection status"),
+    ("Helios MCM",   "/v2/mcm/quorum/groups",
+     "helios.cohesity.com",
+     "Helios quorum group configuration"),
+    ("Cluster v1",   "/irisservices/api/v1/public/cluster",
+     "Helios proxy (accessClusterId)",
+     "Cluster info, software version, node count, capacity stats"),
+    ("Cluster v1",   "/irisservices/api/v1/public/nodes",
+     "Helios proxy (accessClusterId)",
+     "Per-node hardware model, IP, software version"),
+    ("Cluster v1",   "/irisservices/api/v1/public/alerts",
+     "Helios proxy (accessClusterId)",
+     "Open critical and warning alerts within the lookback window"),
+    ("Cluster v1",   "/irisservices/api/v1/public/protectionRuns",
+     "Helios proxy (accessClusterId)",
+     "Protection run history — paginated; success rates, SLA, trends"),
+    ("Cluster v1",   "/irisservices/api/v1/public/vaults",
+     "Helios proxy (accessClusterId)",
+     "External vault and FortKnox target inventory"),
+    ("Cluster v1",   "/irisservices/api/v1/public/reports/dataTransferToVaults",
+     "Helios proxy (accessClusterId)",
+     "FortKnox / external vault storage consumed (TB) — cumulative lifetime total"),
+    ("Cluster v1",   "/irisservices/api/v1/public/certificates/webServer",
+     "Helios proxy (accessClusterId)",
+     "Web server TLS certificate expiry"),
+    ("Cluster v1",   "/irisservices/api/v1/public/certificates",
+     "Helios proxy (accessClusterId)",
+     "All cluster certificates (Certificate Inventory sheet)"),
+    ("Cluster v1",   "/irisservices/api/v1/public/reports/agents",
+     "Helios proxy (accessClusterId)",
+     "Cohesity agent version and health status per registered host"),
+    ("Cluster v1",   "/irisservices/api/v1/public/protectionSources/registrationInfo",
+     "Helios proxy (accessClusterId)",
+     "Registered sources with protected/unprotected object counts (v1 fallback)"),
+    ("Cluster v1",   "/irisservices/api/v1/public/users",
+     "Helios proxy (accessClusterId)",
+     "User accounts, MFA status, roles, last login"),
+    ("Cluster v1",   "/irisservices/api/v1/public/idps",
+     "Helios proxy (accessClusterId)",
+     "SSO / IDP provider configuration"),
+    ("Cluster v1",   "/irisservices/api/v1/public/tenants",
+     "Helios proxy (accessClusterId)",
+     "Multi-tenancy organization list"),
+    ("Cluster v1",   "/irisservices/api/v1/public/statistics/timeSeriesStats",
+     "Helios proxy (accessClusterId)",
+     "30-day daily capacity, dedup ratio, and I/O throughput trends (4 metric calls)"),
+    ("Cluster v1",   "/irisservices/api/v1/public/auditLog",
+     "Helios proxy (accessClusterId)",
+     "Configuration change audit log within the lookback window"),
+    ("Cluster v1",   "/irisservices/api/v1/public/kmsConfig",
+     "Helios proxy (accessClusterId)",
+     "KMS key management configuration"),
+    ("Cluster v1",   "/irisservices/api/v1/public/roles",
+     "Helios proxy (accessClusterId)",
+     "Role definitions — built-in and custom (User Security sheet)"),
+    ("Cluster v1",   "/irisservices/api/v1/public/activeDirectory",
+     "Helios proxy (accessClusterId)",
+     "Active Directory domain connection status"),
+    ("Cluster v1",   "/irisservices/api/v1/public/ldapProvider",
+     "Helios proxy (accessClusterId)",
+     "LDAP provider configuration"),
+    ("Cluster v2",   "/v2/data-protect/protection-groups",
+     "Helios proxy (accessClusterId)",
+     "Protection group inventory with last-run info"),
+    ("Cluster v2",   "/v2/data-protect/protection-groups/{id}/runs",
+     "Helios proxy (accessClusterId)",
+     "Per-group run history — full mode only; used for FK archival dates and trends"),
+    ("Cluster v2",   "/v2/data-protect/policies",
+     "Helios proxy (accessClusterId)",
+     "Protection policy definitions — retention, archival, DataLock settings"),
+    ("Cluster v2",   "/v2/storage-domains",
+     "Helios proxy (accessClusterId)",
+     "Storage domain / viewbox capacity with utilization stats"),
+    ("Cluster v2",   "/v2/file-services/views",
+     "Helios proxy (accessClusterId)",
+     "NAS view inventory with quota and capacity (Data Services sheet)"),
+    ("Cluster v2",   "/v2/data-protect/sources",
+     "Helios proxy (accessClusterId)",
+     "Registered sources with protected/unprotected object counts (v2 preferred)"),
+    ("Cluster v2",   "/v2/data-protect/recoveries",
+     "Helios proxy (accessClusterId)",
+     "Recovery task history within the lookback window (Recovery Audit sheet)"),
+    ("Cluster v2",   "/v2/data-protect/snapshots",
+     "Helios proxy (accessClusterId)",
+     "Snapshot-level DataLock WORM status — up to 20 groups (DataLock Verification)"),
+    ("Cluster v2",   "/v2/disks/local",
+     "Helios proxy (accessClusterId)",
+     "Per-node local disk inventory — serial number, status, SSD wear %"),
+]
+
+
+def _sheet_about(wb, all_data, args):
+    """About tab (position 0): run info, parameters, notes, and API reference."""
+    import sys as _sys
+    from openpyxl.styles import Alignment as _Aln, PatternFill as _PF, Font as _Fnt
+
+    ws = wb.create_sheet("About", 0)
+    try:
+        ws.sheet_view.zoomScale = 110
+    except Exception:
+        pass
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 62
+    ws.column_dimensions["C"].width = 34
+    ws.column_dimensions["D"].width = 52
+
+    _fill_g = _PF("solid", fgColor=COH_GREEN)
+    _row = [1]
+
+    def _advance():
+        r = _row[0]; _row[0] += 1; return r
+
+    def _title_row(text):
+        rn = _advance()
+        ws.merge_cells(f"A{rn}:D{rn}")
+        c = ws.cell(rn, 1, text)
+        c.font      = _Fnt(bold=True, size=13, color=WHITE)
+        c.fill      = _fill_g
+        c.alignment = _Aln(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[rn].height = 24
+
+    def _section(text):
+        _row[0] += 1  # blank separator row
+        rn = _advance()
+        ws.merge_cells(f"A{rn}:D{rn}")
+        c = ws.cell(rn, 1, text)
+        c.font      = _Fnt(bold=True, size=11, color=WHITE)
+        c.fill      = _fill_g
+        c.alignment = _Aln(horizontal="left", vertical="center", indent=1)
+        ws.row_dimensions[rn].height = 20
+
+    def _header_row(labels):
+        rn = _advance()
+        for ci, lbl in enumerate(labels, 1):
+            c = ws.cell(rn, ci, lbl)
+            c.font      = _Fnt(bold=True, color=WHITE)
+            c.fill      = _fill_g
+            c.alignment = _Aln(horizontal="center", vertical="center")
+        ws.row_dimensions[rn].height = 18
+
+    def _kv(key, val):
+        rn = _advance()
+        ws.cell(rn, 1, key).font = _Fnt(bold=True)
+        ws.cell(rn, 2, val)
+
+    def _note(text, height=72):
+        rn = _advance()
+        ws.merge_cells(f"A{rn}:D{rn}")
+        c = ws.cell(rn, 1, text)
+        c.alignment = _Aln(wrap_text=True, vertical="top")
+        ws.row_dimensions[rn].height = height
+
+    def _data_row(vals):
+        rn = _advance()
+        for ci, v in enumerate(vals, 1):
+            ws.cell(rn, ci, v)
+
+    # ── Title ─────────────────────────────────────────────────────────────────
+    _title_row(f"Cohesity Health Check Report  v{__version__}  —  Run Information")
+
+    # ── Command ───────────────────────────────────────────────────────────────
+    _section("Command")
+    cmd_rn = _advance()
+    ws.merge_cells(f"A{cmd_rn}:D{cmd_rn}")
+    ws.cell(cmd_rn, 1, " ".join(_sys.argv))
+
+    # ── Parameters ────────────────────────────────────────────────────────────
+    _section("Parameters")
+    _kv("Script Version", __version__)
+    _kv("Generated",      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    mode = "Quick" if getattr(args, "quick", False) else "Full"
+    if mode == "Quick":
+        mode += (" — per-group run history skipped; "
+                 "FortKnox Data Transfer: last 1 day only")
+    _kv("Mode",           mode)
+    _kv("Lookback Days",  str(getattr(args, "days", 30)))
+    _kv("Customer",       getattr(args, "customer", "") or "(not specified)")
+    _kv("Cluster Filter", getattr(args, "cluster", "") or "(all clusters)")
+    _kv("Cluster Host",   getattr(args, "cluster_host", "") or "(Helios)")
+    _kv("Clusters",       ", ".join(cd.get("name", "?") for cd in all_data))
+
+    # ── Notes ─────────────────────────────────────────────────────────────────
+    _section("Notes")
+
+    _note(
+        "QUICK MODE  —  When --quick is passed, per-group run history is skipped entirely. "
+        "Protection success rates, SLA performance, and trend charts are derived from the "
+        "most recent run only (lastRun) rather than the full lookback window. FortKnox Data "
+        "Transfer covers the last 1 day only regardless of --days. The --days lookback "
+        "applies to: alerts, audit log, recoveries, and the FortKnox data window. Full mode "
+        "(no --quick) fetches complete run history per group and is recommended for accurate "
+        "historical trend analysis and SLA reporting.",
+        height=72,
+    )
+
+    _note(
+        "STORAGE CONSUMED (FORTKNOX DATA TRANSFER)  —  The Storage Consumed (TB) column in "
+        "the FortKnox Data Transfer sheet is a CUMULATIVE lifetime total from the "
+        "dataTransferToVaults API (storageConsumed field). It reflects all snapshots ever "
+        "retained in the vault for each protection group and is NOT scoped to the lookback "
+        "window. The same value appears whether you query 7 days or 365 days. Do not use "
+        "this field to measure vault ingest activity within a specific period.",
+        height=60,
+    )
+
+    _note(
+        "DATALOCK VERIFICATION LIMIT  —  The DataLock Verification sheet queries "
+        "snapshot-level WORM status for up to 20 DataLock-enabled protection groups only. "
+        "Groups beyond the 20-group limit are omitted to avoid excessive API calls and "
+        "timeouts on large clusters. If a cluster has more than 20 DataLock groups, "
+        "scope the report to a single cluster using --cluster.",
+        height=48,
+    )
+
+    _note(
+        "HEALTH SCORE  —  The overall score (0–100) per cluster starts at 100 with points "
+        "deducted for findings across five areas: Protection Health (−30 max) for low "
+        "success rates, SLA misses, and RPO gaps; Security (−25 max) for each unchecked "
+        "control (encryption, FIPS, audit log, MFA, NTP auth, tunnel, SSO, cert expiry, "
+        "vault, FortKnox, DataLock); Infrastructure (−20 max) for disk failures, node "
+        "alerts, and capacity pressure; Storage (−15 max) for domains over threshold; "
+        "Agent Health (−10 max) for stale or failed agents. "
+        "Grades: A ≥90  B ≥75  C ≥60  D ≥40  F <40.",
+        height=72,
+    )
+
+    # ── APIs Used ─────────────────────────────────────────────────────────────
+    _section("APIs Used")
+    _header_row(["Type", "Endpoint", "Routing", "Purpose"])
+    for row_vals in _API_REF_HC:
+        _data_row(row_vals)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GUIDE SHEET (first tab) — scoring reference and sheet descriptions
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -9412,6 +9664,7 @@ def _sheet_guide(wb, all_data):
     _section("Workbook Contents")
     _sub_hdr("#", "Sheet / Tab Name", "What It Contains")
     sheets_info = [
+        ("About",                  "Run metadata — command used, parameters, notes, and full API reference (30 endpoints)"),
         ("Guide",                  "This tab — scoring methodology and sheet descriptions"),
         ("Executive Summary",      "Per-cluster health score, grade, success %, capacity used %, open criticals, "
                                    "ransomware readiness score, and capacity runway forecast"),
@@ -10036,7 +10289,8 @@ def write_excel(all_data, args):
     wb.remove(wb.active)
 
     print("  Writing Excel sheets...")
-    _sheet_guide(wb, all_data)             # Guide (first tab)
+    _sheet_about(wb, all_data, args)       # About (first tab)
+    _sheet_guide(wb, all_data)             # Guide
     _sheet_summary(wb, all_data)           # 1
     _sheet_infrastructure(wb, all_data)    # 2
     _sheet_hardware(wb, all_data)          # 3
