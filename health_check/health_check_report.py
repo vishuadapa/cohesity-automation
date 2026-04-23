@@ -6,7 +6,7 @@
 # damages resulting from its use.
 # =============================================================================
 """
-health_check_report.py  v1.74
+health_check_report.py  v1.75
 
 Multi-cluster Cohesity health check — 31-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -118,6 +118,9 @@ Requirements
 
 Version history
 ───────────────
+  1.75 (2026-04-23) — fix(health_check): About tab zoom corrected from 110% to
+                     130% to match all other tabs. CLAUDE.md updated with the
+                     Excel formatting standard requiring 130% zoom on all tabs.
   1.74 (2026-04-23) — fix(health_check): About tab Command row — also mask the
                      --ca-bundle PEM file path with xxxxx so certificate file
                      paths are not exposed in the Excel output.
@@ -755,7 +758,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.74"
+__version__ = "1.75"
 
 import argparse
 import datetime
@@ -9426,7 +9429,7 @@ def _sheet_about(wb, all_data, args):
 
     ws = wb.create_sheet("About", 0)
     try:
-        ws.sheet_view.zoomScale = 110
+        ws.sheet_view.zoomScale = 130
     except Exception:
         pass
 

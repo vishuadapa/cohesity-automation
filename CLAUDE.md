@@ -21,7 +21,7 @@
 ```
 cohesity-automation/
 ├── health_check/
-│   ├── health_check_report.py   # Main health check script (currently v1.59)
+│   ├── health_check_report.py   # Main health check script (currently v1.75)
 │   └── health_check_report.md   # Documentation
 ├── utils/
 │   ├── formatters.py            # Shared formatting helpers
@@ -30,6 +30,10 @@ cohesity-automation/
 ├── README.md                    # Project overview and usage reference
 └── CLAUDE.md                    # This file
 ```
+
+## Excel Formatting Standards
+
+- **All Excel tabs must be set to 130% zoom.** Every sheet function must either call `auto_fit_columns(ws)` (which sets zoom to 130 internally) or explicitly set `ws.sheet_view.zoomScale = 130` inside a `try/except Exception: pass` block. Sheets with fixed column widths (About, Guide) that do not call `auto_fit_columns` must set zoom explicitly.
 
 ## General Guidelines
 

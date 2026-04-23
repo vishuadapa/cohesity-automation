@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-23] fix(health_check): v1.75 — About tab zoom corrected to 130%
+
+### Changed
+- **`health_check/health_check_report.py`**: About tab `zoomScale` corrected from 110 to 130 to match all other Excel tabs.
+- **`CLAUDE.md`**: Added "Excel Formatting Standards" section documenting the 130% zoom requirement for all tabs. Sheets that call `auto_fit_columns()` inherit this automatically; sheets with fixed column widths (About, Guide) must set it explicitly.
+
+---
+
 ## [2026-04-23] fix(health_check): v1.74 — mask --ca-bundle path in About tab Command row
 
 ### Changed — `health_check/health_check_report.py`
