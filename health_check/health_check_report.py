@@ -6,7 +6,7 @@
 # damages resulting from its use.
 # =============================================================================
 """
-health_check_report.py  v1.73
+health_check_report.py  v1.74
 
 Multi-cluster Cohesity health check — 31-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -118,6 +118,9 @@ Requirements
 
 Version history
 ───────────────
+  1.74 (2026-04-23) — fix(health_check): About tab Command row — also mask the
+                     --ca-bundle PEM file path with xxxxx so certificate file
+                     paths are not exposed in the Excel output.
   1.73 (2026-04-23) — fix(health_check): About tab Command row — strip directory
                      path from script name (show only the filename); mask values
                      of --apikey and --password with xxxxx so credentials are
@@ -752,7 +755,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.73"
+__version__ = "1.74"
 
 import argparse
 import datetime
@@ -9490,8 +9493,9 @@ def _sheet_about(wb, all_data, args):
     _section("Command")
     cmd_rn = _advance()
     ws.merge_cells(f"A{cmd_rn}:D{cmd_rn}")
-    # Strip directory path from script name; mask sensitive flag values
-    _SENSITIVE_FLAGS = {"--apikey", "--password", "--api-key", "--pass"}
+    # Strip directory path from script name; mask sensitive flag values and paths
+    _SENSITIVE_FLAGS = {"--apikey", "--password", "--api-key", "--pass",
+                        "--ca-bundle", "--ca_bundle"}
     _argv = list(_sys.argv)
     if _argv:
         _argv[0] = _os.path.basename(_argv[0])

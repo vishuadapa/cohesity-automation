@@ -1,6 +1,6 @@
 # health_check_report.py
 
-**Current version: 1.73**
+**Current version: 1.74**
 
 Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **31-tab Excel workbook** (About + Guide + 29 data sheets), a **Word document**, and a comprehensive **~27-slide PowerPoint deck** (requires `python-pptx`).
 
@@ -283,6 +283,7 @@ Typical runtimes:
 
 | Version | Date | Change |
 |---------|------|--------|
+| 1.74 | 2026-04-23 | fix: About tab Command row — also mask `--ca-bundle` PEM file path with `xxxxx` so certificate file paths are not exposed in the Excel output. |
 | 1.73 | 2026-04-23 | fix: About tab Command row — strip directory path from script name; mask `--apikey` and `--password` values with `xxxxx` so credentials are never written in plain text to the Excel output. |
 | 1.72 | 2026-04-23 | feat: added **About tab** as the first tab in the Excel workbook. Sections: Title (version + run timestamp), Command (full CLI command), Parameters (mode, days, customer, cluster filter, clusters), Notes (Quick Mode scope, Storage Consumed cumulative caveat, DataLock Verification 20-group limit, Health Score formula), APIs Used (30 endpoints: 2 Helios MCM + 21 Cluster v1 + 7 Cluster v2). Tab count updated 30 → 31. |
 | 1.71 | 2026-04-22 | fix: FortKnox Data Transfer sheet — removed Logical Transferred, Physical Transferred, Data Read, and Data Written columns. Sheet now shows: Cluster, Vault Name, Vault Type, Protection Group, Storage Consumed (TB), Period, Last FK Archival, Days Since FK Transfer. |

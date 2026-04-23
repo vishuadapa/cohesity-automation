@@ -7,6 +7,13 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-23] fix(health_check): v1.74 — mask --ca-bundle path in About tab Command row
+
+### Changed — `health_check/health_check_report.py`
+- `--ca-bundle` (PEM file path) added to the sensitive flags list; its value is replaced with `xxxxx` in the About tab Command row so certificate file paths are not written to the Excel output.
+
+---
+
 ## [2026-04-23] fix(health_check): v1.73 — About tab Command row security hardening
 
 ### Changed — `health_check/health_check_report.py`

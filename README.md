@@ -9,7 +9,7 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ## Health Check Report ★
 
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **31-tab Excel workbook** (About tab + Guide tab + 29 data sheets), a **Word document**, and a **comprehensive ~27-slide PowerPoint deck**. The About tab Command row automatically strips the script directory path and masks `--apikey`/`--password` values with `xxxxx`.
+> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **31-tab Excel workbook** (About tab + Guide tab + 29 data sheets), a **Word document**, and a **comprehensive ~27-slide PowerPoint deck**. The About tab Command row automatically strips the script directory path and masks `--apikey`, `--password`, and `--ca-bundle` values with `xxxxx`.
 
 ### What it produces
 
