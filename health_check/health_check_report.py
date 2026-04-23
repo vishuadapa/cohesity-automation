@@ -6,7 +6,7 @@
 # damages resulting from its use.
 # =============================================================================
 """
-health_check_report.py  v1.72
+health_check_report.py  v1.73
 
 Multi-cluster Cohesity health check — 31-tab Excel workbook + Word document + comprehensive PowerPoint deck.
 Designed for enterprise customer business reviews (EBRs) and SE trusted-advisor
@@ -118,6 +118,10 @@ Requirements
 
 Version history
 ───────────────
+  1.73 (2026-04-23) — fix(health_check): About tab Command row — strip directory
+                     path from script name (show only the filename); mask values
+                     of --apikey and --password with xxxxx so credentials are
+                     never written in plain text to the Excel output file.
   1.72 (2026-04-23) — feat(health_check): add About tab as the first tab in the
                      Excel workbook. Sections: Title (version + run date), Command
                      (full CLI command used), Parameters (mode, days, customer,
@@ -748,7 +752,7 @@ Version history
                      Health scoring, recommendations engine, trend charts.
 """
 
-__version__ = "1.72"
+__version__ = "1.73"
 
 import argparse
 import datetime
@@ -9414,6 +9418,7 @@ _API_REF_HC = [
 def _sheet_about(wb, all_data, args):
     """About tab (position 0): run info, parameters, notes, and API reference."""
     import sys as _sys
+    import os as _os
     from openpyxl.styles import Alignment as _Aln, PatternFill as _PF, Font as _Fnt
 
     ws = wb.create_sheet("About", 0)
@@ -9485,7 +9490,26 @@ def _sheet_about(wb, all_data, args):
     _section("Command")
     cmd_rn = _advance()
     ws.merge_cells(f"A{cmd_rn}:D{cmd_rn}")
-    ws.cell(cmd_rn, 1, " ".join(_sys.argv))
+    # Strip directory path from script name; mask sensitive flag values
+    _SENSITIVE_FLAGS = {"--apikey", "--password", "--api-key", "--pass"}
+    _argv = list(_sys.argv)
+    if _argv:
+        _argv[0] = _os.path.basename(_argv[0])
+    _masked = []
+    _skip_next = False
+    for _i, _tok in enumerate(_argv):
+        if _skip_next:
+            _masked.append("xxxxx")
+            _skip_next = False
+        elif _tok in _SENSITIVE_FLAGS:
+            _masked.append(_tok)
+            _skip_next = True
+        elif any(_tok.startswith(f + "=") for f in _SENSITIVE_FLAGS):
+            _flag, _ = _tok.split("=", 1)
+            _masked.append(f"{_flag}=xxxxx")
+        else:
+            _masked.append(_tok)
+    ws.cell(cmd_rn, 1, " ".join(_masked))
 
     # ── Parameters ────────────────────────────────────────────────────────────
     _section("Parameters")

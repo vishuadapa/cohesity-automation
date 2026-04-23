@@ -7,6 +7,14 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-23] fix(health_check): v1.73 — About tab Command row security hardening
+
+### Changed — `health_check/health_check_report.py`
+- **Script path stripped**: the directory path before the script name is removed from the Command row (e.g. `/Users/vishu/Downloads/.../health_check_report.py` → `health_check_report.py`) so the output is clean and portable.
+- **Credential masking**: values passed to `--apikey` and `--password` (both `--flag value` and `--flag=value` forms) are replaced with `xxxxx` in the Command row so API keys and passwords are never written in plain text to the Excel file.
+
+---
+
 ## [2026-04-23] feat(health_check): v1.72 — About tab added to Excel workbook
 
 ### Added — `health_check/health_check_report.py`
