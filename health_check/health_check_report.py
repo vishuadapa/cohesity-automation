@@ -55,6 +55,27 @@ cluster) and produces:
   Security, Agent & Source Coverage, User Security, Recommendations,
   Methodology appendix.
 
+  PowerPoint deck  (~27 slides, requires python-pptx)
+  ────────────────
+  Organised into 5 native PowerPoint sections:
+    Cover            — title slide, customer name, date
+    Contents         — hyperlinked table of contents
+    Executive Summary — KPI snapshot, health scorecard, capacity &
+                        growth, protection, ransomware readiness,
+                        top at-risk workloads, priority actions
+    Topology         — cluster / replication / archival / FortKnox
+                        diagram with connector labels and legend
+    Security         — security posture overview, user security &
+                        MFA, audit & governance activity, security
+                        recommendations
+    Backup Engin.    — SW/HW lifecycle, coverage gaps, agent health,
+                        source coverage, workload risk heatmap,
+                        engineering recommendations
+  All slides use green/amber/red RAG colouring consistent with the
+  Excel workbook.  Scoring methodology for all four models (Overall
+  Health, Security, Ransomware Readiness, Workload Risk) is embedded
+  inline at the bottom of each respective data slide.
+
 Usage
 ─────
   # Helios — API key (key saved to OS keychain after first prompt)
