@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # =============================================================================
 # DISCLAIMER: This code is provided on a best-effort basis and is not in any
-# way officially supported or sanctioned by Cohesity. The code is intentionally
-# kept simple to retain value as example code. The code in this repository is
-# provided as-is and the author accepts no liability for damages resulting
-# from its use.
+# way officially supported or sanctioned by Cohesity. The code in this
+# repository is provided as-is and the author accepts no liability for
+# damages resulting from its use.
 # =============================================================================
 """
 health_check_report.py  v1.71
