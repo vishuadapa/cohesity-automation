@@ -27,6 +27,11 @@ API reference: https://developer.cohesity.com/
 Inspired by:   https://github.com/bseltz-cohesity/scripts
 
 Version history:
+  5.1 (2026-04-25) — Added --bearer flag for pre-existing token mode. Script prompts
+                     via getpass (hidden input) for a bearer token and stores it in the
+                     OS keychain keyed by cluster name/IP (or 'helios' for Helios mode).
+                     Future runs retrieve the token silently. --clear-credentials --bearer
+                     removes the stored token. Works for both Helios and direct cluster.
   5.0 (2026-04-25) — Added Helios bearer token auth mode (--helios-user / --helios-password
                      / --helios-domain). Exchanges Helios username+password for a Bearer
                      token via POST /irisservices/api/v1/public/mcm/createAccessToken and
@@ -98,6 +103,13 @@ Usage — historical (date range):
 Usage — target one cluster via Helios:
   python3 protection_group_report.py --apikey <key> --cluster <cluster-name> --days 7
 
+Usage — bearer token (pre-existing token, prompted once, stored in keychain):
+  python3 protection_group_report.py --bearer                                   # Helios
+  python3 protection_group_report.py --bearer --cluster <ip>                    # direct cluster
+  python3 protection_group_report.py --bearer --days 30                         # Helios, 30-day range
+  python3 protection_group_report.py --clear-credentials --bearer               # clear Helios token
+  python3 protection_group_report.py --clear-credentials --bearer --cluster <ip> # clear cluster token
+
 Usage — Helios bearer token (username/password → bearer token exchange):
   python3 protection_group_report.py --helios-user user@example.com
   python3 protection_group_report.py --helios-user user@example.com --helios-domain cohesity.com --days 30
@@ -107,7 +119,7 @@ Usage — corporate proxy / custom CA:
   python3 protection_group_report.py --ca-bundle /path/to/ca.pem
 """
 
-__version__ = "5.0"
+__version__ = "5.1"
 
 import argparse
 import getpass
@@ -122,6 +134,7 @@ _KR_SVC_HELIOS    = "cohesity_helios"
 _KR_USER_HELIOS   = "apikey"
 _KR_SVC_CLUSTER   = "cohesity_cluster"
 _KR_SVC_HELIOS_PW = "cohesity_helios_password"
+_KR_SVC_BEARER    = "cohesity_bearer_token"
 
 _verify = True   # overridden in main() via --insecure / --ca-bundle
 
@@ -176,6 +189,48 @@ def get_api_key(cli_key: str = None) -> str:
     return key
 
 
+def get_bearer_token(target: str) -> str:
+    """
+    Return a bearer token for `target` (cluster IP/hostname or 'helios').
+
+    Lookup order:
+      1. OS keychain — service 'cohesity_bearer_token', user = target
+      2. Interactive getpass prompt (input hidden, never echoed)
+         → saved to keychain on success for reuse on future runs
+
+    Each cluster stores its own token independently so running with
+    --cluster cluster-a uses a different stored token than --cluster cluster-b.
+    Helios tokens are stored under the fixed key 'helios'.
+
+    If the raw token entered does not start with 'Bearer ', that prefix
+    is prepended automatically before storage and use.
+    """
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KR_SVC_BEARER, target)
+        if stored:
+            print(f"[*] Using stored bearer token for '{target}'")
+            return stored
+    else:
+        print("    NOTE: 'keyring' not installed — token will not be saved.")
+        print("          Install with:  pip install keyring")
+
+    token = getpass.getpass(f"    Enter bearer token for '{target}': ").strip()
+    if not token:
+        print("ERROR: Bearer token cannot be empty.")
+        sys.exit(1)
+
+    if not token.lower().startswith("bearer "):
+        token = f"Bearer {token}"
+
+    if _keyring_available():
+        import keyring
+        keyring.set_password(_KR_SVC_BEARER, target, token)
+        print(f"[*] Bearer token saved to keychain for '{target}'")
+
+    return token
+
+
 def get_cluster_password(cluster: str, username: str, domain: str) -> str:
     """
     Return the password for direct cluster auth. Prompts if not in keychain,
@@ -202,18 +257,26 @@ def get_cluster_password(cluster: str, username: str, domain: str) -> str:
 def clear_stored_credentials(cluster: str = None, username: str = "admin",
                               domain: str = "LOCAL",
                               helios_user: str = None,
-                              helios_domain: str = "cohesity.com"):
+                              helios_domain: str = "cohesity.com",
+                              bearer_target: str = None):
     """
     Remove stored credentials from the OS keychain.
-    helios_user set: clears the stored Helios bearer-token password.
-    cluster set:     clears the direct-cluster password.
-    Neither set:     clears the Helios API key.
+    bearer_target set: clears the bearer token for that target.
+    helios_user set:   clears the stored Helios bearer-token password.
+    cluster set:       clears the direct-cluster password.
+    Neither set:       clears the Helios API key.
     """
     if not _keyring_available():
         print("ERROR: 'keyring' package not installed. Nothing to clear.")
         sys.exit(1)
     import keyring
-    if helios_user:
+    if bearer_target:
+        if keyring.get_password(_KR_SVC_BEARER, bearer_target):
+            keyring.delete_password(_KR_SVC_BEARER, bearer_target)
+            print(f"[*] Stored bearer token for '{bearer_target}' removed.")
+        else:
+            print(f"[*] No stored bearer token found for '{bearer_target}'.")
+    elif helios_user:
         kr_user = f"{helios_domain}:{helios_user}"
         if keyring.get_password(_KR_SVC_HELIOS_PW, kr_user):
             keyring.delete_password(_KR_SVC_HELIOS_PW, kr_user)
@@ -1283,6 +1346,17 @@ Examples:
   Clear stored cluster password:
     python3 protection_group_report.py --clear-credentials --cluster <ip>
 
+  Bearer token (Helios) — prompts once (hidden), stored in keychain as 'helios':
+    python3 protection_group_report.py --bearer
+    python3 protection_group_report.py --bearer --days 30
+
+  Bearer token (direct cluster) — stored keyed by cluster name:
+    python3 protection_group_report.py --bearer --cluster <ip>
+
+  Clear stored bearer tokens:
+    python3 protection_group_report.py --clear-credentials --bearer               # Helios token
+    python3 protection_group_report.py --clear-credentials --bearer --cluster <ip> # cluster token
+
   Helios bearer token — prompts for password, saves to keychain:
     python3 protection_group_report.py --helios-user user@example.com
 
@@ -1311,6 +1385,11 @@ Examples:
     parser.add_argument("--helios-domain", dest="helios_domain", default="cohesity.com",
                         metavar="DOMAIN",
                         help="Helios domain for bearer token auth (default: cohesity.com)")
+    parser.add_argument("--bearer", action="store_true", default=False,
+                        help="Use a pre-existing bearer token. The script prompts once "
+                             "(hidden input) and stores the token in the OS keychain keyed "
+                             "by cluster name/IP (or 'helios'). Future runs reuse the stored "
+                             "token silently. Use --clear-credentials --bearer to remove it.")
     parser.add_argument("--clear-credentials", action="store_true", dest="clear_creds",
                         help="Remove stored credentials from keychain and exit")
     parser.add_argument("--output", default=None,
@@ -1371,14 +1450,20 @@ def main():
 
     # Handle --clear-credentials before anything else
     if args.clear_creds:
+        if args.bearer:
+            bearer_target = args.cluster if args.cluster else "helios"
+        else:
+            bearer_target = None
         _direct_cluster = (args.cluster and not _is_helios_mode(args)
-                           and not _is_helios_bearer_mode(args))
+                           and not _is_helios_bearer_mode(args)
+                           and not args.bearer)
         clear_stored_credentials(
             cluster=args.cluster if _direct_cluster else None,
             username=args.username,
             domain=args.domain,
             helios_user=args.helios_user,
             helios_domain=args.helios_domain,
+            bearer_target=bearer_target,
         )
         sys.exit(0)
 
@@ -1417,8 +1502,52 @@ def main():
 
     all_rows = []
 
-    # --- Helios bearer token mode ---
-    if _is_helios_bearer_mode(args):
+    # --- Direct cluster: pre-existing bearer token ---
+    if _is_direct_bearer_mode(args):
+        print(f"[*] Bearer token mode — direct cluster: {args.cluster}")
+        token    = get_bearer_token(args.cluster)
+        headers  = make_headers(token)
+        base_url = f"https://{args.cluster}"
+
+        print("[*] Fetching protection groups...")
+        groups = get_protection_groups(base_url, headers)
+
+        if args.mode == "trend":
+            all_rows = build_trend_report(args.cluster, base_url, headers, groups,
+                                          start_usecs, end_usecs, debug=args.debug)
+        else:
+            all_rows = build_report(args.cluster, base_url, headers, groups,
+                                    start_usecs, end_usecs)
+
+    # --- Helios: pre-existing bearer token ---
+    elif _is_helios_bearer_token_mode(args):
+        print(f"[*] Bearer token mode — Helios: {HELIOS_HOST}")
+        token    = get_bearer_token("helios")
+        clusters = get_helios_clusters(bearer_token=token)
+
+        for cluster_info in clusters:
+            cluster_name = cluster_info.get("name", "Unknown")
+            cluster_id   = cluster_info.get("clusterId")
+            print(f"\n[*] Processing cluster: {cluster_name} (id={cluster_id})")
+
+            h        = make_helios_bearer_headers(token, cluster_id=cluster_id)
+            base_url = f"https://{HELIOS_HOST}"
+
+            print("    Fetching protection groups...")
+            groups = get_protection_groups(base_url, h)
+            if not groups:
+                continue
+
+            if args.mode == "trend":
+                rows = build_trend_report(cluster_name, base_url, h, groups,
+                                          start_usecs, end_usecs, debug=args.debug)
+            else:
+                rows = build_report(cluster_name, base_url, h, groups,
+                                    start_usecs, end_usecs)
+            all_rows.extend(rows)
+
+    # --- Helios bearer token mode (username/password → token exchange) ---
+    elif _is_helios_bearer_mode(args):
         print(f"[*] Helios bearer token mode — connecting to {HELIOS_HOST}")
         token    = get_helios_bearer_token(args.helios_user, args.helios_domain,
                                            args.helios_password)
@@ -1493,9 +1622,11 @@ def main():
 
     else:
         print("ERROR: Provide one of:")
-        print("  --helios-user <email>              Helios bearer token mode")
+        print("  --bearer                           Pre-existing token (Helios)")
+        print("  --bearer --cluster <ip>            Pre-existing token (direct cluster)")
+        print("  --helios-user <email>              Helios username/password → token exchange")
         print("  --apikey <key>                     Helios API key mode")
-        print("  --cluster <ip>                     Direct cluster mode")
+        print("  --cluster <ip>                     Direct cluster username/password mode")
         print("Run with --help for full usage examples.")
         sys.exit(1)
 
@@ -1503,13 +1634,24 @@ def main():
 
 
 def _is_helios_bearer_mode(args) -> bool:
-    """True when --helios-user is supplied (bearer token auth to Helios)."""
+    """True when --helios-user is supplied (username/password → token exchange)."""
     return bool(getattr(args, "helios_user", None))
 
 
+def _is_direct_bearer_mode(args) -> bool:
+    """True when --bearer is set and --cluster names a direct target."""
+    return getattr(args, "bearer", False) and bool(args.cluster)
+
+
+def _is_helios_bearer_token_mode(args) -> bool:
+    """True when --bearer is set without --cluster (Helios, pre-stored token)."""
+    return getattr(args, "bearer", False) and not args.cluster
+
+
 def _is_helios_mode(args) -> bool:
-    """True when running against Helios via API key (no --helios-user, no --cluster)."""
-    return bool(args.apikey) or (not args.cluster and not _is_helios_bearer_mode(args))
+    """True when running against Helios via API key (no bearer/helios-user flags)."""
+    any_bearer = (getattr(args, "bearer", False) or _is_helios_bearer_mode(args))
+    return bool(args.apikey) or (not args.cluster and not any_bearer)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,10 @@ Typical import pattern:
   )
 
 Version history:
+  1.9 (2026-04-25) — feat: get_bearer_token() for direct pre-existing token input.
+                     Prompts via getpass (hidden), stores per-target in keyring
+                     under service 'cohesity_bearer_token'; key = cluster IP/name
+                     or 'helios'. Enables token reuse across runs without re-entry.
   1.8 (2026-04-25) — feat: Helios bearer token auth via username/password.
                      Added get_helios_bearer_token() and make_helios_bearer_headers()
                      using POST /irisservices/api/v1/public/mcm/createAccessToken.
@@ -74,7 +78,7 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.8"
+__version__ = "1.9"
 
 import getpass
 import sys
@@ -86,6 +90,7 @@ _KR_SVC_HELIOS    = "cohesity_helios"
 _KR_USER_HELIOS   = "apikey"
 _KR_SVC_CLUSTER   = "cohesity_cluster"
 _KR_SVC_HELIOS_PW = "cohesity_helios_password"
+_KR_SVC_BEARER    = "cohesity_bearer_token"
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +187,12 @@ def get_cluster_password(cluster: str, username: str, domain: str,
 def clear_stored_credentials(cluster: str = None, username: str = "admin",
                               domain: str = "LOCAL",
                               helios_user: str = None,
-                              helios_domain: str = "cohesity.com"):
+                              helios_domain: str = "cohesity.com",
+                              bearer_target: str = None):
     """
     Remove stored credentials from the OS keychain.
 
+    bearer_target set:  clears the stored bearer token for that target.
     helios_user set:    clears the stored Helios bearer-token password.
     cluster set:        clears the stored direct-cluster password.
     Neither set:        clears the Helios API key.
@@ -194,7 +201,13 @@ def clear_stored_credentials(cluster: str = None, username: str = "admin",
         print("ERROR: 'keyring' package not installed. Nothing to clear.")
         sys.exit(1)
     import keyring
-    if helios_user:
+    if bearer_target:
+        if keyring.get_password(_KR_SVC_BEARER, bearer_target):
+            keyring.delete_password(_KR_SVC_BEARER, bearer_target)
+            print(f"[*] Stored bearer token for '{bearer_target}' removed.")
+        else:
+            print(f"[*] No stored bearer token found for '{bearer_target}'.")
+    elif helios_user:
         kr_user = f"{helios_domain}:{helios_user}"
         if keyring.get_password(_KR_SVC_HELIOS_PW, kr_user):
             keyring.delete_password(_KR_SVC_HELIOS_PW, kr_user)
@@ -214,6 +227,50 @@ def clear_stored_credentials(cluster: str = None, username: str = "admin",
             print("[*] Stored Helios API key removed from system keychain.")
         else:
             print("[*] No stored Helios API key found — nothing to clear.")
+
+
+# ---------------------------------------------------------------------------
+# Pre-existing bearer token (direct input, keychain-backed, per-target)
+# ---------------------------------------------------------------------------
+
+def get_bearer_token(target: str) -> str:
+    """
+    Return a bearer token for `target` (cluster IP/hostname or 'helios').
+
+    Lookup order:
+      1. OS keychain  — service 'cohesity_bearer_token', user = target
+      2. Interactive prompt via getpass (hidden, never echoed to terminal)
+         → saved to keychain on success for future runs
+
+    The raw token value entered by the user is normalised: if it does not
+    already start with 'Bearer ', that prefix is prepended automatically.
+    `target` is used as the keychain key, so each cluster can have its own
+    token stored independently (e.g. '10.1.2.3', 'cluster-prod', 'helios').
+    """
+    if _keyring_available():
+        import keyring
+        stored = keyring.get_password(_KR_SVC_BEARER, target)
+        if stored:
+            print(f"[*] Using stored bearer token for '{target}'")
+            return stored
+    else:
+        print("    NOTE: 'keyring' not installed — token will not be saved.")
+        print("          Install with:  pip install keyring")
+
+    token = getpass.getpass(f"    Enter bearer token for '{target}': ").strip()
+    if not token:
+        print("ERROR: Bearer token cannot be empty.")
+        sys.exit(1)
+
+    if not token.lower().startswith("bearer "):
+        token = f"Bearer {token}"
+
+    if _keyring_available():
+        import keyring
+        keyring.set_password(_KR_SVC_BEARER, target, token)
+        print(f"[*] Bearer token saved to keychain for '{target}'")
+
+    return token
 
 
 # ---------------------------------------------------------------------------
