@@ -7,6 +7,29 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-04-25] feat(protection_group_report): v5.0 — Helios bearer token auth mode
+
+### Added — `reporting/protection_group_report.py` (v5.0)
+- **New auth mode: Helios bearer token** (`--helios-user`). Instead of an API key,
+  the script exchanges Helios username + password for a Bearer token via
+  `POST https://helios.cohesity.com/irisservices/api/v1/public/mcm/createAccessToken`.
+  The token is then used in the `Authorization: Bearer <token>` header for all
+  subsequent Helios API calls (cluster list and all proxied cluster requests).
+- **New CLI flags**: `--helios-user <email>`, `--helios-password <pass>` (optional),
+  `--helios-domain <domain>` (default: `cohesity.com`).
+- **Keychain integration**: Helios passwords stored/retrieved under keyring service
+  `cohesity_helios_password`. `--clear-credentials --helios-user <email>` removes them.
+- **Existing modes unchanged**: `--apikey` (API key) and `--cluster` (direct cluster)
+  continue to work as before.
+
+### Added — `utils/cohesity_auth.py` (v1.8)
+- `get_helios_bearer_token(username, domain, cli_password, verify)` — shared helper.
+- `make_helios_bearer_headers(token, cluster_id)` — shared helper.
+- `clear_stored_credentials()` gains `helios_user` / `helios_domain` params to clear
+  stored Helios bearer-token passwords from the keychain.
+
+---
+
 ## [2026-04-23] fix(health_check): v1.75 — About tab zoom corrected to 130%
 
 ### Changed

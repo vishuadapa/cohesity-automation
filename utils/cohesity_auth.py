@@ -34,6 +34,11 @@ Typical import pattern:
   )
 
 Version history:
+  1.8 (2026-04-25) — feat: Helios bearer token auth via username/password.
+                     Added get_helios_bearer_token() and make_helios_bearer_headers()
+                     using POST /irisservices/api/v1/public/mcm/createAccessToken.
+                     clear_stored_credentials() now accepts helios_user/helios_domain
+                     to wipe stored Helios passwords from the OS keychain.
   1.7 (2026-04-17) — fix(security): raw API response bodies removed from
                      authentication error messages to prevent token/credential
                      fragments leaking into terminal history and CI logs.
@@ -69,17 +74,18 @@ Version history:
                      into a reusable module so individual scripts stay lean.
 """
 
-__version__ = "1.7"
+__version__ = "1.8"
 
 import getpass
 import sys
 
 import requests
 
-HELIOS_HOST     = "helios.cohesity.com"
-_KR_SVC_HELIOS  = "cohesity_helios"
-_KR_USER_HELIOS = "apikey"
-_KR_SVC_CLUSTER = "cohesity_cluster"
+HELIOS_HOST       = "helios.cohesity.com"
+_KR_SVC_HELIOS    = "cohesity_helios"
+_KR_USER_HELIOS   = "apikey"
+_KR_SVC_CLUSTER   = "cohesity_cluster"
+_KR_SVC_HELIOS_PW = "cohesity_helios_password"
 
 
 # ---------------------------------------------------------------------------
@@ -174,18 +180,28 @@ def get_cluster_password(cluster: str, username: str, domain: str,
 # ---------------------------------------------------------------------------
 
 def clear_stored_credentials(cluster: str = None, username: str = "admin",
-                              domain: str = "LOCAL"):
+                              domain: str = "LOCAL",
+                              helios_user: str = None,
+                              helios_domain: str = "cohesity.com"):
     """
     Remove stored credentials from the OS keychain.
 
-    Without --cluster-host: clears the Helios API key.
-    With --cluster-host:    clears the stored direct-cluster password.
+    helios_user set:    clears the stored Helios bearer-token password.
+    cluster set:        clears the stored direct-cluster password.
+    Neither set:        clears the Helios API key.
     """
     if not _keyring_available():
         print("ERROR: 'keyring' package not installed. Nothing to clear.")
         sys.exit(1)
     import keyring
-    if cluster:
+    if helios_user:
+        kr_user = f"{helios_domain}:{helios_user}"
+        if keyring.get_password(_KR_SVC_HELIOS_PW, kr_user):
+            keyring.delete_password(_KR_SVC_HELIOS_PW, kr_user)
+            print(f"[*] Stored Helios password for {helios_user}@{helios_domain} removed.")
+        else:
+            print(f"[*] No stored Helios password found for {helios_user}@{helios_domain}.")
+    elif cluster:
         kr_user = f"{cluster}:{domain}:{username}"
         if keyring.get_password(_KR_SVC_CLUSTER, kr_user):
             keyring.delete_password(_KR_SVC_CLUSTER, kr_user)
@@ -300,6 +316,67 @@ def make_helios_headers(api_key: str, cluster_id: int = None) -> dict:
     """
     h = {
         "apiKey":        api_key,
+        "Accept":        "application/json",
+        "Content-Type":  "application/json",
+    }
+    if cluster_id is not None:
+        h["accessClusterId"] = str(cluster_id)
+    return h
+
+
+def get_helios_bearer_token(username: str, domain: str = "cohesity.com",
+                            cli_password: str = None, verify=True) -> str:
+    """
+    Authenticate to Helios with username/password and return a Bearer token string.
+    Endpoint: POST https://helios.cohesity.com/irisservices/api/v1/public/mcm/createAccessToken
+    Credentials are stored in the OS keychain under service 'cohesity_helios_password'.
+    """
+    kr_user  = f"{domain}:{username}"
+    password = cli_password
+
+    if not password and _keyring_available():
+        import keyring
+        password = keyring.get_password(_KR_SVC_HELIOS_PW, kr_user)
+        if password:
+            print(f"[*] Using stored Helios password for {username}@{domain}")
+
+    if not password:
+        password = getpass.getpass(f"    Helios password for {username}@{domain}: ").strip()
+        if not password:
+            print("ERROR: Password cannot be empty.")
+            sys.exit(1)
+        if _keyring_available():
+            import keyring
+            keyring.set_password(_KR_SVC_HELIOS_PW, kr_user, password)
+            print(f"[*] Helios password saved to keychain for {username}@{domain}")
+
+    url     = f"https://{HELIOS_HOST}/irisservices/api/v1/public/mcm/createAccessToken"
+    payload = {"username": username, "password": password, "domain": domain}
+    hdrs    = {"Content-Type": "application/json", "Accept": "application/json"}
+    try:
+        r = requests.post(url, json=payload, headers=hdrs, verify=verify, timeout=30)
+        r.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        print("ERROR: Cannot connect to Helios. Check your network/VPN.")
+        sys.exit(1)
+    except requests.exceptions.HTTPError:
+        print(f"ERROR: Helios bearer token auth failed (HTTP {r.status_code}). Check credentials.")
+        sys.exit(1)
+
+    data         = r.json()
+    access_token = data.get("accessToken", "")
+    if not access_token:
+        print("ERROR: No access token returned from Helios.")
+        sys.exit(1)
+
+    print(f"[+] Helios bearer token obtained for {username}@{domain}")
+    return f"{data.get('tokenType', 'Bearer')} {access_token}"
+
+
+def make_helios_bearer_headers(token: str, cluster_id: int = None) -> dict:
+    """Build Helios request headers using a Bearer token (instead of apiKey)."""
+    h = {
+        "Authorization": token,
         "Accept":        "application/json",
         "Content-Type":  "application/json",
     }
