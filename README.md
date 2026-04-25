@@ -327,18 +327,111 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 
 ---
 
+## Protection Group Report
+
+> Per-protection-group run status report. Connects to Helios or a direct cluster and produces an Excel workbook with run stats, SLA, replication, archival, and storage data. Supports summary (last run per group), historical (all runs in a date range), and trend (daily storage consumed per group with charts) modes.
+
+### Prerequisites
+
+```bash
+pip install requests openpyxl keyring
+```
+
+### Usage
+
+```bash
+# ── Bearer token (Helios) ────────────────────────────────────────────────────
+# First run — prompts once (hidden input), saves to OS keychain as 'helios'
+python3 reporting/protection_group_report.py --bearer
+
+# Subsequent runs — token retrieved silently, no prompt
+python3 reporting/protection_group_report.py --bearer --days 30
+python3 reporting/protection_group_report.py --bearer --start 2026-03-01 --end 2026-04-01
+python3 reporting/protection_group_report.py --bearer --mode trend --days 14
+
+# Clear stored Helios bearer token (e.g. after token expiry)
+python3 reporting/protection_group_report.py --clear-credentials --bearer
+
+# ── Bearer token (direct cluster) ───────────────────────────────────────────
+# Token stored per-cluster — each cluster name/IP has its own keychain entry
+python3 reporting/protection_group_report.py --bearer --cluster 10.1.2.100
+python3 reporting/protection_group_report.py --bearer --cluster 10.1.2.100 --days 7
+
+# Clear stored token for a specific cluster
+python3 reporting/protection_group_report.py --clear-credentials --bearer --cluster 10.1.2.100
+
+# ── Helios API key ────────────────────────────────────────────────────────────
+# First run — prompts for API key, saves to keychain
+python3 reporting/protection_group_report.py
+
+# With explicit key (not saved)
+python3 reporting/protection_group_report.py --apikey <key> --days 30
+
+# ── Helios username/password → token exchange ────────────────────────────────
+python3 reporting/protection_group_report.py --helios-user user@example.com
+python3 reporting/protection_group_report.py --helios-user user@example.com --days 30 --cluster my-cluster
+
+# ── Direct cluster (username/password) ──────────────────────────────────────
+python3 reporting/protection_group_report.py --cluster 10.1.2.100 --username admin --domain LOCAL
+```
+
+### All options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| **Bearer token auth** | | |
+| `--bearer` | off | Pre-existing bearer token mode. Prompts once via hidden input; token stored in OS keychain keyed by cluster IP/name (or `'helios'`). Reused silently on future runs. |
+| **Helios auth (API key)** | | |
+| `--apikey KEY` | keychain / prompted | Helios API key |
+| **Helios auth (username/password)** | | |
+| `--helios-user EMAIL` | *(none)* | Helios email — exchanges credentials for a Bearer token via `POST /mcm/createAccessToken` |
+| `--helios-password PASS` | keychain / prompted | Helios password (optional; keychain used if omitted) |
+| `--helios-domain DOMAIN` | `cohesity.com` | Helios auth domain |
+| **Direct cluster auth** | | |
+| `--cluster HOST` | *(none)* | Cluster IP/hostname (direct mode) or name filter (Helios mode) |
+| `--username USER` | `admin` | Cluster username |
+| `--domain DOMAIN` | `LOCAL` | Auth domain — `LOCAL` or AD domain name |
+| **Report options** | | |
+| `--mode` | `summary` | `summary`: last run per group or all runs in range. `trend`: daily storage per group with charts. |
+| `--days N` | *(none)* | Last N days |
+| `--start YYYY-MM-DD` | — | Start date (inclusive) |
+| `--end YYYY-MM-DD` | today | End date (inclusive) |
+| `--output PATH` | auto-generated | Output `.xlsx` path |
+| `--clear-credentials` | off | Remove stored credentials from OS keychain and exit |
+| **TLS options** | | |
+| `--ca-bundle PATH` | system bundle | CA cert for corporate proxy or self-signed cluster |
+| `--insecure` | off | Disable TLS verification (prints warning) |
+| `--debug` | off | Print raw API responses |
+
+---
+
 ## Authentication
 
-All scripts support two modes:
+Scripts support four authentication modes:
 
-**Helios (recommended)** — single API key covers all connected clusters:
+**Bearer token — pre-existing token (recommended for automation):**
+```bash
+# Helios — token stored as 'helios' in OS keychain
+python3 reporting/protection_group_report.py --bearer
+
+# Direct cluster — token stored keyed by cluster IP/name
+python3 reporting/protection_group_report.py --bearer --cluster <ip>
+```
+First run prompts for the token (hidden input, never echoed). Every subsequent run retrieves it silently from the OS keychain. Use `--clear-credentials --bearer` to remove a stored token.
+
+**Helios API key:**
 ```bash
 python3 <script>.py --apikey <your-helios-api-key>
 ```
+Key is stored in the OS keychain after the first use — `--apikey` is optional on subsequent runs.
 
-The key is stored in the OS keychain after the first use — `--apikey` is optional on subsequent runs.
+**Helios username/password → token exchange:**
+```bash
+python3 reporting/protection_group_report.py --helios-user user@example.com
+```
+Exchanges credentials for a Bearer token via `POST /irisservices/api/v1/public/mcm/createAccessToken`. Password stored in OS keychain.
 
-**Direct cluster** — username/password against a specific cluster:
+**Direct cluster — username/password:**
 ```bash
 python3 <script>.py --cluster <ip-or-hostname> --username admin --domain LOCAL
 ```
@@ -376,7 +469,19 @@ python3 health_check/health_check_report.py --apikey <key> --quick --excel-only
 
 ### Reporting
 ```bash
+# Protection group report — bearer token (Helios)
+python3 reporting/protection_group_report.py --bearer
+python3 reporting/protection_group_report.py --bearer --days 30
+python3 reporting/protection_group_report.py --bearer --mode trend --days 14
+
+# Protection group report — bearer token (direct cluster)
+python3 reporting/protection_group_report.py --bearer --cluster <ip>
+
+# Protection group report — Helios API key
 python3 reporting/protection_group_report.py --days 7
+python3 reporting/protection_group_report.py --apikey <key> --start 2026-03-01 --end 2026-04-01
+
+# FortKnox vault report
 python3 reporting/fortknox_vault_report.py --days 30
 python3 reporting/fortknox_vault_report.py --mode trend --days 30
 python3 reporting/fortknox_vault_report.py --start 2026-03-01 --end 2026-03-31 --cluster prod-east
