@@ -83,6 +83,137 @@ def _put(url: str, body: dict | None = None) -> Any:
     return resp.json() if resp.text else {"status": resp.status_code}
 
 
+def _delete(url: str, params: dict | None = None) -> Any:
+    resp = httpx.delete(url, headers=_headers(), params=params or {},
+                        verify=VERIFY_SSL, timeout=120)
+    resp.raise_for_status()
+    return resp.json() if resp.text else {"status": resp.status_code}
+
+
+def _patch(url: str, body: dict | None = None) -> Any:
+    resp = httpx.patch(url, headers=_headers(), json=body or {},
+                       verify=VERIFY_SSL, timeout=120)
+    resp.raise_for_status()
+    return resp.json() if resp.text else {"status": resp.status_code}
+
+
+# ---------------------------------------------------------------------------
+# Risk taxonomy, RBAC, and dynamic API helpers
+# ---------------------------------------------------------------------------
+
+# Risk levels (integer, higher = more dangerous)
+_RISK_READ        = 0   # GET — safe, no side effects
+_RISK_REVERSIBLE  = 1   # POST/PUT that can be undone (pause, resume, trigger run)
+_RISK_CAUTION     = 2   # POST/PUT with lasting side-effects (create objects, modify config)
+_RISK_DESTRUCTIVE = 3   # DELETE, or operations that permanently remove/alter data
+_RISK_BLOCKED     = 4   # Hardcoded floor — refused regardless of role
+
+_RISK_LABEL = {
+    _RISK_READ:        "READ (safe)",
+    _RISK_REVERSIBLE:  "REVERSIBLE",
+    _RISK_CAUTION:     "CAUTION",
+    _RISK_DESTRUCTIVE: "DESTRUCTIVE",
+    _RISK_BLOCKED:     "BLOCKED",
+}
+
+# Path substrings that hard-block the request regardless of role
+_ALWAYS_BLOCKED_SUBSTRINGS = [
+    "factory-reset", "destroy-cluster", "destroycluster",
+    "wipe-data", "erase-data", "unregister-cluster",
+]
+
+# Path substrings that escalate a POST/PUT to CAUTION or DESTRUCTIVE
+_ESCALATE_TO_DESTRUCTIVE = ["delete", "destroy", "purge", "retire", "expir"]
+_ESCALATE_TO_CAUTION     = ["create", "config", "setting", "gflag", "register", "modify", "update"]
+
+# Cohesity role → maximum risk level allowed for that role
+_ROLE_CEILING: dict[str, int] = {
+    "kViewer":           _RISK_READ,
+    "kHeliosData":       _RISK_READ,
+    "kRestoreOperator":  _RISK_REVERSIBLE,
+    "kOperator":         _RISK_REVERSIBLE,
+    "kDataSecurity":     _RISK_CAUTION,
+    "kAdmin":            _RISK_DESTRUCTIVE,
+    "kSuperAdmin":       _RISK_DESTRUCTIVE,
+}
+
+_user_roles_cache: list[str] | None = None
+_swagger_cache: dict | None = None
+
+
+def _classify_risk(method: str, path: str) -> int:
+    m = method.upper()
+    p = path.lower()
+
+    if any(s in p for s in _ALWAYS_BLOCKED_SUBSTRINGS):
+        return _RISK_BLOCKED
+
+    if m == "GET":
+        return _RISK_READ
+    if m == "DELETE":
+        base = _RISK_DESTRUCTIVE
+    else:
+        base = _RISK_REVERSIBLE
+
+    if any(s in p for s in _ESCALATE_TO_DESTRUCTIVE):
+        base = max(base, _RISK_DESTRUCTIVE)
+    elif any(s in p for s in _ESCALATE_TO_CAUTION):
+        base = max(base, _RISK_CAUTION)
+
+    return base
+
+
+def _fetch_user_roles() -> list[str]:
+    global _user_roles_cache
+    if _user_roles_cache is not None:
+        return _user_roles_cache
+    try:
+        user = _get(f"{BASE_V1}/public/sessionUser")
+        roles = user.get("roles", [])
+    except Exception:
+        roles = []
+    if not roles and USERNAME:
+        try:
+            users = _get(f"{BASE_V1}/public/users", {"usernames": USERNAME})
+            roles = (users[0].get("roles", []) if isinstance(users, list) and users else [])
+        except Exception:
+            pass
+    _user_roles_cache = roles
+    return roles
+
+
+def _rbac_gate(risk: int) -> tuple[bool, str]:
+    """Return (allowed, reason). Allowed=False means the MCP refuses to execute."""
+    if risk == _RISK_BLOCKED:
+        return False, (
+            "REFUSED: This operation matches the hardcoded block list "
+            "(factory-reset, cluster destroy, data-wipe, etc.). "
+            "It will not be executed by this MCP server under any circumstances."
+        )
+    roles = _fetch_user_roles()
+    if roles:
+        ceiling = max((_ROLE_CEILING.get(r, _RISK_READ) for r in roles), default=_RISK_READ)
+        role_str = ", ".join(roles)
+    else:
+        # Can't determine roles (common with API-key auth on some builds).
+        # Default to REVERSIBLE as a conservative fallback.
+        ceiling = _RISK_REVERSIBLE
+        role_str = "unknown — defaulting to REVERSIBLE ceiling"
+
+    if risk > ceiling:
+        return False, (
+            f"REFUSED: RBAC check failed. "
+            f"Your roles ({role_str}) permit up to '{_RISK_LABEL[ceiling]}' operations. "
+            f"This request is classified as '{_RISK_LABEL[risk]}'. "
+            f"Elevate your Cohesity role or ask an admin to perform this action."
+        )
+    return True, (
+        f"RBAC OK — roles: {role_str} | "
+        f"ceiling: {_RISK_LABEL[ceiling]} | "
+        f"this request: {_RISK_LABEL[risk]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tier 1 — Monitor
 # ---------------------------------------------------------------------------
@@ -227,6 +358,113 @@ def healthcheck_summary() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tier 2.5 — Dynamic API discovery and identity
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def get_whoami() -> dict:
+    """Return the current authenticated user's Cohesity identity, RBAC roles, and
+    the effective risk ceiling those roles allow when using call_api.
+    Call this first when you are unsure what operations the current user can perform."""
+    global _user_roles_cache
+    _user_roles_cache = None  # force a fresh fetch
+    try:
+        user = _get(f"{BASE_V1}/public/sessionUser")
+    except Exception:
+        user = {}
+    roles = user.get("roles", [])
+    _user_roles_cache = roles
+
+    if roles:
+        ceiling = max((_ROLE_CEILING.get(r, _RISK_READ) for r in roles), default=_RISK_READ)
+    else:
+        ceiling = _RISK_REVERSIBLE
+
+    return {
+        "username":       user.get("username", USERNAME or "(API key auth — username unavailable)"),
+        "domain":         user.get("domain"),
+        "description":    user.get("description"),
+        "roles":          roles,
+        "effectiveCeiling": _RISK_LABEL[ceiling],
+        "ceilingNote": (
+            "Roles and ceiling are fetched from /public/sessionUser. "
+            "With API key auth on some builds, roles may be empty — "
+            "ceiling then defaults to REVERSIBLE as a conservative fallback."
+        ),
+    }
+
+
+@mcp.tool()
+def search_cluster_api(query: str) -> list[dict]:
+    """Search the cluster's live Swagger/OpenAPI spec for endpoints matching a
+    natural-language or keyword query (e.g. 'delete snapshot', 'list users',
+    'storage domain'). Returns up to 20 matching endpoints with their HTTP method,
+    path, summary, pre-classified risk level, and parameter names.
+
+    Use this to discover the right endpoint before calling call_api.
+    Results include the risk label so you can advise the user before executing."""
+    global _swagger_cache
+    if _swagger_cache is None:
+        for url in [
+            f"https://{CLUSTER}/docs/api/swagger.json",
+            f"https://{CLUSTER}/irisservices/docs/swagger.json",
+            f"{BASE_V2}/swagger.json",
+            f"{BASE_V1}/swagger.json",
+        ]:
+            try:
+                resp = httpx.get(url, headers=_headers(), verify=VERIFY_SSL, timeout=30)
+                if resp.status_code == 200:
+                    _swagger_cache = resp.json()
+                    break
+            except Exception:
+                continue
+
+    if not _swagger_cache:
+        return [{
+            "error": (
+                "Could not fetch the cluster Swagger spec. "
+                "Tried /docs/api/swagger.json, /irisservices/docs/swagger.json, "
+                "/v2/swagger.json, and /irisservices/api/v1/swagger.json. "
+                "You can still call call_api with a known path."
+            )
+        }]
+
+    words = query.lower().split()
+    results = []
+    for path, methods in (_swagger_cache.get("paths") or {}).items():
+        for method, spec in methods.items():
+            if method.upper() not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                continue
+            summary     = spec.get("summary", "")
+            description = spec.get("description", "")
+            tags        = " ".join(spec.get("tags", []))
+            text        = f"{path} {summary} {description} {tags}".lower()
+            if not any(w in text for w in words):
+                continue
+            risk = _classify_risk(method, path)
+            results.append({
+                "method":     method.upper(),
+                "path":       path,
+                "summary":    summary,
+                "risk":       _RISK_LABEL[risk],
+                "parameters": [
+                    {
+                        "name":     p.get("name"),
+                        "in":       p.get("in"),
+                        "required": p.get("required", False),
+                    }
+                    for p in (spec.get("parameters") or [])
+                ][:8],
+            })
+
+    results.sort(key=lambda r: (
+        not any(w in r["path"].lower() for w in words),
+        not any(w in r["summary"].lower() for w in words),
+    ))
+    return results[:20]
+
+
+# ---------------------------------------------------------------------------
 # Tier 3 — Act (confirm pattern: confirm=False proposes, confirm=True executes)
 # ---------------------------------------------------------------------------
 
@@ -303,6 +541,104 @@ def acknowledge_alert(alert_id: str, confirm: bool = False) -> dict:
                 "resolutionDetails": "Acknowledged by operator through LLM assistant"}}
     result = _post(f"{BASE_V1}/public/alertResolutions", body)
     return {"executed": "resolve alert", "alertId": alert_id, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Tier 4 — Generic executor (research → RBAC → risk → confirm → execute)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def call_api(
+    method:  str,
+    path:    str,
+    params:  dict | None = None,
+    body:    dict | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Generic Cohesity API executor gated by RBAC and risk classification.
+
+    Workflow:
+      1. Call search_cluster_api to find the right endpoint.
+      2. Call get_whoami to understand what the current user is allowed to do.
+      3. Call call_api with confirm=False — the tool will classify the risk,
+         run the RBAC check, and return a proposal. If the operation is too
+         intrusive or destructive for the user's role, it REFUSES here and stops.
+      4. If the proposal looks correct, call again with confirm=True to execute.
+
+    Args:
+      method   HTTP verb: GET | POST | PUT | PATCH | DELETE
+      path     Full API path, e.g. /v2/data-protect/protection-groups
+               or /irisservices/api/v1/public/cluster
+      params   Query-string parameters (GET) or additional filters
+      body     JSON request body (POST / PUT / PATCH)
+      confirm  False = propose only (safe); True = execute (requires prior review)
+
+    The tool REFUSES (returns status=REFUSED) and stops without calling the
+    cluster API if:
+      • The path matches the hardcoded block list (factory-reset, wipe, etc.)
+      • The operation's risk level exceeds the current user's RBAC ceiling
+    """
+    m    = method.upper()
+    risk = _classify_risk(m, path)
+    allowed, reason = _rbac_gate(risk)
+
+    # Build the full URL — accept paths with or without the scheme/host
+    if path.startswith("https://") or path.startswith("http://"):
+        url = path
+    else:
+        p = path if path.startswith("/") else f"/{path}"
+        url = f"https://{CLUSTER}{p}"
+
+    proposal = {
+        "method":  m,
+        "url":     url,
+        "params":  params or {},
+        "body":    body   or {},
+        "risk":    _RISK_LABEL[risk],
+        "rbac":    reason,
+        "allowed": allowed,
+    }
+
+    if not allowed:
+        proposal["status"] = "REFUSED"
+        return proposal
+
+    if not confirm:
+        proposal["status"] = "PROPOSED"
+        proposal["to_execute"] = (
+            "Review the risk and rbac fields above, then call again with confirm=True to execute."
+        )
+        return proposal
+
+    # Execute
+    try:
+        if m == "GET":
+            result = _get(url, params)
+        elif m == "POST":
+            result = _post(url, body)
+        elif m == "PUT":
+            result = _put(url, body)
+        elif m == "PATCH":
+            result = _patch(url, body)
+        elif m == "DELETE":
+            result = _delete(url, params)
+        else:
+            return {"status": "REFUSED", "message": f"Unsupported HTTP method: {m}"}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "status":      "ERROR",
+            "http_status": exc.response.status_code,
+            "detail":      exc.response.text[:1000],
+        }
+
+    return {
+        "status": "EXECUTED",
+        "method": m,
+        "url":    url,
+        "risk":   _RISK_LABEL[risk],
+        "rbac":   reason,
+        "result": result,
+    }
 
 
 # ---------------------------------------------------------------------------
