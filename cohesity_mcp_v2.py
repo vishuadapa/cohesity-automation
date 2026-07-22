@@ -91,11 +91,16 @@ def _put(url: str, body: dict | None = None) -> Any:
 def get_cluster_health() -> dict:
     """Cluster identity, version, node count, and overall health/status."""
     info = _get(f"{BASE_V1}/public/cluster")
+    status = _get(f"{BASE_V1}/nexus/cluster/status")
+    stopped = (status.get("bulletinState") or {}).get("stoppedServices", [])
     return {
         "name": info.get("name"),
         "clusterSoftwareVersion": info.get("clusterSoftwareVersion"),
         "nodeCount": info.get("nodeCount"),
-        "healthy": info.get("clusterAuditLogConfig") is not None,  # VERIFY: use basicClusterInfo/health endpoint on your version
+        "healthy": status.get("isServiceStateSynced") is True and not stopped,
+        "healingStatus": status.get("healingStatus"),
+        "isServiceStateSynced": status.get("isServiceStateSynced"),
+        "stoppedServices": stopped,
         "raw": {k: info.get(k) for k in
                 ("id", "clusterType", "usedMetadataSpacePct", "availableMetadataSpace")},
     }
@@ -164,7 +169,7 @@ def get_protection_runs(group_id: str, num_runs: int = 10,
     for r in runs:
         local = r.get("localBackupInfo", {}) or {}
         status = local.get("status")
-        if only_failed and status not in ("Failed", "Warning", "Canceled"):
+        if only_failed and status not in ("Failed", "SucceededWithWarning", "Canceled"):
             continue
         out.append({
             "runId": r.get("id"),
@@ -210,7 +215,7 @@ def healthcheck_summary() -> dict:
     criticals = get_alerts(max_alerts=10, severity="kCritical")
     groups = get_protection_groups()
     failing = [g for g in groups
-               if g.get("lastRunStatus") in ("Failed", "Warning")]
+               if g.get("lastRunStatus") in ("Failed", "SucceededWithWarning")]
     return {
         "cluster": health.get("name"),
         "version": health.get("clusterSoftwareVersion"),
@@ -292,7 +297,6 @@ def acknowledge_alert(alert_id: str, confirm: bool = False) -> dict:
             "impact": "Alert moves out of the open queue. Underlying issue is NOT fixed.",
             "to_execute": "Call again with confirm=true",
         }
-    # VERIFY: resolution endpoint/body varies by version; check swagger
     body = {"alertIdList": [alert_id],
             "resolutionDetails": {
                 "resolutionSummary": "Resolved via Cohesity MCP demo",
