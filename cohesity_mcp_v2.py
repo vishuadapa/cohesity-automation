@@ -127,14 +127,24 @@ _ESCALATE_TO_DESTRUCTIVE = ["delete", "destroy", "purge", "retire", "expir"]
 _ESCALATE_TO_CAUTION     = ["create", "config", "setting", "gflag", "register", "modify", "update"]
 
 # Cohesity role → maximum risk level allowed for that role
+# Two naming conventions exist across Cohesity builds:
+#   k-prefixed   — older / internal API format (kAdmin, kOperator, …)
+#   COHESITY_-prefixed — format returned by /public/sessionUser on 7.x clusters
 _ROLE_CEILING: dict[str, int] = {
-    "kViewer":           _RISK_READ,
-    "kHeliosData":       _RISK_READ,
-    "kRestoreOperator":  _RISK_REVERSIBLE,
-    "kOperator":         _RISK_REVERSIBLE,
-    "kDataSecurity":     _RISK_CAUTION,
-    "kAdmin":            _RISK_DESTRUCTIVE,
-    "kSuperAdmin":       _RISK_DESTRUCTIVE,
+    # k-prefixed variants
+    "kViewer":              _RISK_READ,
+    "kHeliosData":          _RISK_READ,
+    "kRestoreOperator":     _RISK_REVERSIBLE,
+    "kOperator":            _RISK_REVERSIBLE,
+    "kDataSecurity":        _RISK_CAUTION,
+    "kAdmin":               _RISK_DESTRUCTIVE,
+    "kSuperAdmin":          _RISK_DESTRUCTIVE,
+    # COHESITY_-prefixed variants (7.x sessionUser API)
+    "COHESITY_VIEWER":          _RISK_READ,
+    "COHESITY_OPERATOR":        _RISK_REVERSIBLE,
+    "COHESITY_DATA_SECURITY":   _RISK_CAUTION,
+    "COHESITY_ADMIN":           _RISK_DESTRUCTIVE,
+    "COHESITY_SUPER_ADMIN":     _RISK_DESTRUCTIVE,
 }
 
 _user_roles_cache: list[str] | None = None
