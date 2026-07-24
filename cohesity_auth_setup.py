@@ -172,35 +172,6 @@ def _prompt_otp() -> tuple[str, str]:
     return otp_type, otp_code
 
 
-def _prompt_totp_secret(host: str, username: str) -> None:
-    """Optionally store the TOTP secret so the MCP server can auto-generate codes."""
-    if not _PYOTP:
-        print()
-        print("  (Install pyotp to enable auto-TOTP:  pip install pyotp)")
-        return
-    print()
-    print("  TOTP secret storage (optional but recommended):")
-    print("  If you save your TOTP secret key here, the MCP server can generate")
-    print("  OTP codes automatically at runtime — no manual input needed.")
-    print("  The secret is the text key shown when you first set up the authenticator app.")
-    print("  If you only have the QR code, scan it with a TOTP app to reveal the key,")
-    print("  or check your authenticator app's account settings/export.")
-    ans = input("  Store TOTP secret for auto-login? [y/N]: ").strip().lower()
-    if ans != "y":
-        print("  Skipped — you will need to re-run this script each time the token expires.")
-        return
-    secret = getpass.getpass("  TOTP secret key (hidden, e.g. JBSWY3DPEHPK3PXP): ").strip()
-    if not secret:
-        print("  Skipped (empty).")
-        return
-    try:
-        test_code = pyotp.TOTP(secret).now()
-        print(f"  Secret valid — current code would be: {test_code}")
-    except Exception as exc:
-        print(f"  Warning: could not validate secret ({exc}). Storing anyway.")
-    _store(f"totp-secret@{host}", secret)
-    print(f"  ✓ TOTP secret stored for {username}@{host}")
-
 
 def _setup_direct(cluster: dict) -> None:
     alias    = cluster["alias"]
@@ -312,13 +283,6 @@ def _setup_direct(cluster: dict) -> None:
         _store(f"session-token@{host}", f"{token_str}|{expiry}")
         print(f"  ✓ Session token cached (valid ~23 h) — MCP server ready to use immediately")
 
-    # ── TOTP secret (for auto-MFA when token expires after 23 h) ─────────
-    if used_otp and otp_type == "Totp":
-        _prompt_totp_secret(host, username)
-    elif not used_otp:
-        ans = input("  Does this cluster require TOTP MFA? Store secret for auto-login? [y/N]: ").strip().lower()
-        if ans == "y":
-            _prompt_totp_secret(host, username)
 
 
 def _setup_helios(cluster: dict) -> None:
