@@ -1,0 +1,28 @@
+{
+  "_comment": "Copy to ~/.cohesity-mcp/config.json and edit to match your environment. No passwords here — credentials live in the OS keyring.",
+  "default": "prod",
+  "clusters": [
+    {
+      "alias":      "prod",
+      "type":       "direct",
+      "host":       "prod-cluster.corp.local",
+      "domain":     "CORP",
+      "username":   "your-ad-username",
+      "verify_ssl": false
+    },
+    {
+      "alias":      "dev",
+      "type":       "direct",
+      "host":       "dev-cluster.corp.local",
+      "domain":     "CORP",
+      "username":   "your-ad-username",
+      "verify_ssl": false
+    },
+    {
+      "alias":      "helios",
+      "type":       "helios",
+      "host":       "helios.cohesity.com",
+      "verify_ssl": true
+    }
+  ]
+}
