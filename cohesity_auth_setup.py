@@ -135,7 +135,13 @@ def _auth_attempt(host: str, username: str, password: str,
 
 
 def _is_mfa_error(exc: httpx.HTTPStatusError) -> bool:
-    """Return True if the cluster is asking for an MFA OTP code."""
+    """Return True if the cluster is asking for an MFA OTP code.
+
+    Cohesity signals MFA in several ways depending on version:
+      - errorCode KMFA / KOTP / KMULTIFACTOR
+      - errorCode KValidationError + "mandatory parameters"
+        (otpCode is treated as a mandatory field when MFA is enabled)
+    """
     try:
         body = exc.response.json()
         code = body.get("errorCode", "").upper()
@@ -147,6 +153,8 @@ def _is_mfa_error(exc: httpx.HTTPStatusError) -> bool:
             or "two-factor" in msg
             or "otp" in msg
             or "one-time" in msg
+            # Cohesity 7.x returns KValidationError when otpCode is absent
+            or (code == "KVALIDATIONERROR" and "mandatory" in msg)
         )
     except Exception:
         return False

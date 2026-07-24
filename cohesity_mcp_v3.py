@@ -140,6 +140,8 @@ def _is_mfa_challenge(body: dict) -> bool:
     return (
         "MFA" in code or "OTP" in code or "MULTIFACTOR" in code
         or "two-factor" in msg or "otp" in msg or "one-time" in msg
+        # Cohesity 7.x: KValidationError + "mandatory parameters" = missing otpCode
+        or (code == "KVALIDATIONERROR" and "mandatory" in msg)
     )
 
 
