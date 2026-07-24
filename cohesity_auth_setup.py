@@ -238,15 +238,28 @@ def _setup_direct(cluster: dict) -> None:
 
     # ── First auth attempt (no OTP) ─────────────────────────────────────
     print("  Verifying...", end=" ", flush=True)
-    tok       = None
-    otp_type  = ""
-    used_otp  = False
+    tok      = None
+    otp_type = ""
+    used_otp = False
     try:
         tok = _auth_attempt(host, username, password, domain, verify)
         print(f"OK  (token type: {tok.get('tokenType', 'unknown')})")
 
     except httpx.HTTPStatusError as exc:
-        if _is_mfa_error(exc):
+        try:
+            body = exc.response.json()
+            err_msg = body.get("message", "")
+        except Exception:
+            body    = {}
+            err_msg = exc.response.text
+
+        # "domain does not exist" is a hard config error — don't treat as MFA
+        domain_error = "does not exist" in err_msg.lower() and "domain" in err_msg.lower()
+
+        if exc.response.status_code in (400, 401) and not domain_error:
+            # Any 400/401 that isn't a domain problem = treat as MFA challenge.
+            # Cohesity 7.x returns KValidationError+"mandatory parameters" when
+            # otpCode is missing; older builds return KMFA. Catch all variants.
             print("MFA required.")
             otp_type, otp_code = _prompt_otp()
             print("  Verifying with OTP...", end=" ", flush=True)
@@ -270,9 +283,10 @@ def _setup_direct(cluster: dict) -> None:
                     return
         else:
             print(f"FAILED  (HTTP {exc.response.status_code})")
-            print(f"  Response: {exc.response.text[:300]}")
-            if short_domain != domain:
-                print(f"  Tip: Edit config.json and change domain from '{domain}' to '{short_domain}', then re-run.")
+            print(f"  {err_msg}")
+            if domain_error:
+                print(f"  Check the 'domain' field in your config.json.")
+                print(f"  Tried: '{domain}'  —  ask your Cohesity admin for the registered AD domain name.")
             ans = input("  Store credential anyway? [y/N]: ").strip().lower()
             if ans != "y":
                 print("  Credential not stored.")
