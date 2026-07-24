@@ -9,7 +9,13 @@ Stores credentials securely in the OS keyring:
 Run this once per machine per user before starting cohesity_mcp_v3.py.
 Nothing sensitive is written to any file.
 
-Requires: pip install httpx keyring
+Requires: pip install httpx keyring pyotp
+
+MFA support:
+  TOTP (Google/Microsoft Authenticator): store the secret key once → codes
+       generated automatically at runtime, no manual input needed.
+  Email OTP: prompted once per setup run; the resulting session token is
+       cached for 23 h. Re-run this script when the token expires.
 """
 
 import getpass
@@ -24,9 +30,15 @@ try:
 except ImportError:
     sys.exit(
         "Missing dependencies.\n"
-        "Run:  pip install httpx keyring\n"
+        "Run:  pip install httpx keyring pyotp\n"
         "Then re-run this script."
     )
+
+try:
+    import pyotp
+    _PYOTP = True
+except ImportError:
+    _PYOTP = False
 
 KEYRING_SVC = "cohesity-mcp"
 
@@ -106,6 +118,82 @@ def _delete_cred(key: str) -> None:
 
 # ── Per-cluster setup ───────────────────────────────────────────────────────
 
+def _auth_attempt(host: str, username: str, password: str,
+                  domain: str, verify: bool,
+                  otp_code: str = "", otp_type: str = "") -> dict:
+    """POST to accessTokens; returns the decoded JSON on success, raises on error."""
+    body: dict = {"username": username, "password": password, "domain": domain}
+    if otp_code:
+        body["otpCode"]  = otp_code
+        body["otpType"]  = otp_type   # "Totp" | "Email"
+    resp = httpx.post(
+        f"https://{host}/irisservices/api/v1/public/accessTokens",
+        json=body, verify=verify, timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _is_mfa_error(exc: httpx.HTTPStatusError) -> bool:
+    """Return True if the cluster is asking for an MFA OTP code."""
+    try:
+        body = exc.response.json()
+        code = body.get("errorCode", "").upper()
+        msg  = body.get("message", "").lower()
+        return (
+            "MFA" in code
+            or "OTP" in code
+            or "MULTIFACTOR" in code
+            or "two-factor" in msg
+            or "otp" in msg
+            or "one-time" in msg
+        )
+    except Exception:
+        return False
+
+
+def _prompt_otp() -> tuple[str, str]:
+    """Ask user for OTP type and code; return (otp_type, otp_code)."""
+    print()
+    print("  MFA required. Choose type:")
+    print("    1  TOTP  (Google / Microsoft Authenticator)")
+    print("    2  Email OTP")
+    choice = input("  Type [1]: ").strip() or "1"
+    otp_type = "Totp" if choice != "2" else "Email"
+    otp_code = input(f"  Enter {'authenticator' if otp_type == 'Totp' else 'email'} OTP code: ").strip()
+    return otp_type, otp_code
+
+
+def _prompt_totp_secret(host: str, username: str) -> None:
+    """Optionally store the TOTP secret so the MCP server can auto-generate codes."""
+    if not _PYOTP:
+        print()
+        print("  (Install pyotp to enable auto-TOTP:  pip install pyotp)")
+        return
+    print()
+    print("  TOTP secret storage (optional but recommended):")
+    print("  If you save your TOTP secret key here, the MCP server can generate")
+    print("  OTP codes automatically at runtime — no manual input needed.")
+    print("  The secret is the text key shown when you first set up the authenticator app.")
+    print("  If you only have the QR code, scan it with a TOTP app to reveal the key,")
+    print("  or check your authenticator app's account settings/export.")
+    ans = input("  Store TOTP secret for auto-login? [y/N]: ").strip().lower()
+    if ans != "y":
+        print("  Skipped — you will need to re-run this script each time the token expires.")
+        return
+    secret = getpass.getpass("  TOTP secret key (hidden, e.g. JBSWY3DPEHPK3PXP): ").strip()
+    if not secret:
+        print("  Skipped (empty).")
+        return
+    try:
+        test_code = pyotp.TOTP(secret).now()
+        print(f"  Secret valid — current code would be: {test_code}")
+    except Exception as exc:
+        print(f"  Warning: could not validate secret ({exc}). Storing anyway.")
+    _store(f"totp-secret@{host}", secret)
+    print(f"  ✓ TOTP secret stored for {username}@{host}")
+
+
 def _setup_direct(cluster: dict) -> None:
     alias    = cluster["alias"]
     host     = cluster["host"]
@@ -113,7 +201,13 @@ def _setup_direct(cluster: dict) -> None:
     username = cluster.get("username", "").strip()
     verify   = cluster.get("verify_ssl", False)
 
+    # Derive a NetBIOS-style short domain to try as fallback
+    # e.g. "talabs.local" → "TALABS"
+    short_domain = domain.split(".")[0].upper() if "." in domain else domain
+
     print(f"\n── {alias}  ({host},  domain={domain}) ──")
+    if short_domain != domain and short_domain != domain.upper():
+        print(f"  Note: if auth fails try changing domain to '{short_domain}' in config.json")
 
     if not username:
         username = input("  AD username: ").strip()
@@ -134,24 +228,48 @@ def _setup_direct(cluster: dict) -> None:
         print("  Skipped (empty password).")
         return
 
+    # ── First auth attempt (no OTP) ─────────────────────────────────────
     print("  Verifying...", end=" ", flush=True)
+    tok       = None
+    otp_type  = ""
+    used_otp  = False
     try:
-        resp = httpx.post(
-            f"https://{host}/irisservices/api/v1/public/accessTokens",
-            json={"username": username, "password": password, "domain": domain},
-            verify=verify,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        tok = resp.json()
+        tok = _auth_attempt(host, username, password, domain, verify)
         print(f"OK  (token type: {tok.get('tokenType', 'unknown')})")
+
     except httpx.HTTPStatusError as exc:
-        print(f"FAILED  (HTTP {exc.response.status_code})")
-        print(f"  Response: {exc.response.text[:300]}")
-        ans = input("  Store credential anyway? [y/N]: ").strip().lower()
-        if ans != "y":
-            print("  Credential not stored.")
-            return
+        if _is_mfa_error(exc):
+            print("MFA required.")
+            otp_type, otp_code = _prompt_otp()
+            print("  Verifying with OTP...", end=" ", flush=True)
+            try:
+                tok      = _auth_attempt(host, username, password, domain,
+                                         verify, otp_code, otp_type)
+                used_otp = True
+                print(f"OK  (token type: {tok.get('tokenType', 'unknown')})")
+            except httpx.HTTPStatusError as exc2:
+                print(f"FAILED  (HTTP {exc2.response.status_code})")
+                print(f"  Response: {exc2.response.text[:300]}")
+                ans = input("  Store credential anyway? [y/N]: ").strip().lower()
+                if ans != "y":
+                    print("  Credential not stored.")
+                    return
+            except Exception as exc2:
+                print(f"FAILED  ({exc2})")
+                ans = input("  Store credential anyway? [y/N]: ").strip().lower()
+                if ans != "y":
+                    print("  Credential not stored.")
+                    return
+        else:
+            print(f"FAILED  (HTTP {exc.response.status_code})")
+            print(f"  Response: {exc.response.text[:300]}")
+            if short_domain != domain:
+                print(f"  Tip: Edit config.json and change domain from '{domain}' to '{short_domain}', then re-run.")
+            ans = input("  Store credential anyway? [y/N]: ").strip().lower()
+            if ans != "y":
+                print("  Credential not stored.")
+                return
+
     except Exception as exc:
         print(f"FAILED  ({exc})")
         ans = input("  Store credential anyway? [y/N]: ").strip().lower()
@@ -160,7 +278,17 @@ def _setup_direct(cluster: dict) -> None:
             return
 
     _store(key, password)
-    print(f"  ✓ Stored:  service={KEYRING_SVC!r}  key={key!r}")
+    print(f"  ✓ Password stored:  service={KEYRING_SVC!r}  key={key!r}")
+
+    # ── TOTP secret (for auto-MFA at runtime) ───────────────────────────
+    if used_otp and otp_type == "Totp":
+        _prompt_totp_secret(host, username)
+    elif not used_otp:
+        # Cluster authenticated without MFA this time, but MFA might still be
+        # required in other contexts — offer to store the secret proactively.
+        ans = input("  Does this cluster require TOTP MFA? Store secret for auto-login? [y/N]: ").strip().lower()
+        if ans == "y":
+            _prompt_totp_secret(host, username)
 
 
 def _setup_helios(cluster: dict) -> None:

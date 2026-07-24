@@ -19,7 +19,7 @@ Env vars:
     MCP_TRANSPORT     "stdio" (default) | "http"
     MCP_HTTP_PORT     HTTP port (default 8720)
 
-Requires: pip install "mcp[cli]" httpx keyring
+Requires: pip install "mcp[cli]" httpx keyring pyotp
 
 Multi-cluster workflow:
     1. list_clusters()          — see all configured clusters + auth status
@@ -47,6 +47,12 @@ from typing import Any, Optional
 import httpx
 import keyring
 from mcp.server.fastmcp import FastMCP
+
+try:
+    import pyotp as _pyotp
+    _PYOTP_OK = True
+except ImportError:
+    _PYOTP_OK = False
 
 # ── Config loading ───────────────────────────────────────────────────────────
 
@@ -128,8 +134,18 @@ def _ssl(alias: str = "") -> bool:
 
 # ── Authentication ───────────────────────────────────────────────────────────
 
+def _is_mfa_challenge(body: dict) -> bool:
+    code = body.get("errorCode", "").upper()
+    msg  = body.get("message", "").lower()
+    return (
+        "MFA" in code or "OTP" in code or "MULTIFACTOR" in code
+        or "two-factor" in msg or "otp" in msg or "one-time" in msg
+    )
+
+
 def _get_token(alias: str = "") -> str:
-    """Retrieve (or refresh) a session token for a direct-auth cluster."""
+    """Retrieve (or refresh) a session token for a direct-auth cluster.
+    Handles TOTP MFA automatically when a secret is stored in the keyring."""
     a   = alias or _active_alias
     s   = _sessions[a]
     if s.token and time.time() < s.expiry:
@@ -147,17 +163,54 @@ def _get_token(alias: str = "") -> str:
             f"Run  python cohesity_auth_setup.py  to set them up."
         )
 
-    resp = httpx.post(
-        f"https://{host}/irisservices/api/v1/public/accessTokens",
-        json={"username": user, "password": pw, "domain": dom},
-        verify=cfg.get("verify_ssl", False),
-        timeout=30,
-    )
-    resp.raise_for_status()
+    url    = f"https://{host}/irisservices/api/v1/public/accessTokens"
+    verify = cfg.get("verify_ssl", False)
+
+    # ── First attempt: password only ────────────────────────────────────
+    try:
+        resp = httpx.post(
+            url,
+            json={"username": user, "password": pw, "domain": dom},
+            verify=verify, timeout=30,
+        )
+        resp.raise_for_status()
+
+    except httpx.HTTPStatusError as exc:
+        # ── MFA challenge: try TOTP auto-generation ──────────────────
+        try:
+            body = exc.response.json()
+        except Exception:
+            body = {}
+
+        if _is_mfa_challenge(body):
+            totp_secret = keyring.get_password(KEYRING_SVC, f"totp-secret@{host}")
+            if totp_secret and _PYOTP_OK:
+                otp_code = _pyotp.TOTP(totp_secret).now()
+                resp = httpx.post(
+                    url,
+                    json={"username": user, "password": pw, "domain": dom,
+                          "otpCode": otp_code, "otpType": "Totp"},
+                    verify=verify, timeout=30,
+                )
+                resp.raise_for_status()
+            elif totp_secret and not _PYOTP_OK:
+                raise RuntimeError(
+                    "MFA required and a TOTP secret is stored, but pyotp is not installed.\n"
+                    "Run:  pip install pyotp"
+                )
+            else:
+                raise RuntimeError(
+                    f"MFA is required for cluster '{a}' but no TOTP secret is configured.\n"
+                    "Run  python cohesity_auth_setup.py  and store your TOTP secret,\n"
+                    "or use a service account or API key that does not require MFA."
+                )
+        else:
+            raise   # re-raise non-MFA errors unchanged
+
     tok      = resp.json()
     s.token  = f"{tok['tokenType']} {tok['accessToken']}"
-    s.expiry = time.time() + 23 * 3600   # tokens last 24h; refresh at 23
-    s._roles = None                       # invalidate role cache on re-auth
+    s.expiry = time.time() + 23 * 3600
+    s._roles = None
     return s.token
 
 
