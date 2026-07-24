@@ -147,7 +147,12 @@ def _is_mfa_challenge(body: dict) -> bool:
 
 def _get_token(alias: str = "") -> str:
     """Retrieve (or refresh) a session token for a direct-auth cluster.
-    Handles TOTP MFA automatically when a secret is stored in the keyring."""
+
+    Priority order:
+      1. In-memory cache (fastest, valid until process restart)
+      2. Keyring session token (set by cohesity_auth_setup.py, valid ~23 h)
+      3. Re-auth: password + TOTP auto-generation (requires stored TOTP secret)
+    """
     a   = alias or _active_alias
     s   = _sessions[a]
     if s.token and time.time() < s.expiry:
@@ -157,18 +162,32 @@ def _get_token(alias: str = "") -> str:
     host = cfg["host"]
     user = cfg.get("username", "")
     dom  = cfg.get("domain", "LOCAL")
-    pw   = keyring.get_password(KEYRING_SVC, f"{user}@{host}")
+    verify = cfg.get("verify_ssl", False)
 
+    # ── 1. Check keyring for a session token cached by cohesity_auth_setup ─
+    cached = keyring.get_password(KEYRING_SVC, f"session-token@{host}")
+    if cached and "|" in cached:
+        token_str, expiry_str = cached.rsplit("|", 1)
+        try:
+            expiry = float(expiry_str)
+            if time.time() < expiry:
+                s.token  = token_str
+                s.expiry = expiry
+                s._roles = None
+                return s.token
+        except ValueError:
+            pass   # malformed entry — fall through to re-auth
+
+    # ── 2. Re-auth: password from keyring ──────────────────────────────────
+    pw = keyring.get_password(KEYRING_SVC, f"{user}@{host}")
     if not pw:
         raise RuntimeError(
             f"No credentials found for cluster '{a}' ({user}@{host}).\n"
-            f"Run  python cohesity_auth_setup.py  to set them up."
+            f"Run  python cohesity_auth_setup.py  to configure."
         )
 
-    url    = f"https://{host}/irisservices/api/v1/public/accessTokens"
-    verify = cfg.get("verify_ssl", False)
+    url = f"https://{host}/irisservices/api/v1/public/accessTokens"
 
-    # ── First attempt: password only ────────────────────────────────────
     try:
         resp = httpx.post(
             url,
@@ -178,7 +197,7 @@ def _get_token(alias: str = "") -> str:
         resp.raise_for_status()
 
     except httpx.HTTPStatusError as exc:
-        # ── MFA challenge: try TOTP auto-generation ──────────────────
+        # ── MFA challenge: try TOTP auto-generation ──────────────────────
         try:
             body = exc.response.json()
         except Exception:
@@ -202,17 +221,24 @@ def _get_token(alias: str = "") -> str:
                 )
             else:
                 raise RuntimeError(
-                    f"MFA is required for cluster '{a}' but no TOTP secret is configured.\n"
-                    "Run  python cohesity_auth_setup.py  and store your TOTP secret,\n"
-                    "or use a service account or API key that does not require MFA."
+                    f"MFA is required for cluster '{a}' but no TOTP secret is stored.\n"
+                    "Re-run  python cohesity_auth_setup.py  and store your TOTP secret\n"
+                    "when prompted — this lets the server generate codes automatically.\n"
+                    "Alternatively the setup script will cache a fresh 23-hour session\n"
+                    "token each time it runs, which the server can use without MFA."
                 )
         else:
-            raise   # re-raise non-MFA errors unchanged
+            raise
 
     tok      = resp.json()
     s.token  = f"{tok['tokenType']} {tok['accessToken']}"
     s.expiry = time.time() + 23 * 3600
     s._roles = None
+    # Write fresh token back to keyring so next server start skips re-auth
+    keyring.set_password(
+        KEYRING_SVC, f"session-token@{host}",
+        f"{s.token}|{int(s.expiry)}"
+    )
     return s.token
 
 

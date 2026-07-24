@@ -302,12 +302,20 @@ def _setup_direct(cluster: dict) -> None:
     _store(key, password)
     print(f"  ✓ Password stored:  service={KEYRING_SVC!r}  key={key!r}")
 
-    # ── TOTP secret (for auto-MFA at runtime) ───────────────────────────
+    # ── Cache the session token so the MCP server can use it immediately ─
+    # The MCP server reads this token directly — no re-auth (and no MFA
+    # challenge) until it expires after 23 hours.
+    if tok:
+        import time as _time
+        token_str = f"{tok['tokenType']} {tok['accessToken']}"
+        expiry    = int(_time.time() + 23 * 3600)
+        _store(f"session-token@{host}", f"{token_str}|{expiry}")
+        print(f"  ✓ Session token cached (valid ~23 h) — MCP server ready to use immediately")
+
+    # ── TOTP secret (for auto-MFA when token expires after 23 h) ─────────
     if used_otp and otp_type == "Totp":
         _prompt_totp_secret(host, username)
     elif not used_otp:
-        # Cluster authenticated without MFA this time, but MFA might still be
-        # required in other contexts — offer to store the secret proactively.
         ans = input("  Does this cluster require TOTP MFA? Store secret for auto-login? [y/N]: ").strip().lower()
         if ans == "y":
             _prompt_totp_secret(host, username)
