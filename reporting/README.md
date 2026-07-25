@@ -1,6 +1,6 @@
 # Reporting
 
-Scripts that pull data from Cohesity clusters and generate CSV reports for customer health checks, capacity planning, and executive summaries.
+Scripts that pull data from Cohesity clusters and generate Excel reports for operational reporting, capacity planning, and customer engagements.
 
 **API:** Uses Cohesity v2 REST API endpoints. Supports direct cluster and Helios authentication.
 
