@@ -7,6 +7,23 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-07-30] feat(mcp): cohesity_mcp_v4 v4.0 — secure credential storage in OS lockbox
+
+### Added — `mcp/cohesity_mcp_v4.py`
+- **New v4 MCP server** based on v2 (all 14 tools, confirm pattern, RBAC/risk gating unchanged). Replaces plain-text env-var credentials in `claude_desktop_config.json` with secure storage in the OS credential lockbox via the cross-platform `keyring` library — macOS Keychain, Windows Credential Manager, Linux Secret Service. Stored under service name `cohesity-mcp`.
+- **Built-in CLI**: `setup` (interactive one-time credential storage, secrets hidden while typing), `show` (config with masked secrets; warns when env vars override the lockbox), `test` (connect and verify auth with friendly error messages), `clear` (remove all stored credentials), `help`.
+- **Config resolution order** per setting: environment variable → OS lockbox → default. Existing v2 env-var configs keep working unchanged.
+- **MCP SDK 1.x/2.x compatibility**: imports `FastMCP` (SDK 1.x) or falls back to `MCPServer` (SDK 2.x rename); HTTP-transport port handling works on both.
+- Passwords shown as `(set, hidden)` in `show`; API keys masked to last 4 characters.
+
+### Added — `mcp/cohesity_mcp_v4.md`
+- Full why/what/how/where documentation: the plain-text-key problem v4 solves, why the v3 TOTP approach was abandoned, 3-step setup, exact lockbox locations per OS and how to inspect/delete entries, honest security boundaries, troubleshooting (multiple Pythons, macOS keychain prompts, key rotation), and a full configuration-resolution reference table.
+
+### Changed — `mcp/README.md`
+- Retitled to version-neutral "Cohesity MCP — Setup Guide"; added "Which Version Should I Use?" section recommending v4 with a quick start, keeping the v2 env-var guide for headless/legacy setups.
+
+---
+
 ## [2026-04-21] feat(reporting): fortknox_vault_report v4.22 — remove TiB, group Bytes/TB columns, About Notes
 
 ### Changed — `reporting/fortknox_vault_report.py`

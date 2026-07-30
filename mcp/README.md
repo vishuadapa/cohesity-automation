@@ -1,4 +1,4 @@
-# Cohesity MCP v2 — Setup Guide
+# Cohesity MCP — Setup Guide
 
 **Talk to your Cohesity cluster directly from Claude — no code required.**
 
@@ -7,6 +7,40 @@ This guide walks you through every step, even if you have never heard of MCP bef
 > *"Show me the health of my cluster"*
 > *"Which protection groups failed last night?"*
 > *"Pause the group called Daily-VMs and confirm it"*
+
+---
+
+## Which Version Should I Use?
+
+| Version | Credentials | Use it when |
+|---|---|---|
+| **v4 — recommended** (`cohesity_mcp_v4.py`) | Stored securely in the **macOS Keychain / Windows Credential Manager** — nothing in plain text | Always, unless you have a reason not to |
+| v2 (`cohesity_mcp_v2.py`) | Pasted as env vars into `claude_desktop_config.json` in plain text | Headless servers without a desktop keyring, or existing setups you don't want to touch |
+
+Both versions expose exactly the same 14 tools — v4 only changes where your API key lives.
+
+**v4 quick start** (full details in [`cohesity_mcp_v4.md`](cohesity_mcp_v4.md)):
+
+```bash
+pip install "mcp[cli]" httpx keyring
+python3 /path/to/cohesity_mcp_v4.py setup    # one-time: prompts for cluster + API key, stores in the OS lockbox
+python3 /path/to/cohesity_mcp_v4.py test     # verify the connection
+```
+
+Then add this to `claude_desktop_config.json` — note there are **no secrets** in it:
+
+```json
+{
+  "mcpServers": {
+    "cohesity": {
+      "command": "python3",
+      "args": ["/full/path/to/cohesity_mcp_v4.py"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop and you're done. The rest of this guide covers the v2 setup (env-var based); Steps 3, 5, and 6 and the Troubleshooting section apply to both versions.
 
 ---
 
