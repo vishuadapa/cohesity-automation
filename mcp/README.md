@@ -12,35 +12,38 @@ This guide walks you through every step, even if you have never heard of MCP bef
 
 ## Which Version Should I Use?
 
-| Version | Credentials | Use it when |
-|---|---|---|
-| **v4 — recommended** (`cohesity_mcp_v4.py`) | Stored securely in the **macOS Keychain / Windows Credential Manager** — nothing in plain text | Always, unless you have a reason not to |
-| v2 (`cohesity_mcp_v2.py`) | Pasted as env vars into `claude_desktop_config.json` in plain text | Headless servers without a desktop keyring, or existing setups you don't want to touch |
+| Version | Credentials | Clusters | Use it when |
+|---|---|---|---|
+| **v5 — recommended** (`cohesity_mcp_v5.py`) | Stored securely in the **macOS Keychain / Windows Credential Manager** | **Multiple** (named profiles) + **Helios** | Always, unless you have a reason not to |
+| v4 (`cohesity_mcp_v4.py`) | Same secure lockbox | One | You only ever talk to a single cluster and prefer the smaller script |
+| v2 (`cohesity_mcp_v2.py`) | Pasted as env vars into `claude_desktop_config.json` in plain text | One | Headless servers without a desktop keyring, or existing setups you don't want to touch |
 
-Both versions expose exactly the same 14 tools — v4 only changes where your API key lives.
+All versions expose the same core tools — v4 changes where your API key lives, v5 adds multi-cluster profiles and Helios (`list_clusters` / `select_cluster`) on top.
 
-**v4 quick start** (full details in [`cohesity_mcp_v4.md`](cohesity_mcp_v4.md)):
+**v5 quick start** (full details in [`cohesity_mcp_v5.md`](cohesity_mcp_v5.md); v4: [`cohesity_mcp_v4.md`](cohesity_mcp_v4.md)):
 
 ```bash
 pip install "mcp[cli]" httpx keyring
-python3 /path/to/cohesity_mcp_v4.py setup    # one-time: prompts for cluster + API key, stores in the OS lockbox
-python3 /path/to/cohesity_mcp_v4.py test     # verify the connection
+python3 /path/to/cohesity_mcp_v5.py setup       # run once per cluster (or once for Helios)
+python3 /path/to/cohesity_mcp_v5.py test prod   # verify a profile's connection
+python3 /path/to/cohesity_mcp_v5.py list        # see all stored profiles
 ```
 
-Then add this to `claude_desktop_config.json` — note there are **no secrets** in it:
+Then add one entry per profile to `claude_desktop_config.json` — the profile name is **not a secret**:
 
 ```json
 {
   "mcpServers": {
-    "cohesity": {
+    "cohesity-prod": {
       "command": "python3",
-      "args": ["/full/path/to/cohesity_mcp_v4.py"]
+      "args": ["/full/path/to/cohesity_mcp_v5.py"],
+      "env": { "COHESITY_PROFILE": "prod" }
     }
   }
 }
 ```
 
-Restart Claude Desktop and you're done. The rest of this guide covers the v2 setup (env-var based); Steps 3, 5, and 6 and the Troubleshooting section apply to both versions.
+Restart Claude Desktop and you're done. The rest of this guide covers the v2 setup (env-var based); Steps 3, 5, and 6 and the Troubleshooting section apply to all versions.
 
 ---
 

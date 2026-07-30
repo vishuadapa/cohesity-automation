@@ -7,6 +7,22 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-07-30] feat(mcp): cohesity_mcp_v5 v5.0 — multi-cluster profiles and Helios support
+
+### Added — `mcp/cohesity_mcp_v5.py`
+- **Named profiles**: store credentials for any number of clusters in the OS lockbox, namespaced per profile (`prod:api_key`, `dr:cluster`, …) under service `cohesity-mcp`, with a stored index (`_profiles`) and default (`_default`). The server selects its profile via the non-secret `COHESITY_PROFILE` env var → stored default → `default`, so one Claude Desktop entry per profile exposes several clusters side by side with zero secrets in the config.
+- **Helios connection type**: a profile can target Helios (`helios.cohesity.com` by default, Helios API key required, SSL verification on by default). New MCP tools `list_clusters` (registered clusters with connection state, via `/public/mcm/clusters/connectionStatus` with `/v2/mcm/cluster-mgmt/info` fallback) and `select_cluster` (by name or id; refuses disconnected clusters). All other tools then route to the selected cluster via the `accessClusterId` passthrough header; cluster-scoped calls before selection return a clear instruction, and `get_cluster_health` degrades gracefully where the cluster-local `nexus` status endpoint is unavailable through passthrough.
+- **Profile-aware CLI**: `setup` (add/update a profile, choose type, first profile auto-default), `list`, `use <name>`, `show [name]`, `test [name]` (Helios: prints every registered cluster and its connection state), `clear <name>` / `clear --all`.
+- **Backward compatible**: a v4 lockbox (un-namespaced keys) is read automatically as profile `default` — no migration; v2-style env vars still override everything; `get_whoami` now also reports the active profile and connection route.
+
+### Added — `mcp/cohesity_mcp_v5.md`
+- Full why/what/how/where documentation: motivation for profiles and Helios, setup walkthrough, multi-entry Claude Desktop config, in-conversation Helios workflow (list → select → operate → switch), lockbox layout per profile, troubleshooting, and configuration-resolution reference.
+
+### Changed — `mcp/README.md`
+- "Which Version Should I Use?" now recommends v5 (multi-cluster + Helios), with v4 and v2 retained as alternatives; quick start updated to the profile workflow.
+
+---
+
 ## [2026-07-30] feat(mcp): cohesity_mcp_v4 v4.0 — secure credential storage in OS lockbox
 
 ### Added — `mcp/cohesity_mcp_v4.py`
