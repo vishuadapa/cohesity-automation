@@ -1,6 +1,6 @@
 # Infrastructure
 
-Scripts for cluster-level operations — node status, software version inventory, upgrade readiness, and configuration audits. Useful for presales assessments and health checks.
+Scripts for cluster-level operations — node status, software version inventory, upgrade readiness, and configuration audits. Useful for presales assessments and cluster reviews.
 
 **API:** Uses Cohesity v1 REST API endpoints for cluster infrastructure data via Helios.
 

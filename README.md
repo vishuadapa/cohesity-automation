@@ -7,181 +7,6 @@ Inspired by [Brian Seltzer's scripts](https://github.com/bseltz-cohesity/scripts
 
 ---
 
-## Health Check Report ★
-
-> Multi-cluster Cohesity health check designed for enterprise customer business reviews (CBRs) and SE engagements. Gathers live data from Cohesity Helios and produces a **31-tab Excel workbook** (About tab + Guide tab + 29 data sheets), a **Word document**, and a **comprehensive ~27-slide PowerPoint deck**. The About tab Command row automatically strips the script directory path and masks `--apikey`, `--password`, and `--ca-bundle` values with `xxxxx`.
-
-### What it produces
-
-| Output | Description |
-|--------|-------------|
-| Excel workbook | **31 tabs** — an **About tab** (first tab, with run metadata, parameters, notes, and full API reference) + a **Guide tab** (sheet descriptions, scoring methodology, and color legend) + **29 data sheets** covering infrastructure (**fault tolerance margin**), node hardware with EOL status and **SW version skew flag**, **disk health with SSD wear %**, protection health, storage capacity with **predictive runway forecast**, policy audit (with DataLock/FortKnox status), **Retention Health** (cluster retention summary, per-policy detail, P1/P2/P3 security recommendations), **DataLock Verification** (snapshot-level WORM proof), alerts, **expanded security checklist** (audit log, MFA, NTP auth, remote tunnel, SSO/IDP, TLS cert expiry, quorum, **KMS type & risk**, **security & anomaly alert counts**), **agent health**, **source coverage**, **Recovery Audit** (recoverability proof — days since last test), **Unprotected Objects** (named object list), FortKnox/replication with **replication lag hours**, **vault type**, and **last FK transfer date**, **Data Exposure** (NAS SMB/NFS/S3 risk), data services, coverage gaps, **user security** (MFA/locked/roles, **Risk Flag**, **custom role privilege audit**), 30-day trends with **duration trend chart**, recommendations, **per-workload risk heatmap**, **30-day audit log**, **AD & Identity Health** (AD/LDAP connection status), **Certificate Inventory** (TLS cert expiry RAG), and **Capacity & Perf Trends** (dedup ratio trend + I/O throughput) |
-| Word document | Narrative report with cover page, executive scorecard with **top at-risk workloads table**, environment overview, software & hardware lifecycle, protection health, storage with **capacity runway forecast**, **fully color-coded security posture table** (11 columns including **ransomware readiness score**, red/amber/green per finding) with **governance & change activity summary**, **agent health & source coverage**, **user security table**, **native Word topology diagram** (editable shapes + connector arrows), recommendations, and scoring methodology appendix — ready to share with customers |
-| PowerPoint deck | **~27-slide `.pptx` file** (requires `python-pptx`) — comprehensive presentation across 5 native PowerPoint sections: **Cover**, **Contents** (hyperlinked TOC), **Executive Summary** (KPI snapshot, health scorecard, capacity, protection, ransomware readiness, top at-risk workloads, priority actions), **Environment Topology** (cluster/replication/archival/FortKnox diagram with connector labels and legend), **Security Deep-Dive** (posture overview, user security & MFA, audit activity, security recommendations), **Backup Engineering** (SW/HW lifecycle, coverage gaps, agent health, source coverage, workload risk heatmap, engineering recommendations). Scoring methodology tables embedded inline at the bottom of each data slide. All data slides RAG colour-coded; 10pt body font. Topology also embedded as editable native shapes in the Word document. |
-
-### Sheet reference (29 data sheets + About + Guide = 31 tabs total)
-
-| # | Sheet | Key content |
-|---|-------|-------------|
-| — | **About** | First tab — full CLI command used, run parameters (mode, days, customer, clusters), notes (Quick Mode, Storage Consumed, DataLock limit, Health Score), and reference table of all 30 API endpoints |
-| — | **Guide** | Sheet descriptions, health/security/ransomware/workload scoring methodology, recommendation priorities, color legend |
-| 1 | Executive Summary | Per-cluster health score (0–100), grade, success %, capacity used %, open criticals, ransomware readiness score, capacity runway, top finding |
-| 2 | Infrastructure | Software version, node count, healthy nodes, cluster encryption, SD encryption, DNS, NTP, timezone, SW lifecycle status, fault tolerance margin |
-| 3 | Node Hardware | Per-node model, serial, node type, software version, raw capacity, disk count, storage tiers, HW EOL date, SW version match flag |
-| 4 | Disk Health | Per-disk status, type, model, serial, SSD wear %, capacity, encryption, storage tier — CRITICAL on failed/missing, HIGH on wear ≥80% |
-| 5 | Protection Health | Per-group last-run status, SLA violations, RPO gap, object counts, logical/physical bytes, DataLock (WORM) per group |
-| 6 | Storage & Capacity | Cluster and per-domain usable/used/free, data reduction ratio, dedup ratio, compression ratio, predictive runway to 80% utilization |
-| 7 | Policy Audit | Retention schedules, replication targets, archival targets, DataLock (WORM) mode + duration per policy; FortKnox/RPaaS policies flagged "FortKnox (Indelible)" |
-| 8 | DataLock Verification | Snapshot-level DataLock check — VERIFIED / PARTIAL / NOT LOCKED per group; CRITICAL recommendation if policy says locked but snapshots are not |
-| 9 | Policy → Groups | Every protection group with the policy that governs it; sorted by policy then group name |
-| 10 | Retention Health | Three-section retention analysis: cluster summary (min/max/avg local, archive, replication retention + DataLock + FortKnox + Risk Level); per-policy detail with flags; P1/P2/P3 security recommendations |
-| 11 | Alerts | All open alerts sorted by severity, with age, description, and entity |
-| 12 | Security | Expanded checklist: encryption, FIPS, audit log, MFA, NTP, quorum, TLS, ransomware score, anomaly alerts, KMS/encryption key management |
-| 13 | Agent Health | Per-host agent version, health status, upgradability, cert expiry, last upgrade error |
-| 14 | Source Coverage | Registered sources with protected/unprotected object counts and coverage % |
-| 15 | Recovery Audit | Per-recovery rows (status, duration, type, objects); cluster summary with days-since-last-recovery; HIGH recommendation if no recovery found |
-| 16 | Unprotected Objects | Named list of unprotected objects per source — red if count >10, amber if count >0 |
-| 17 | Replication & Archive | Replication targets, vault names and types, FortKnox storage consumed (TB), replication lag (hrs) |
-| 18 | FortKnox Data Transfer | Per-protection-group transfer to every external vault: storage consumed TB (cumulative), last FK archival date, days since FK transfer |
-| 19 | Data Exposure | NAS view exposure analysis — SMB discovery, NFS open mount, S3 access, quota presence; per-view Risk Level (HIGH/MEDIUM/LOW) |
-| 20 | Data Services | NAS views with protocol, quota, usage %, near-quota warnings |
-| 21 | Coverage Gaps | Protection groups with failed last run, paused state, or RPO gap > threshold |
-| 22 | User Security | Per-user MFA status, locked state, roles, last login, risk flag (Stale Admin / Admin No MFA / Locked Admin); custom role definitions sub-section |
-| 23 | Trends (30d) | Daily backup success rate and avg duration; dual line charts for success rate and duration trend |
-| 24 | Recommendations | Prioritized action list (CRITICAL / HIGH / MEDIUM / LOW) with business impact |
-| 25 | Workload Risk Heatmap | All protection groups scored 0–100 by recovery risk (last-run 35pts, SLA 25pts, RPO 25pts, DataLock 15pts); sorted worst-first with RAG coloring |
-| 26 | Audit Log | Last 30 days of configuration changes from the cluster audit trail; categorized by type; high-risk events highlighted in red; shows actionable permission message on HTTP 403 |
-| 27 | AD & Identity Health | Active Directory connection status with preferred DC; LDAP provider status, server, port, base DN — disconnected sources flagged red |
-| 28 | Certificate Inventory | Full TLS certificate inventory with expiry dates and days remaining — CRITICAL (<30d), HIGH (<90d), OK |
-| 29 | Capacity & Perf Trends | 30-day dedup ratio trend (ransomware indicator) and daily I/O throughput (read/write GB) with embedded charts |
-
-### Prerequisites
-
-**Python 3.7** or later.
-
-Install all packages before running:
-
-```bash
-pip install requests openpyxl python-docx matplotlib keyring python-pptx
-```
-
-Full package list:
-
-| Package | Required? | Purpose | Install |
-|---------|-----------|---------|---------|
-| `requests` | **Yes** | HTTP client for Cohesity REST API calls | `pip install requests` |
-| `openpyxl` | **Yes** (unless `--word-only`) | Excel workbook generation (31 tabs: About + Guide + 29 data sheets) | `pip install openpyxl` |
-| `python-docx` | **Yes** (unless `--excel-only`) | Word document generation (narrative report + topology shapes) | `pip install python-docx` |
-| `matplotlib` | Optional | Topology PNG fallback if native Word shapes fail | `pip install matplotlib` |
-| `python-pptx` | Optional | Comprehensive ~27-slide PowerPoint deck (.pptx) | `pip install python-pptx` |
-| `keyring` | Optional | Securely store API key / passwords in OS keychain between runs | `pip install keyring` |
-
-At startup the script prints a status table for **all six packages** — installed vs. NOT FOUND, required vs. optional. If a required package is missing, it exits with a clear `pip install` command. Optional packages that are absent are flagged but do not block execution.
-
-> **Standalone / single-file use**: `health_check_report.py` can be downloaded and run as a single file — all auth and formatting helpers are bundled inside it as fallbacks. The only external requirement is `pip install requests` (plus `openpyxl` / `python-docx` for report output).
-
-### Where to run from
-
-Run the script from the `health_check/` directory, from the repo root, or as a single standalone file — the working directory does not matter:
-
-```bash
-cd health_check
-python3 health_check_report.py --apikey <your-helios-api-key> --customer "Acme Corp"
-```
-
-Or from the repo root:
-
-```bash
-python3 health_check/health_check_report.py --apikey <your-helios-api-key> --customer "Acme Corp"
-```
-
-### Helios API key
-
-Generate your key in Helios → Settings → Access Management → API Keys. The key can be passed via `--apikey` or set as the environment variable `HELIOS_API_KEY`.
-
-### Common usage
-
-```bash
-# Full report — all clusters, 30-day window, Excel + Word + topology diagram
-python3 health_check_report.py --apikey abc123 --customer "Acme Corp"
-
-# Target a single cluster
-python3 health_check_report.py --apikey abc123 --cluster prod-east --customer "Acme Corp"
-
-# Quick scan (uses last-run only — no per-group run history, much faster)
-python3 health_check_report.py --apikey abc123 --quick
-
-# Excel only, custom output path
-python3 health_check_report.py --apikey abc123 --output /reports/q2_review --excel-only
-
-# Extended lookback with debug logging
-python3 health_check_report.py --apikey abc123 --days 90 --debug
-
-# With corporate HTTPS proxy CA cert (e.g. Zscaler)
-python3 health_check_report.py --apikey abc123 --ca-bundle ~/.cohesity/zscaler-ca.pem
-
-# Direct cluster with self-signed certificate
-python3 health_check_report.py --cluster-host 10.1.2.3 --username admin --ca-bundle ./cluster-ca.pem
-```
-
-### All options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| **Helios auth** | | |
-| `--apikey KEY` | env `HELIOS_API_KEY` | Helios API key (stored in keychain after first use) |
-| `--cluster NAME` | all | Limit to one cluster (partial name match) |
-| **Direct cluster auth** | | |
-| `--cluster-host HOST` | *(none)* | Bypass Helios — connect directly to a cluster IP/hostname |
-| `--username USER` | *(none)* | Cluster username (required with `--cluster-host`) |
-| `--password PASS` | *(prompted)* | Password (prompted securely if omitted; saved to keychain) |
-| `--domain DOMAIN` | `LOCAL` | Auth domain — `LOCAL` or AD domain name |
-| `--mfa-code CODE` | *(none)* | TOTP code for MFA-enabled cluster accounts |
-| **Report options** | | |
-| `--days N` | 30 | Lookback window for alerts and run history |
-| `--customer NAME` | *(blank)* | Customer name on Word cover page and output filename |
-| `--output PATH` | auto-generated | Base path for output files (no extension added) |
-| `--quick` | off | Use last-run only; skip per-group run history |
-| `--excel-only` | off | Skip Word document generation |
-| `--word-only` | off | Skip Excel generation |
-| `--debug` | off | Print HTTP status for every API call |
-| `--clear-credentials` | off | Remove stored credentials from OS keychain and exit |
-| **TLS options** | | |
-| `--ca-bundle PATH` | *(system bundle)* | CA certificate `.pem` for self-signed cluster certs or corporate HTTPS proxies (e.g. Zscaler) |
-| `--insecure` | off | Disable TLS validation — prints a startup warning; avoid in production |
-
-### Output files
-
-Auto-generated filenames include the version number and timestamp for easy tracking:
-
-```
-cohesity_health_check_v1.71_AcmeCorp_20260422_1430.xlsx
-cohesity_health_check_v1.71_AcmeCorp_20260422_1430.docx
-cohesity_health_check_v1.71_AcmeCorp_20260422_1430.pptx
-```
-
-The `.pptx` file is a comprehensive ~27-slide deck ready to present to customers. Requires `pip install python-pptx`. Sections: Cover · Contents (hyperlinked TOC) · Executive Summary · Environment Topology · Security Deep-Dive · Backup Engineering — all with RAG colour-coding and inline scoring methodology tables.
-
-### Security scoring
-
-Each cluster receives a score out of 100. Key deductions include:
-
-| Finding | Severity | Points |
-|---------|----------|--------|
-| No cluster encryption | HIGH | −20 |
-| No storage domain encryption | HIGH | −15 |
-| Admin accounts without MFA | HIGH | −10 |
-| No DataLock (WORM) on any policies | HIGH | −10 |
-| No FortKnox vault | MEDIUM | −5 |
-| No replication | MEDIUM | −5 |
-| Quorum not enabled | MEDIUM | −5 |
-| Audit logging disabled | MEDIUM | −5 |
-| TLS certificate expired/near expiry | MEDIUM | −5 |
-
-See [health_check/health_check_report.md](health_check/health_check_report.md) for the full sheet reference, scoring model, and version history.
-
----
-
 ## FortKnox Vault Report
 
 > Per-protection-group FortKnox (RPaaS) vault reporting script. Connects to Helios, iterates every connected cluster, and produces a **multi-tab Excel workbook** with a data report, trend charts, and a built-in About tab explaining every field and API used.
@@ -315,7 +140,6 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 
 | Folder | Purpose |
 |--------|---------|
-| [health_check/](health_check/) | **Multi-cluster health check** — 30-tab Excel workbook (Guide + 29 data sheets) + Word report + ~27-slide PowerPoint deck for CBRs and SE engagements |
 | [reporting/](reporting/) | Protection group run reports and FortKnox vault data transfer reports |
 | [protection/](protection/) | Protection group management — run, pause, clone jobs |
 | [recovery/](recovery/) | Restore automation — VMs, files, file/folder recovery |
@@ -323,6 +147,7 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 | [policies/](policies/) | Policy audit, SLA compliance, and cloning |
 | [alerts/](alerts/) | Alert queries, summaries, bulk resolve, and CSV export |
 | [infrastructure/](infrastructure/) | Cluster health, node status, version inventory, upgrade readiness |
+| [mcp/](mcp/) | Cohesity MCP server for Claude Desktop — talk to your cluster in natural language |
 | [utils/](utils/) | Shared auth and helper modules |
 
 ---
@@ -440,32 +265,23 @@ python3 <script>.py --cluster <ip-or-hostname> --username admin --domain LOCAL
 
 ## Requirements
 
-All scripts require `requests`. The health check report has additional dependencies. Install everything:
+All scripts require `requests` and `openpyxl`. Install everything:
 
 ```bash
-pip3 install requests openpyxl python-docx matplotlib keyring python-pptx
+pip3 install requests openpyxl keyring
 ```
 
 | Package | Scripts | Required? |
 |---------|---------|-----------|
 | `requests` | All scripts | **Yes** — core HTTP client |
-| `openpyxl` | health_check | **Yes** — Excel workbook output |
-| `python-docx` | health_check | **Yes** — Word document output (skip with `--excel-only`) |
-| `matplotlib` | health_check | Optional — topology PNG fallback |
-| `python-pptx` | health_check | Optional — comprehensive ~31-slide PowerPoint deck (.pptx) |
+| `openpyxl` | Reporting, infrastructure, alerts, storage, policies | **Yes** — Excel workbook output |
 | `keyring` | All scripts | Optional — OS keychain credential storage |
 
-The health check script validates all dependencies at startup and tells you exactly what to install if anything is missing.
+The MCP server (`mcp/`) has its own dependencies — see [mcp/README.md](mcp/README.md).
 
 ---
 
 ## Quick Reference
-
-### Health Check
-```bash
-python3 health_check/health_check_report.py --apikey <key> --customer "Customer Name"
-python3 health_check/health_check_report.py --apikey <key> --quick --excel-only
-```
 
 ### Reporting
 ```bash

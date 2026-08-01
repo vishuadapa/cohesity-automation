@@ -13,16 +13,42 @@
 ## Commit Style
 
 - Use conventional commits: `feat`, `fix`, `refactor`, `docs`, `chore`
-- Scope should be the subdirectory/script name, e.g. `feat(health_check): ...`
-- Include the version bump in the message when applicable, e.g. `(v1.34)`
+- Scope should be the subdirectory/script name, e.g. `feat(reporting): ...`
+- Include the version bump in the message when applicable, e.g. `(v4.23)`
 
 ## Repository Layout
 
 ```
 cohesity-automation/
-├── health_check/
-│   ├── health_check_report.py   # Main health check script (currently v1.75)
-│   └── health_check_report.md   # Documentation
+├── alerts/
+│   ├── alert_summary_report.py
+│   ├── alert_to_csv.py
+│   └── resolve_alerts.py
+├── infrastructure/
+│   ├── cluster_info_report.py
+│   ├── node_status.py
+│   └── upgrade_readiness.py
+├── mcp/
+│   └── cohesity_mcp_v2.py       # MCP server for Claude Desktop
+├── policies/
+│   ├── clone_policy.py
+│   ├── list_policies.py
+│   └── policy_compliance_report.py
+├── protection/
+│   ├── clone_protection_group.py
+│   ├── pause_resume_groups.py
+│   └── run_protection_group.py
+├── recovery/
+│   ├── list_snapshots.py
+│   ├── recover_files.py
+│   └── restore_vm.py
+├── reporting/
+│   ├── fortknox_vault_report.py
+│   └── protection_group_report.py
+├── storage/
+│   ├── capacity_report.py
+│   ├── list_views.py
+│   └── storage_domain_report.py
 ├── utils/
 │   ├── formatters.py            # Shared formatting helpers
 │   └── cohesity_auth.py         # Authentication helpers
@@ -37,16 +63,12 @@ cohesity-automation/
 
 ## General Guidelines
 
-- Run `python3 -c "import ast; ast.parse(open('health_check/health_check_report.py').read()); print('OK')"` after every edit to catch syntax errors before committing.
-- With **every version bump**, update all **five** of these in the same commit:
-  1. `README.md` — sheet count, filename examples, feature list, requirements
+- Run a syntax check after every edit to catch errors before committing:
+  ```bash
+  python3 -c "import ast; ast.parse(open('<script>.py').read()); print('OK')"
+  ```
+- With **every version bump**, update these in the same commit:
+  1. Script in-file `__version__` constant and docstring version block
   2. `CHANGELOG.md` — new version entry with date and bullet points
-  3. `health_check/health_check_report.md` — full sheet reference and version history
-  4. In-file version header — `__version__` constant and the docstring version block
-  5. **`_sheet_guide()` in `health_check_report.py`** — keep the Guide tab in sync:
-     - Adding a new sheet → add a row to the `sheets_info` list in `_sheet_guide()`
-     - Removing a sheet → remove its row from `sheets_info`
-     - Changing a scoring model (security, ransomware, risk, health) → update the corresponding section in `_sheet_guide()`
-     - Adding/changing recommendation priorities or color usage → update those sections
-     - The Guide tab must always accurately reflect the current state of the workbook
+  3. Folder `README.md` and script `.md` file — if options, output format, or behaviour change
 - Do not push to any branch other than `dev` without explicit user approval.
