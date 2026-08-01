@@ -7,6 +7,16 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-08-01] docs(mcp): add v5 step-by-step testing guide (Word document)
+
+### Added — `mcp/Cohesity_MCP_v5_Testing_Guide.docx`
+- Step-by-step testing guide for `cohesity_mcp_v5.py` aimed at the average user: shared one-time setup (profiles, Helios, verification), then separate sections for Claude Desktop, Microsoft Copilot (GitHub Copilot in VS Code), and ChatGPT (HTTP transport + temporary ngrok tunnel, with security warnings), each with Windows and Mac instructions; 13-point test checklist with expected results and Pass/Fail column; troubleshooting table and post-test cleanup steps.
+
+### Changed — `mcp/README.md`
+- Linked the testing guide from the "Which Version Should I Use?" section.
+
+---
+
 ## [2026-07-30] feat(mcp): cohesity_mcp_v5 v5.0 — multi-cluster profiles and Helios support
 
 ### Added — `mcp/cohesity_mcp_v5.py`

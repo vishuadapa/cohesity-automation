@@ -20,6 +20,8 @@ This guide walks you through every step, even if you have never heard of MCP bef
 
 All versions expose the same core tools — v4 changes where your API key lives, v5 adds multi-cluster profiles and Helios (`list_clusters` / `select_cluster`) on top.
 
+**Testing v5?** [`Cohesity_MCP_v5_Testing_Guide.docx`](Cohesity_MCP_v5_Testing_Guide.docx) is a step-by-step Word guide for validating v5 with Claude Desktop, Microsoft Copilot (VS Code), and ChatGPT, on Windows and Mac, including a 13-point test checklist.
+
 **v5 quick start** (full details in [`cohesity_mcp_v5.md`](cohesity_mcp_v5.md); v4: [`cohesity_mcp_v4.md`](cohesity_mcp_v4.md)):
 
 ```bash
