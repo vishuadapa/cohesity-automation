@@ -7,6 +7,48 @@ Commit types: `feat` (new feature), `fix` (bug fix), `refactor` (restructure), `
 
 ---
 
+## [2026-08-30] feat(mycohesity): MyCohesity MCP server v1.0 — knowledge base, assets and entitlements from Claude Desktop
+
+### Added — `mycohesity/` (new folder)
+
+New MCP server exposing the **MyCohesity support portal** (my.cohesity.com) to Claude Desktop, alongside the existing cluster-direct server in `mcp/`. Searches the knowledge base for **Cohesity DataProtect** and **Veritas NetBackup**, and retrieves **asset** and **licensing entitlement** information. Read-only — it searches and retrieves, never modifies.
+
+**Browser-driven authentication.** my.cohesity.com is a Salesforce Experience Cloud portal with no password grant to call: external users have MFA enforced, and internal Cohesity users never sign in to the portal directly — they authenticate to the Cohesity Salesforce org and launch MyCohesity from the app launcher. `mycohesity_login` therefore opens a real Chromium window and hands the user the keyboard for the whole flow.
+- `mode="external"` starts at my.cohesity.com; MFA prompts appear inline.
+- `mode="internal"` starts at the Salesforce org, from where the user uses the app launcher.
+- A banner injected into every page carries mode-specific instructions and an **"I'm signed in — capture session"** button. It reinstalls itself every 1.5 s so it survives Lightning DOM wipes, and is added via `add_init_script` so page CSP cannot block it.
+- Automatic capture as a second signal: a non-login portal page holding a Salesforce `sid` cookie, confirmed over three consecutive checks. All tabs are polled, since the app launcher opens MyCohesity in a new tab.
+- Nothing is saved if the user does not finish before the timeout (default 600 s).
+
+**Secure session storage.** The captured Playwright storage state — cookies, localStorage and the browser User-Agent — is encrypted with **Fernet** (AES-128-CBC + HMAC-SHA256) into `~/.mycohesity/session.enc` (`0600`, inside a `0700` directory). The key is held in the **OS keychain** via `keyring`, falling back to a `0600` key file where no keychain backend exists. The User-Agent is replayed on every request, because Salesforce ties a session to the browser fingerprint that created it. No tool ever returns or logs a cookie value. An undecryptable session file is treated as *no session* rather than an error, so a rotated keychain entry cannot wedge the server.
+
+**Session lifetime.** Salesforce publishes no expiry, so validity is probed rather than assumed: every request checks whether the portal served content or bounced to a sign-in page, raising `SessionExpired` naming `mycohesity_login` if it bounced. A stored session is reused indefinitely until then. All data tools fail closed — with no session or an expired one they return an error rather than an empty result that could read as "no matches".
+
+**Eleven tools:**
+- Authentication — `mycohesity_login`, `mycohesity_session_status`, `mycohesity_logout`
+- Knowledge base — `search_knowledge_base` (with `product` scoping to `dataprotect`, `netbackup` or `all`), `get_knowledge_base_article`
+- Assets and licensing — `list_assets`, `get_entitlements`, both with a cross-field `search` filter
+- Configuration — `mycohesity_fetch`, `mycohesity_discover_endpoints`, `mycohesity_set_endpoint`, `mycohesity_show_config`
+
+**Page mode and API mode.** Each data endpoint either renders the Lightning SPA in headless Chromium and extracts links, tables and `role="grid"` data-grids from the DOM (`page`, the default — the portal serves no useful raw HTML), or issues a JSON request over the stored cookies (`api`, much faster). Because Salesforce portals are configured per tenant, `mycohesity_discover_endpoints` records every XHR/fetch call while the user clicks through the portal, and `mycohesity_set_endpoint` wires the results into `~/.mycohesity/endpoints.json`. When a tool extracts no rows it returns a hint pointing at discovery, plus an excerpt of what it actually loaded.
+
+**Implementation notes:**
+- Browser calls are dispatched through a dedicated single-worker `ThreadPoolExecutor` — Playwright's sync API refuses to run on a thread owning a live asyncio loop, and the MCP server may call sync tools straight from the event loop thread.
+- Login-page detection matches identity-provider hostnames and exact URL path *segments*, so `/s/article/authentication-guide` is not mistaken for a sign-in page while a same-origin bounce to `/s/login/` is caught.
+- Browser resolution prefers `MYCOHESITY_CHROMIUM_PATH`, then the user's installed Chrome (so corporate SSO extensions and certificates behave normally), then Playwright's bundled Chromium.
+- Compatible with both `mcp` 1.x (`FastMCP`) and 2.x (`MCPServer`).
+
+**Files:** `mycohesity_mcp.py` (server, v1.0), `mycohesity_auth.py` (auth and storage, v1.0), `mycohesity_mcp.md`, `mycohesity_auth.md`, `README.md` (step-by-step setup guide), `endpoints.example.json`, `requirements.txt`.
+
+### Changed — `README.md`
+- New **MyCohesity MCP** section covering example prompts, the two sign-in flows, the tool list and prerequisites.
+- Repository Structure table gains a `mycohesity/` row; the Requirements note now points at both MCP READMEs.
+
+### Changed — `CLAUDE.md`
+- Repository Layout updated with the `mycohesity/` folder.
+
+---
+
 ## [2026-04-21] feat(reporting): fortknox_vault_report v4.22 — remove TiB, group Bytes/TB columns, About Notes
 
 ### Changed — `reporting/fortknox_vault_report.py`

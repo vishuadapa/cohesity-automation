@@ -136,6 +136,52 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 
 ---
 
+## MyCohesity MCP — Support Portal from Claude Desktop
+
+> MCP server that lets Claude search the **MyCohesity knowledge base** — Cohesity DataProtect and Veritas NetBackup — and retrieve **asset** and **licensing entitlement** information, using your own portal session.
+
+Full setup guide: **[mycohesity/README.md](mycohesity/README.md)** · Reference: [mycohesity_mcp.md](mycohesity/mycohesity_mcp.md)
+
+### What you can ask
+
+```
+Search MyCohesity for "backup fails with status 84" in NetBackup
+Find DataProtect articles about upgrade readiness and summarise the top three
+List my registered assets — which have support ending in the next 6 months?
+What are my current licensing entitlements? Show licensed capacity and end dates.
+```
+
+### Sign-in
+
+my.cohesity.com is a Salesforce Experience Cloud portal, so there is no API key and no password to put in a config file:
+
+- **External users** (customers, partners) have **MFA enforced**.
+- **Internal Cohesity users** never sign in to my.cohesity.com directly — they authenticate to the Cohesity **Salesforce** org and launch MyCohesity from the **app launcher** (the icon stack, top left).
+
+The first time you use it, a real browser window opens and you sign in exactly as you normally would — SSO, MFA, app launcher, all of it. You click a green button when the portal has loaded, and the session is **encrypted to `~/.mycohesity/session.enc`** (Fernet, key held in your OS keychain) and reused until the portal expires it. No credentials are stored in the Claude Desktop config.
+
+Read-only by design: it searches and retrieves, and never modifies anything in the portal.
+
+### Tools
+
+| Group | Tools |
+|-------|-------|
+| Authentication | `mycohesity_login`, `mycohesity_session_status`, `mycohesity_logout` |
+| Knowledge base | `search_knowledge_base`, `get_knowledge_base_article` |
+| Assets & licensing | `list_assets`, `get_entitlements` |
+| Configuration | `mycohesity_fetch`, `mycohesity_discover_endpoints`, `mycohesity_set_endpoint`, `mycohesity_show_config` |
+
+### Prerequisites
+
+```bash
+pip install "mcp[cli]" playwright cryptography httpx keyring
+playwright install chromium
+```
+
+Needs a visible desktop for the one-time sign-in — it cannot authenticate over SSH or on a headless server.
+
+---
+
 ## Repository Structure
 
 | Folder | Purpose |
@@ -148,6 +194,7 @@ fortknox_vault_report_v4.22_20260421_143000.xlsx
 | [alerts/](alerts/) | Alert queries, summaries, bulk resolve, and CSV export |
 | [infrastructure/](infrastructure/) | Cluster health, node status, version inventory, upgrade readiness |
 | [mcp/](mcp/) | Cohesity MCP server for Claude Desktop — talk to your cluster in natural language |
+| [mycohesity/](mycohesity/) | MyCohesity MCP server for Claude Desktop — search the support knowledge base and check licensing entitlements |
 | [utils/](utils/) | Shared auth and helper modules |
 
 ---
@@ -184,7 +231,7 @@ pip3 install requests openpyxl keyring
 | `openpyxl` | Reporting, infrastructure, alerts, storage, policies | **Yes** — Excel workbook output |
 | `keyring` | All scripts | Optional — OS keychain credential storage |
 
-The MCP server (`mcp/`) has its own dependencies — see [mcp/README.md](mcp/README.md).
+Both MCP servers have their own dependencies — see [mcp/README.md](mcp/README.md) and [mycohesity/README.md](mycohesity/README.md).
 
 ---
 

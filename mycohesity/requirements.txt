@@ -1,0 +1,8 @@
+# MyCohesity MCP server dependencies
+#   pip install -r requirements.txt
+#   playwright install chromium
+mcp>=1.2.0
+playwright>=1.40.0
+cryptography>=42.0.0
+httpx>=0.27.0
+keyring>=24.0.0

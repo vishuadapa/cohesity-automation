@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "Copy to ~/.mycohesity/endpoints.json to point the tools at the right URLs for",
+    "your MyCohesity tenant. Anything you omit falls back to the built-in default.",
+    "Easiest path: ask Claude to run mycohesity_discover_endpoints, click through the",
+    "portal, then ask it to save the endpoints it found with mycohesity_set_endpoint.",
+    "",
+    "mode         'page' renders the Lightning UI in a headless browser and scrapes",
+    "             links and tables out of it. 'api' issues a JSON request over the",
+    "             stored session cookies -- much faster, but only works if you know",
+    "             the tenant's real endpoint.",
+    "url          may contain {portal_url}, {salesforce_url}, {query} and {id}.",
+    "             {query} and {id} are percent-encoded on substitution.",
+    "result_path  api mode only -- dotted path to the record list inside the JSON",
+    "             response, e.g. 'result.records' or 'data.0.items'.",
+    "wait_selector page mode only -- CSS selector to wait for before scraping.",
+    "             Useful for Lightning pages that populate their tables late."
+  ],
+
+  "portal_url": "https://my.cohesity.com",
+  "salesforce_url": "https://cohesity.lightning.force.com",
+
+  "kb_search": {
+    "mode": "page",
+    "url": "{portal_url}/s/global-search/{query}",
+    "method": "GET",
+    "params": {},
+    "result_path": "",
+    "wait_selector": ""
+  },
+  "kb_article": {
+    "mode": "page",
+    "url": "{portal_url}/s/article/{id}",
+    "method": "GET",
+    "params": {},
+    "result_path": "",
+    "wait_selector": ""
+  },
+  "assets": {
+    "mode": "page",
+    "url": "{portal_url}/s/assets",
+    "method": "GET",
+    "params": {},
+    "result_path": "",
+    "wait_selector": ""
+  },
+  "entitlements": {
+    "mode": "page",
+    "url": "{portal_url}/s/entitlements",
+    "method": "GET",
+    "params": {},
+    "result_path": "",
+    "wait_selector": ""
+  }
+}

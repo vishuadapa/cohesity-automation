@@ -29,7 +29,11 @@ cohesity-automation/
 │   ├── node_status.py
 │   └── upgrade_readiness.py
 ├── mcp/
-│   └── cohesity_mcp_v2.py       # MCP server for Claude Desktop
+│   └── cohesity_mcp_v2.py       # MCP server for Claude Desktop (cluster-direct)
+├── mycohesity/
+│   ├── mycohesity_mcp.py        # MCP server for my.cohesity.com support portal
+│   ├── mycohesity_auth.py       # Browser login + encrypted session storage
+│   └── endpoints.example.json   # Tenant-specific URL overrides
 ├── policies/
 │   ├── clone_policy.py
 │   ├── list_policies.py
